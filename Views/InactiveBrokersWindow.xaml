@@ -1,0 +1,61 @@
+<Window x:Class="ECS.CommissionsMailer.Views.InactiveBrokersWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Corredores inactivos" Width="820" Height="560" MinWidth="680" MinHeight="440"
+        WindowStartupLocation="CenterOwner" Style="{StaticResource DialogWindowStyle}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Corredores inactivos" Style="{StaticResource PageTitleTextStyle}" />
+            <TextBlock Text="Esta lista está separada de los corredores disponibles para envío. Active únicamente los registros que desee devolver a la vista principal."
+                       Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="0,18,0,0">
+            <DataGrid ItemsSource="{Binding InactiveBrokers}" IsReadOnly="True">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Corredor" Binding="{Binding Name}" Width="2*" />
+                    <DataGridTextColumn Header="Correo principal" Binding="{Binding IdentityText}" Width="3*" />
+                    <DataGridTextColumn Header="Nota" Binding="{Binding ReviewNote}" Width="2*" />
+                    <DataGridTemplateColumn Header="Estado" Width="120">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <ToggleButton Content="Activo" IsChecked="{Binding IsActive, Mode=OneWay}"
+                                              Click="ActivateBroker_Click" CommandParameter="{Binding}"
+                                              Style="{StaticResource SwitchToggleButtonStyle}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+            <Border Background="{StaticResource SurfaceBrush}" Padding="24">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding InactiveBrokers.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE73E;" FontFamily="Segoe Fluent Icons" FontSize="34"
+                               Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center" />
+                    <TextBlock Text="No hay corredores inactivos" FontWeight="SemiBold" FontSize="16" Margin="0,10,0,0" />
+                    <TextBlock Text="Todos los corredores están disponibles en la vista principal."
+                               Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="Cerrar" IsCancel="True" Margin="0" MinWidth="90" />
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,0 +1,20 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Cultures>es-ES</Cultures>
+    <OutputName>ECS Envío de Correos - Instalador 1.0.3</OutputName>
+    <PublishDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\artifacts\publish\win-x64'))</PublishDir>
+    <DefineConstants>PublishDir=$(PublishDir);ProductVersion=1.0.3</DefineConstants>
+    <DefaultCompressionLevel>high</DefaultCompressionLevel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+  </ItemGroup>
+
+  <Target Name="PublishApplication" BeforeTargets="BeforeBuild">
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\ECS.CommissionsMailer.csproj&quot; --configuration Release --runtime win-x64 --self-contained true --property:PublishDir=&quot;$(PublishDir)\&quot; --property:PublishTrimmed=false --property:PublishSingleFile=false" />
+    <Error Condition="!Exists('$(PublishDir)\ECS Envío de Correos.exe')" Text="No se encontró la publicación autocontenida de ECS Envío de Correos." />
+  </Target>
+</Project>

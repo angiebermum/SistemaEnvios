@@ -1,0 +1,970 @@
+{
+    "seedVersion":  3,
+    "seedId":  "620cdc2d8ffc222f7b039300cd204677ed44491f88ee5ce9810c9b1968850cea",
+    "defaultSubject":  "DETALLE DE COMISIONES IIQ DE JUNIO",
+    "defaultMessage":  "¡Buenas!\n\nEstimado(a)\n\nEn el presente se adjunta el detalle de comisiones a facturar de la IIQ del mes de JUNIO 2026; recordar que el pago se hace contra factura.\n\nPor favor enviar las facturas mañana antes de las 2:00 p. m. para lograr el pago correspondiente.\n\nCualquier consulta estoy para servirle.\n\nSaludos cordiales,",
+    "signatureFile":  "Data/firma-inicial.png",
+    "signatureSha256":  "4a043ad4abac7dad99b5215f5f8e3a75a24fe7936e776aec5a67f94ccfbccec8",
+    "organizationContact":  {
+                                "name":  "Contabilidad Essential Corredora de Seguros",
+                                "email":  "conta@essentialgroupla.com",
+                                "usage":  "metadata-only"
+                            },
+    "commonCc":  [
+                     {
+                         "name":  "",
+                         "email":  "angiebermudez472@gmail.com"
+                     }
+                 ],
+    "brokers":  [
+                    {
+                        "id":  "6757c2b2-4987-4466-8f25-b984c1078b53",
+                        "seedKey":  "configured-6757c2b2498744668f25b984c1078b53",
+                        "name":  "Gustavo",
+                        "primaryEmails":  [
+                                              "gustavojh106@gmail.com",
+                                              "adolfojh106@gmail.com"
+                                          ],
+                        "assistants":  [
+                                           {
+                                               "id":  "d7f7ee51-ab98-41ac-9805-201d78f51a28",
+                                               "name":  "Angie B",
+                                               "email":  "angiebermudez472@gmail.com",
+                                               "isActive":  true
+                                           }
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "e7e06f3c-ca0d-4bc3-99a7-a93b3233ffd1",
+                        "seedKey":  "adriana-arroyo-essential",
+                        "name":  "Adriana Arroyo",
+                        "primaryEmails":  [
+                                              "aarroyo@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "caaecd44-6e98-40e8-825c-ddb0bb7a4a66",
+                        "seedKey":  "aida-arce-essential",
+                        "name":  "Aida Arce",
+                        "primaryEmails":  [
+                                              "aarce@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "865741f1-3d1d-4342-8a8d-f96f345064a5",
+                        "seedKey":  "alba-del-rio-essential",
+                        "name":  "Alba del Rio",
+                        "primaryEmails":  [
+                                              "adelrio@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "4d886e19-c8cd-4477-b842-2911e5f39ff5",
+                        "seedKey":  "alberto-volio-perfectcircle",
+                        "name":  "Alberto Volio S",
+                        "primaryEmails":  [
+                                              "avs@perfectcircle.life"
+                                          ],
+                        "assistants":  [
+                                           {
+                                               "id":  "09d43305-eded-4355-bdc3-3f2f07136c8e",
+                                               "name":  "Operative Support 2",
+                                               "email":  "opsupport2@perfectcircle.life",
+                                               "isActive":  true
+                                           },
+                                           {
+                                               "id":  "82e3e49f-67c9-4684-b5b4-b185c50e8000",
+                                               "name":  "Accounting 1",
+                                               "email":  "accounting1@perfectcircle.life",
+                                               "isActive":  true
+                                           }
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "79d37b4a-c50f-41c1-b661-cf1d11dc1d64",
+                        "seedKey":  "alejandra-fonseca-essential",
+                        "name":  "Alejandra Fonseca",
+                        "primaryEmails":  [
+                                              "afonseca@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "389d7af7-e4ee-496b-89de-2320e28a37c6",
+                        "seedKey":  "alejandro-pachecho-essential",
+                        "name":  "Alejandro Pachecho",
+                        "primaryEmails":  [
+                                              "apacheco@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "a7975b77-3830-425c-ab68-ed54d7d35d85",
+                        "seedKey":  "alonso-cordero-essential",
+                        "name":  "Alonso Cordero",
+                        "primaryEmails":  [
+                                              "acordero@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "9cd64a13-e4ec-47db-bb9b-dc5e927af364",
+                        "seedKey":  "alonso-calvo-essential",
+                        "name":  "Alonso Calvo",
+                        "primaryEmails":  [
+                                              "acalvo@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "35efe31f-03f0-41c5-a36a-6c451f0b0d93",
+                        "seedKey":  "ana-luisa-salazar-essential",
+                        "name":  "Ana Luisa Salazar",
+                        "primaryEmails":  [
+                                              "asalazar@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "29e2c74a-5ec3-487a-8d4a-5608d385ccb0",
+                        "seedKey":  "andres-steimberg-seguru",
+                        "name":  "Andrés Steimberg - Agent for EssentialGroupLA",
+                        "primaryEmails":  [
+                                              "andres@seguru.cr"
+                                          ],
+                        "assistants":  [
+                                           {
+                                               "id":  "24d7e9c6-bde5-4bb0-9bc5-b128027a7f81",
+                                               "name":  "Daniela Befeler",
+                                               "email":  "daniela@seguru.cr",
+                                               "isActive":  true
+                                           },
+                                           {
+                                               "id":  "1c1a7a6a-5710-4f7a-bece-26ff530a539a",
+                                               "name":  "Seguru Ejecutivo 4",
+                                               "email":  "ejecutivo4@seguru.cr",
+                                               "isActive":  true
+                                           }
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "56c06076-4688-40ec-8512-80ddb7b4c04d",
+                        "seedKey":  "luis-arturo-quesada-essential",
+                        "name":  "Luis Arturo Quesada Ovares",
+                        "primaryEmails":  [
+                                              "lquesada@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "80921283-30a5-4cc0-ab56-3ab22f838dea",
+                        "seedKey":  "ausberto-melendez-essential",
+                        "name":  "Ausberto Melendez A",
+                        "primaryEmails":  [
+                                              "amelendez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+                                           {
+                                               "id":  "f784f70c-13bf-46bd-a4d1-f31a58708f1b",
+                                               "name":  "Charlene Melendez",
+                                               "email":  "cmelendez@essentialgroupla.com",
+                                               "isActive":  true
+                                           }
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "438cdeb9-1935-4daa-abc2-ec7b1f614ee8",
+                        "seedKey":  "avi-maryl-gmail",
+                        "name":  "Avi Maryl L.",
+                        "primaryEmails":  [
+                                              "avimaryl@gmail.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "5b898f47-b6e9-4804-b01f-3f181f14fa0c",
+                        "seedKey":  "belkis-jerez-essential",
+                        "name":  "Belkis Jerez W",
+                        "primaryEmails":  [
+                                              "bjerez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+                                           {
+                                               "id":  "4399dbdb-b0ec-4492-86ad-bfa0835e0418",
+                                               "name":  "Kerly Gamboa",
+                                               "email":  "kgamboa@essentialgroupla.com",
+                                               "isActive":  true
+                                           }
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "ec6ea6c7-9354-461c-9c55-a261bd729ebe",
+                        "seedKey":  "carlos-rodriguez-essential",
+                        "name":  "Carlos Rodriguez",
+                        "primaryEmails":  [
+                                              "crodriguez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "4a6918a9-6c00-4705-8941-ee146ec92b0d",
+                        "seedKey":  "carolina-cedeno-essential",
+                        "name":  "Carolina Cedeno",
+                        "primaryEmails":  [
+                                              "ccedeno@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "54240ed4-cb42-4de7-97f6-c1bfc6fc1839",
+                        "seedKey":  "cesar-hernandez-essential",
+                        "name":  "Cesar Hernandez",
+                        "primaryEmails":  [
+                                              "chernandez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "ca3a97c8-22f7-4328-9c78-28a10d9ea6e2",
+                        "seedKey":  "armando-molina-clarefacio",
+                        "name":  "Clare Facio",
+                        "primaryEmails":  [
+                                              "amolina@clarefacio.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "d773f6cb-51a8-4e6d-b1d2-066693e56282",
+                        "seedKey":  "cristiam-cruz-essential",
+                        "name":  "Cristiam Cruz",
+                        "primaryEmails":  [
+                                              "ccruz@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "608d5b0d-aecf-4413-9bf5-b14bdecf6a84",
+                        "seedKey":  "cristhian-alvarado-essential",
+                        "name":  "Cristhian Alvarado",
+                        "primaryEmails":  [
+                                              "calvarado@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "21d2a6bc-75f8-4d04-a218-2fb8bd492bd5",
+                        "seedKey":  "daniel-ovares-essential",
+                        "name":  "Daniel Ovares",
+                        "primaryEmails":  [
+                                              "dovares@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "1e82b453-faf5-4545-8be2-2f6354e0349d",
+                        "seedKey":  "daniel-villalobos-essential",
+                        "name":  "Daniel Villalobos",
+                        "primaryEmails":  [
+                                              "davillalobos@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "15d716e4-c056-4425-ba78-95c5a6719c1d",
+                        "seedKey":  "danilo-villalobos-essential",
+                        "name":  "Danilo Villalobos",
+                        "primaryEmails":  [
+                                              "dvillalobos@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "439d02a9-574a-408d-88e3-a5db9044d892",
+                        "seedKey":  "dayana-jimenez-essential",
+                        "name":  "Dayana Jimenez",
+                        "primaryEmails":  [
+                                              "djimenez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "d52d0008-4090-44b1-945f-8a2152a3708a",
+                        "seedKey":  "henry-donald-cartago-essential",
+                        "name":  "Henry Hernandez / Donald Sánchez",
+                        "primaryEmails":  [
+                                              "oficinacartagohd@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "75fa1983-e671-4504-bf03-2cec6d0eeb5c",
+                        "seedKey":  "edgar-gomez-egomez-essential",
+                        "name":  "Edgar Gomez",
+                        "primaryEmails":  [
+                                              "egomez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "aaf68e15-cdd4-4041-985c-2ab097c744cc",
+                        "seedKey":  "edgar-gomez-edgomez-essential",
+                        "name":  "Edgar Gomez",
+                        "primaryEmails":  [
+                                              "edgomez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "c5df8aad-6959-445b-9ae5-52f3e7462a96",
+                        "seedKey":  "edgar-sevilla-essential",
+                        "name":  "Edgar Sevilla",
+                        "primaryEmails":  [
+                                              "esevilla@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "7034d2e8-c448-458e-9da3-11255a79c661",
+                        "seedKey":  "edward-arias-essential",
+                        "name":  "Edward Arias",
+                        "primaryEmails":  [
+                                              "earias@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "e338d937-003c-40d1-a08f-79da78f0f114",
+                        "seedKey":  "emilio-vega-essential",
+                        "name":  "Emilio Vega",
+                        "primaryEmails":  [
+                                              "evega@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "2aaacfa3-f3bd-4644-9fd5-70df94272665",
+                        "seedKey":  "eugenia-fallas-seguru",
+                        "name":  "Eugenia Fallas",
+                        "primaryEmails":  [
+                                              "ejecutivo5@seguru.cr"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "7bbaca0a-1d26-49d0-bcb7-d802334607c0",
+                        "seedKey":  "fernando-cabada-insura",
+                        "name":  "Fernando Cabada",
+                        "primaryEmails":  [
+                                              "fernando@insura.cr"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "5c1746c5-ef16-4341-9cd1-83ecdf12a130",
+                        "seedKey":  "flara-seguros-gmail",
+                        "name":  "Flara Seguros - EssentialGroupLA",
+                        "primaryEmails":  [
+                                              "flaraseguros@gmail.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "a1357fc4-77fb-42e5-8115-4cb82032bcbc",
+                        "seedKey":  "fernando-cabada-essential",
+                        "name":  "Fernando Cabada Corviser",
+                        "primaryEmails":  [
+                                              "fcabada@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "23079232-f8b0-409d-b01b-bc0b982867e6",
+                        "seedKey":  "hector-chinchilla-essential",
+                        "name":  "Hector Chinchilla",
+                        "primaryEmails":  [
+                                              "hchinchilla@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+                                           {
+                                               "id":  "1f549cbc-9439-4678-a142-b46a4eb41de2",
+                                               "name":  "Hector Chinchilla Coach y Consultor",
+                                               "email":  "hector.chinchilla70@gmail.com",
+                                               "isActive":  true
+                                           }
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "9c8feaf9-2f4b-482f-a98d-8228a7ed2d84",
+                        "seedKey":  "hermann-solera-essential",
+                        "name":  "Hermann Solera",
+                        "primaryEmails":  [
+                                              "hsolera@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "630695b2-ba99-46b5-a881-d187d00e93ce",
+                        "seedKey":  "iliana-cruz-essential",
+                        "name":  "Iliana Cruz",
+                        "primaryEmails":  [
+                                              "icruz@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "82e59600-2de3-405b-a280-ee68f7413839",
+                        "seedKey":  "irene-zuniga-essential",
+                        "name":  "Irene Zuniga",
+                        "primaryEmails":  [
+                                              "izuniga@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "433eb7bd-62db-4d57-bed9-a4dd30e5166d",
+                        "seedKey":  "francisco-villalobos-essential",
+                        "name":  "Francisco Villalobos",
+                        "primaryEmails":  [
+                                              "fvillalobos@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "fcf543a2-4ac9-4a23-82cc-cf37a12bdff1",
+                        "seedKey":  "javier-martinez-essential",
+                        "name":  "Javier Martinez",
+                        "primaryEmails":  [
+                                              "jmartinez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "e2f672a7-144f-48bc-8c7f-741c05289355",
+                        "seedKey":  "jerrika-hernandez-essential",
+                        "name":  "Jerrika Hernandez",
+                        "primaryEmails":  [
+                                              "jhernandez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "8b278c74-03f1-4b5f-844e-68c33f17a424",
+                        "seedKey":  "john-la-torre-gmail",
+                        "name":  "John La Torre",
+                        "primaryEmails":  [
+                                              "johne.ojeda6988@gmail.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "fcc11603-a92c-4a4a-ab42-4dd7d42a4e05",
+                        "seedKey":  "joel-viquez-essential",
+                        "name":  "Joel Viquez Madrigal",
+                        "primaryEmails":  [
+                                              "jviquez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "54992186-00fa-423a-8659-3714a094fa63",
+                        "seedKey":  "jonathan-lopez-essential",
+                        "name":  "Jonathan Lopez",
+                        "primaryEmails":  [
+                                              "jlopez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "8fe17ea1-f7df-4ddb-b3a6-3d7a992a1b12",
+                        "seedKey":  "jorge-sandoval-essential",
+                        "name":  "Jorge A Sandoval",
+                        "primaryEmails":  [
+                                              "jsandoval@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "a3431b39-9bb2-4574-b3f6-34dbf85d1f41",
+                        "seedKey":  "jc-rincon-gmail",
+                        "name":  "Juan Rincon",
+                        "primaryEmails":  [
+                                              "jcrasesor@gmail.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "93cf3325-8b2b-4331-a2a2-b68a48f99dd4",
+                        "seedKey":  "kenneth-perez-essential",
+                        "name":  "Kenneth Perez",
+                        "primaryEmails":  [
+                                              "kperez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "884a054b-4439-4af0-8233-13315164a10c",
+                        "seedKey":  "luis-gamboa-essential",
+                        "name":  "Luis F Gamboa",
+                        "primaryEmails":  [
+                                              "lfgamboa@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "01116586-eaa1-44de-a64b-851ec91ebd20",
+                        "seedKey":  "isabel-moya-essential",
+                        "name":  "Isabel Moya",
+                        "primaryEmails":  [
+                                              "imoya@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "9dc9cdef-4e02-4d53-a4ff-e20bb7df8762",
+                        "seedKey":  "manfred-peters-essential",
+                        "name":  "Manfred Peters Batalla",
+                        "primaryEmails":  [
+                                              "mpeters@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+                                           {
+                                               "id":  "8be809f2-7cfe-4b28-9612-ab85d550179c",
+                                               "name":  "Contabilidad CASE",
+                                               "email":  "contabilidadescase@hotmail.com",
+                                               "isActive":  true
+                                           }
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "8e23fdbc-6e5c-46b4-9f80-4b1e7b12076a",
+                        "seedKey":  "maria-gonzalez-essential",
+                        "name":  "Maria Gonzalez",
+                        "primaryEmails":  [
+                                              "mgonzalez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "db610ed0-5357-4dcb-933a-437a865f4de4",
+                        "seedKey":  "marianela-santamaria-essential",
+                        "name":  "Marianela Santamaria",
+                        "primaryEmails":  [
+                                              "msantamaria@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "8e6f7f7e-3e82-42b8-b091-fa722dad20b3",
+                        "seedKey":  "nelly-aponte-essential",
+                        "name":  "Nelly Aponte",
+                        "primaryEmails":  [
+                                              "naponte@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "a9b88fc5-a799-4dc0-a302-f8a1365cfe36",
+                        "seedKey":  "oscar-pino-essential",
+                        "name":  "Oscar Pino",
+                        "primaryEmails":  [
+                                              "opino@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "dd99f7f6-6ddd-4d8b-91ff-e8ca7bf9a484",
+                        "seedKey":  "ramon-gonzalez-essential",
+                        "name":  "Ramon Gonzalez",
+                        "primaryEmails":  [
+                                              "rgonzalez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "51011950-11e1-4d1e-b688-2c75f74b263b",
+                        "seedKey":  "roberto-merino-yahoo",
+                        "name":  "Roberto Merino",
+                        "primaryEmails":  [
+                                              "romerinob@yahoo.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "7f89489f-d0dc-4d38-ae32-1d7d092d4c9e",
+                        "seedKey":  "roberto-moya-essential",
+                        "name":  "Roberto Moya",
+                        "primaryEmails":  [
+                                              "rmoya@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "2102aa32-b0e9-4c43-852d-9dc7dbbd49eb",
+                        "seedKey":  "rodolfo-garnier-essential",
+                        "name":  "Rodolfo Garnier",
+                        "primaryEmails":  [
+                                              "rgarnier@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "e80e253a-f4af-4b24-8957-7326679d28ac",
+                        "seedKey":  "rodolfo-rivas-essential",
+                        "name":  "Rodolfo Rivas",
+                        "primaryEmails":  [
+                                              "rrivas@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "a9d1d21f-17a2-4c26-97c8-06005d72d3b5",
+                        "seedKey":  "sergio-gonzalez-essential",
+                        "name":  "Sergio Gonzalez",
+                        "primaryEmails":  [
+                                              "sgonzalez@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "68572f8c-4bea-4505-ad97-3743051938a3",
+                        "seedKey":  "sylvia-serrano-essential",
+                        "name":  "Sylvia Serrano",
+                        "primaryEmails":  [
+                                              "sserrano@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "9940df54-ae11-4621-b33f-c9a7dc79f86d",
+                        "seedKey":  "vivian-barreto-essential",
+                        "name":  "Vivian Barreto",
+                        "primaryEmails":  [
+                                              "vbarreto@essentialgroupla.com"
+                                          ],
+                        "assistants":  [
+
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    },
+                    {
+                        "id":  "6059c919-7198-45b9-a2c3-c6eab96a1503",
+                        "seedKey":  "felix-unresolved",
+                        "name":  "Felix Lara",
+                        "primaryEmails":  [
+                                              "flaraseguros@gmail.com"
+                                          ],
+                        "assistants":  [
+                                           {
+                                               "id":  "522b3d6c-6d1c-443d-ba10-5d2f3104d586",
+                                               "name":  "Florizul Lara Reyes",
+                                               "email":  "florizul1975@gmail.com",
+                                               "isActive":  true
+                                           }
+                                       ],
+                        "isActive":  true,
+                        "requiresReview":  false,
+                        "reviewNote":  null
+                    }
+                ]
+}

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ECS.CommissionsMailer.csproj" />
+  <Project Path="Installer/ECS.EnvioDeCorreos.Installer.wixproj" />
+</Solution>

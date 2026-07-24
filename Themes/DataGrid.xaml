@@ -1,0 +1,60 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:models="clr-namespace:ECS.CommissionsMailer.Models">
+    <Style TargetType="DataGrid">
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="RowBackground" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="AlternatingRowBackground" Value="{StaticResource SurfaceMutedBrush}" />
+        <Setter Property="GridLinesVisibility" Value="Horizontal" />
+        <Setter Property="HorizontalGridLinesBrush" Value="#E7EDF2" />
+        <Setter Property="VerticalGridLinesBrush" Value="Transparent" />
+        <Setter Property="HeadersVisibility" Value="Column" />
+        <Setter Property="RowHeaderWidth" Value="0" />
+        <Setter Property="CanUserAddRows" Value="False" />
+        <Setter Property="CanUserDeleteRows" Value="False" />
+        <Setter Property="AutoGenerateColumns" Value="False" />
+        <Setter Property="SelectionUnit" Value="FullRow" />
+        <Setter Property="SelectionMode" Value="Single" />
+        <Setter Property="IsReadOnly" Value="False" />
+        <Setter Property="ColumnHeaderHeight" Value="38" />
+        <Setter Property="RowHeight" Value="48" />
+    </Style>
+    <Style TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="#EDF3F7" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="10,8" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+    <Style TargetType="DataGridCell">
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="9,6" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    </Style>
+    <Style TargetType="DataGridRow">
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#F0F6FB" /></Trigger>
+            <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#DFEDF8" /><Setter Property="BorderBrush" Value="#9AC2E2" /></Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style x:Key="StatusBadgeStyle" TargetType="TextBlock">
+        <Setter Property="Background" Value="{StaticResource NeutralBadgeBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        <Setter Property="Padding" Value="8,3" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Status}" Value="{x:Static models:SendStatus.Ready}"><Setter Property="Background" Value="{StaticResource PrimaryLightBrush}" /><Setter Property="Foreground" Value="{StaticResource PrimaryDarkBrush}" /></DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="{x:Static models:SendStatus.Sending}"><Setter Property="Background" Value="{StaticResource WarningBackgroundBrush}" /><Setter Property="Foreground" Value="{StaticResource WarningBrush}" /></DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="{x:Static models:SendStatus.Sent}"><Setter Property="Background" Value="{StaticResource SuccessBackgroundBrush}" /><Setter Property="Foreground" Value="{StaticResource SuccessBrush}" /></DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="{x:Static models:SendStatus.Error}"><Setter Property="Background" Value="{StaticResource ErrorBackgroundBrush}" /><Setter Property="Foreground" Value="{StaticResource ErrorBrush}" /></DataTrigger>
+            <DataTrigger Binding="{Binding Status}" Value="{x:Static models:SendStatus.ReviewRequired}"><Setter Property="Background" Value="{StaticResource WarningBackgroundBrush}" /><Setter Property="Foreground" Value="{StaticResource WarningBrush}" /></DataTrigger>
+        </Style.Triggers>
+    </Style>
+</ResourceDictionary>

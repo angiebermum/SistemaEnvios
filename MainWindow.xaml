@@ -3,12 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="ECS Envío de Correos"
         Icon="pack://application:,,,/Images/icon.ico"
-        Width="1360" Height="900" MinWidth="1100" MinHeight="720"
+        Width="1360" Height="900" MinWidth="1100" MinHeight="820"
         WindowStartupLocation="CenterScreen"
         Style="{StaticResource AppWindowStyle}"
         Loaded="Window_Loaded" Closing="Window_Closing">
     <Grid Margin="20">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -122,7 +123,39 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="2" Margin="0,0,0,10">
+        <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0" IsEnabled="{Binding IsUiEnabled}">
+                    <TextBlock Text="Excel general de comisiones" Style="{StaticResource FieldLabelTextStyle}" />
+                    <Button Content="Seleccionar Excel general" Click="SelectGeneralWorkbook_Click"
+                            Style="{StaticResource CompactButtonStyle}" Margin="0,6,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding GeneralWorkbookFileName}" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding GeneralWorkbookPath}" />
+                    <TextBlock Text="{Binding WorkbookAnalysisText}" Style="{StaticResource CaptionTextStyle}"
+                               TextWrapping="Wrap" Margin="0,3,0,0" />
+                    <TextBlock Text="{Binding GenerationStatusText}" Foreground="{StaticResource PrimaryBrush}"
+                               TextWrapping="Wrap" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding GeneratedOutputDirectory}" Style="{StaticResource CaptionTextStyle}"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding GeneratedOutputDirectory}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
+                            IsEnabled="{Binding IsUiEnabled}" Margin="16,0,0,0">
+                    <Button Content="Abrir carpeta" Click="OpenGeneratedFolder_Click"
+                            IsEnabled="{Binding CanOpenGeneratedFolder}" />
+                    <Button Content="Generar archivos" Click="GenerateFiles_Click"
+                            Style="{StaticResource PrimaryButtonStyle}" Margin="0" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="270" />
                 <ColumnDefinition Width="*" />
@@ -149,7 +182,7 @@
                        VerticalAlignment="Bottom" Margin="12,0,0,8" />
         </Grid>
 
-        <DataGrid x:Name="BrokersGrid" Grid.Row="3" ItemsSource="{Binding BrokerItemsView}"
+        <DataGrid x:Name="BrokersGrid" Grid.Row="4" ItemsSource="{Binding BrokerItemsView}"
                   SelectedItem="{Binding SelectedBrokerItem}" IsEnabled="{Binding IsUiEnabled}"
                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                   RowDetailsVisibilityMode="VisibleWhenSelected">
@@ -226,8 +259,21 @@
                 <DataTemplate>
                     <Border Background="{StaticResource PrimaryLightBrush}" Padding="12" Margin="50,0,8,8" CornerRadius="7">
                         <StackPanel>
-                            <TextBlock Text="Archivos Excel de este corredor" FontWeight="SemiBold" Margin="0,0,0,5" />
-                            <ItemsControl ItemsSource="{Binding AttachmentPaths}">
+                            <TextBlock Text="Generados automáticamente" FontWeight="SemiBold" Margin="0,0,0,5" />
+                            <ItemsControl ItemsSource="{Binding GeneratedAttachmentPaths}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <DockPanel Margin="0,2">
+                                            <Button DockPanel.Dock="Right" Content="Quitar" Click="RemoveAttachment_Click"
+                                                    Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
+                                                    Style="{StaticResource CompactButtonStyle}" Margin="8,0,0,0" />
+                                            <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" ToolTip="{Binding}" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="Agregados manualmente" FontWeight="SemiBold" Margin="0,10,0,5" />
+                            <ItemsControl ItemsSource="{Binding ManualAttachmentPaths}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <DockPanel Margin="0,2">
@@ -247,7 +293,7 @@
             </DataGrid.RowDetailsTemplate>
         </DataGrid>
 
-        <Border Grid.Row="4" Style="{StaticResource CardStyle}" Padding="14" Margin="0,12,0,0">
+        <Border Grid.Row="5" Style="{StaticResource CardStyle}" Padding="14" Margin="0,12,0,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

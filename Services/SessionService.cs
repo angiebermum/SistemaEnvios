@@ -26,6 +26,10 @@ public sealed class SessionService
             {
                 item.PrimaryRecipients ??= [];
                 item.AttachmentPaths ??= [];
+                item.GeneratedAttachmentPaths ??= [];
+                var currentAttachments = item.AttachmentPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                item.GeneratedAttachmentPaths = new System.Collections.ObjectModel.ObservableCollection<string>(
+                    item.GeneratedAttachmentPaths.Where(currentAttachments.Contains));
                 item.RefreshComputedProperties();
             }
         }

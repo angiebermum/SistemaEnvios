@@ -85,6 +85,7 @@ internal sealed class DirectoryMigrationService
     {
         configuration.Brokers ??= [];
         configuration.CommonCcAddresses ??= [];
+        configuration.DataSchemaVersion = AppConfiguration.CurrentDataSchemaVersion;
         foreach (var broker in configuration.Brokers)
         {
             if (broker.Id == Guid.Empty)
@@ -94,6 +95,23 @@ internal sealed class DirectoryMigrationService
 
             broker.PrimaryEmailAddresses ??= [];
             broker.Assistants ??= [];
+            broker.AssociatedWorksheetNames ??= [];
+            broker.AssociatedWorksheetNames = broker.AssociatedWorksheetNames
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            broker.Deductions ??= [];
+            foreach (var deduction in broker.Deductions)
+            {
+                if (deduction.Id == Guid.Empty)
+                {
+                    deduction.Id = Guid.NewGuid();
+                }
+
+                deduction.Description = deduction.Description?.Trim() ?? string.Empty;
+            }
+
             foreach (var assistant in broker.Assistants)
             {
                 if (assistant.Id == Guid.Empty)

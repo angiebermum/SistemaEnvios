@@ -10,6 +10,7 @@ public sealed class AppDataPaths
         ConfigurationFile = Path.Combine(RootDirectory, "configuracion.json");
         CurrentSessionFile = Path.Combine(RootDirectory, "sesion-actual.json");
         RecentSendsFile = Path.Combine(RootDirectory, "envios-recientes.json");
+        PaymentGenerationHistoryFile = Path.Combine(RootDirectory, "generaciones-detalles-pago.json");
         LogsDirectory = Path.Combine(RootDirectory, "Logs");
         LogFile = Path.Combine(LogsDirectory, "app.log");
         SentAttachmentsDirectory = Path.Combine(RootDirectory, "ArchivosEnviados");
@@ -23,6 +24,7 @@ public sealed class AppDataPaths
     public string ConfigurationFile { get; }
     public string CurrentSessionFile { get; }
     public string RecentSendsFile { get; }
+    public string PaymentGenerationHistoryFile { get; }
     public string LogsDirectory { get; }
     public string LogFile { get; }
     public string SentAttachmentsDirectory { get; }

@@ -2,6 +2,7 @@ namespace ECS.CommissionsMailer.Models;
 
 public sealed class AppConfiguration
 {
+    public const int CurrentDataSchemaVersion = 2;
     public const int CurrentEmailDirectorySeedVersion = 3;
     public const string InitialSubject = "DETALLE DE COMISIONES IIQ DE JUNIO";
 
@@ -22,6 +23,7 @@ public sealed class AppConfiguration
     public string DefaultSubject { get; set; } = InitialSubject;
     public string DefaultMessage { get; set; } = InitialMessage;
     public string? SignatureImagePath { get; set; }
+    public int DataSchemaVersion { get; set; } = CurrentDataSchemaVersion;
     public int EmailDirectorySeedVersion { get; set; }
     public string? EmailDirectorySeedId { get; set; }
     public List<string> CommonCcAddresses { get; set; } = [];

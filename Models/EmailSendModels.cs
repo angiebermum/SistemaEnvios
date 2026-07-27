@@ -17,6 +17,7 @@ public sealed class EmailSendRequest
     public string ReviewNote { get; init; } = string.Empty;
     public bool ReviewConfirmed { get; init; }
     public Guid? ResendOfRecordId { get; init; }
+    public Guid? PaymentGenerationId { get; init; }
 }
 
 public sealed class RecipientResolutionResult

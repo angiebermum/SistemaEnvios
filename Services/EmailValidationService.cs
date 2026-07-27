@@ -54,7 +54,8 @@ public sealed class EmailValidationService
         IEnumerable<BrokerAssistant> assistants,
         bool requiresReview,
         string? reviewNote,
-        out List<string> addresses)
+        out List<string> addresses,
+        bool requirePrimaryEmail = true)
     {
         var errors = new List<string>();
         addresses = [];
@@ -63,7 +64,8 @@ public sealed class EmailValidationService
             errors.Add("El nombre del corredor es obligatorio.");
         }
 
-        TryParseAddresses(addressesText, !requiresReview, out addresses, out var addressErrors, rejectDuplicates: true);
+        TryParseAddresses(addressesText, requirePrimaryEmail && !requiresReview,
+            out addresses, out var addressErrors, rejectDuplicates: true);
         errors.AddRange(addressErrors);
 
         var knownAddresses = new HashSet<string>(addresses, StringComparer.OrdinalIgnoreCase);

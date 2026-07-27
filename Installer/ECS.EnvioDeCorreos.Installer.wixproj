@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <Target Name="PublishApplication" BeforeTargets="BeforeBuild">
-    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\ECS.CommissionsMailer.csproj&quot; --configuration Release --runtime win-x64 --self-contained true --property:PublishDir=&quot;$(PublishDir)\&quot; --property:PublishTrimmed=false --property:PublishSingleFile=false" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\ECS.CommissionsMailer.csproj&quot; --configuration Release --runtime win-x64 --self-contained true --property:PublishDir=&quot;$(PublishDir)&quot; --property:PublishTrimmed=false --property:PublishSingleFile=false" />
     <Error Condition="!Exists('$(PublishDir)\ECS Envío de Correos.exe')" Text="No se encontró la publicación autocontenida de ECS Envío de Correos." />
   </Target>
 </Project>

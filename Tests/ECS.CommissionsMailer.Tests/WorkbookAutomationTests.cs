@@ -1,0 +1,438 @@
+using System.Globalization;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
+using ECS.CommissionsMailer.Models;
+using ECS.CommissionsMailer.Services;
+
+namespace ECS.CommissionsMailer.Tests;
+
+public sealed class WorkbookAutomationTests
+{
+    [Fact]
+    public void StandardAnalyzerFindsCurrenciesAndDynamicCommissionRows()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+
+        var result = new WorkbookAnalysisService().Analyze(source);
+
+        Assert.True(result.IsValid, string.Join(" ", result.Worksheets.SelectMany(value => value.Errors)));
+        var sheet = Assert.Single(result.Worksheets);
+        Assert.Equal("Estándar", sheet.AnalyzerName);
+        Assert.True(sheet.Crc.HasCommission);
+        Assert.True(sheet.Usd.HasCommission);
+        Assert.Equal(100_000m, sheet.Crc.GrossCommission);
+        Assert.Equal(100m, sheet.Usd.GrossCommission);
+        Assert.Contains("B3", sheet.Crc.SourceCells);
+        Assert.Contains("B4", sheet.Usd.SourceCells);
+    }
+
+    [Fact]
+    public void FlmStructuralAnalyzerAcceptsMisspelledGrossLabel()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "flm.xlsx");
+        CreateFlmWorkbook(source);
+
+        var result = new WorkbookAnalysisService().Analyze(source);
+
+        Assert.True(result.IsValid, string.Join(" ", result.Worksheets.SelectMany(value => value.Errors)));
+        var sheet = Assert.Single(result.Worksheets);
+        Assert.Equal("FLM / resumen estructural", sheet.AnalyzerName);
+        Assert.Equal(25_000m, sheet.Crc.GrossCommission);
+        Assert.Equal(50m, sheet.Usd.GrossCommission);
+    }
+
+    [Fact]
+    public void GeneratesOneFilePerWorksheetAndGroupsThreeByBroker()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR", "AR2", "ANDRES"], includeUsd: true);
+        var broker = Broker("Corredor sintético", "AR", "AR2", "ANDRES");
+
+        var batch = Generate(scope, source, [broker]);
+
+        Assert.Equal(3, batch.Files.Count);
+        Assert.Single(batch.Files.Select(value => value.BrokerId).Distinct());
+        Assert.All(batch.Files, value => Assert.True(File.Exists(value.OutputPath)));
+        Assert.Equal(3, Directory.GetFiles(batch.OutputDirectory, "*.xlsx").Length);
+        Assert.Contains(batch.Files, value => Path.GetFileName(value.OutputPath).Contains("AR2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DifferentBrokersNeverMixGeneratedFiles()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AAA", "BBB"], includeUsd: true);
+        var first = Broker("Corredor A", "AAA");
+        var second = Broker("Corredor B", "BBB");
+
+        var batch = Generate(scope, source, [first, second]);
+
+        Assert.Equal(2, batch.Files.Select(value => value.BrokerId).Distinct().Count());
+        Assert.Single(batch.Files, value => value.BrokerId == first.Id);
+        Assert.Single(batch.Files, value => value.BrokerId == second.Id);
+        Assert.Equal("AAA", batch.Files.Single(value => value.BrokerId == first.Id).WorksheetName);
+        Assert.Equal("BBB", batch.Files.Single(value => value.BrokerId == second.Id).WorksheetName);
+    }
+
+    [Fact]
+    public void PreservesSelectedWorksheetXmlAndDoesNotModifySource()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR", "OTRA"], includeUsd: true);
+        var originalHash = new GeneratedFileHashService().ComputeSha256(source);
+        var originalXml = ReadWorksheetXml(source, "AR");
+
+        var batch = Generate(scope, source, [Broker("Corredor sintético", "AR", "OTRA")]);
+        var generated = batch.Files.Single(value => value.WorksheetName == "AR").OutputPath;
+
+        Assert.Equal(originalHash, new GeneratedFileHashService().ComputeSha256(source));
+        Assert.Equal(originalXml, ReadWorksheetXml(generated, "Detalle"));
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var names = document.WorkbookPart!.Workbook!.Sheets!.Elements<Sheet>()
+            .Select(value => value.Name!.Value).ToList();
+        Assert.Equal(["Detalle", "Monto de factura"], names);
+        Assert.DoesNotContain("OTRA", names);
+    }
+
+    [Fact]
+    public void CreatesBothCurrencyBlocksAndZerosAbsentCurrency()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["SOLOCRC"], includeUsd: false);
+
+        var batch = Generate(scope, source, [Broker("Corredor sintético", "SOLOCRC")]);
+        var generated = Assert.Single(batch.Files).OutputPath;
+        var cells = ReadCells(generated, "Monto de factura");
+        var dollarTitle = cells.Single(value => value.Text == "DÓLARES");
+        var dollarAmounts = cells.Where(value =>
+                value.Row > dollarTitle.Row && value.NumericValue.HasValue)
+            .Select(value => value.NumericValue!.Value)
+            .ToList();
+
+        Assert.Contains(cells, value => value.Text == "COLONES");
+        Assert.NotEmpty(dollarAmounts);
+        Assert.All(dollarAmounts, value => Assert.Equal(0m, value));
+    }
+
+    [Fact]
+    public void SnapshotDoesNotChangeWhenBrokerDeductionChangesLater()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+        var broker = Broker("Corredor sintético", "AR");
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ahorro original",
+            Amount = 10_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount
+        });
+
+        var batch = Generate(scope, source, [broker]);
+        broker.Deductions[0].Description = "Editado posteriormente";
+        broker.Deductions[0].Amount = 1m;
+
+        var snapshot = Assert.Single(batch.Files).Crc.Deductions.Single();
+        Assert.Equal("Ahorro original", snapshot.Description);
+        Assert.Equal(10_000m, snapshot.ConfiguredAmount);
+    }
+
+    [Fact]
+    public void MissingGeneratedFileBlocksSending()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+        var broker = Broker("Corredor sintético", "AR");
+        var batch = Generate(scope, source, [broker]);
+        var file = Assert.Single(batch.Files);
+        File.Delete(file.OutputPath);
+        var paths = new AppDataPaths(Path.Combine(scope.Path, "appdata-validation"));
+        var history = new GenerationHistoryService(paths, new FileLogger(paths));
+
+        var errors = history.ValidateGeneratedAttachments(batch, broker.Id, [file.OutputPath]);
+
+        Assert.Contains(errors, value => value.Contains("Falta el archivo", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ChangedGeneratedFileHashBlocksSending()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+        var broker = Broker("Corredor sintético", "AR");
+        var batch = Generate(scope, source, [broker]);
+        var file = Assert.Single(batch.Files);
+        using (var stream = new FileStream(file.OutputPath, FileMode.Append, FileAccess.Write, FileShare.None))
+        {
+            stream.WriteByte(0);
+        }
+        var paths = new AppDataPaths(Path.Combine(scope.Path, "appdata-validation"));
+        var history = new GenerationHistoryService(paths, new FileLogger(paths));
+
+        var errors = history.ValidateGeneratedAttachments(batch, broker.Id, [file.OutputPath]);
+
+        Assert.Contains(errors, value => value.Contains("cambió", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void GenerationDoesNotInvokeOutlookAndOnlyCreatesFilesAndHistory()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+
+        var batch = Generate(scope, source, [Broker("Corredor sintético", "AR")]);
+
+        Assert.Equal(PaymentGenerationStatus.ReadyToSend, batch.Status);
+        Assert.True(File.Exists(Path.Combine(scope.Path, "appdata", "generaciones-detalles-pago.json")));
+        Assert.Empty(batch.SentBrokerIds);
+    }
+
+    private static PaymentGenerationBatch Generate(
+        TestDirectory scope,
+        string source,
+        IReadOnlyList<Broker> brokers)
+    {
+        var paths = new AppDataPaths(Path.Combine(scope.Path, "appdata"));
+        var logger = new FileLogger(paths);
+        var historyService = new GenerationHistoryService(paths, logger);
+        var history = historyService.Load();
+        var hash = new GeneratedFileHashService();
+        var analysis = new WorkbookAnalysisService(hashService: hash).Analyze(source);
+        Assert.True(analysis.IsValid, string.Join(" ", analysis.Worksheets.SelectMany(value => value.Errors)));
+        var mapping = new WorksheetBrokerMappingService().Resolve(
+            analysis.Worksheets.Select(value => value.WorksheetName),
+            brokers);
+        Assert.True(mapping.IsValid);
+        var service = new PaymentWorkbookGenerationService(
+            new PaymentCalculationService(),
+            new FileNameSanitizer(),
+            hash,
+            historyService,
+            logger);
+        return service.Generate(new PaymentGenerationRequest
+        {
+            SourceWorkbookPath = source,
+            Period = "IQ prueba 2026",
+            OutputDirectory = Path.Combine(scope.Path, "salida"),
+            Analysis = analysis,
+            Assignments = mapping.Assignments
+        }, history);
+    }
+
+    private static Broker Broker(string name, params string[] worksheetNames) => new()
+    {
+        Id = Guid.NewGuid(),
+        Name = name,
+        PrimaryEmailAddresses = ["test@example.com"],
+        AssociatedWorksheetNames = [.. worksheetNames]
+    };
+
+    private static void CreateStandardWorkbook(string path, IReadOnlyList<string> names, bool includeUsd)
+    {
+        using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+        var workbookPart = document.AddWorkbookPart();
+        workbookPart.Workbook = new Workbook(new Sheets());
+        AddStyles(workbookPart);
+        uint sheetId = 1;
+        foreach (var name in names)
+        {
+            var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+            var sheetData = new SheetData(
+                new Row(
+                    TextCell("A1", "Reporte sintético", 1U),
+                    TextCell("B1", string.Empty, 1U),
+                    TextCell("C1", string.Empty, 1U))
+                { RowIndex = 1U, Height = 26D, CustomHeight = true },
+                new Row(
+                    TextCell("A2", "Moneda"),
+                    TextCell("B2", "Comisión corredor"),
+                    TextCell("C2", "IVA calculado"))
+                { RowIndex = 2U },
+                new Row(
+                    TextCell("A3", "CRC"),
+                    NumberCell("B3", 100_000m, 2U),
+                    FormulaCell("C3", "B3*0.13", 13_000m, 2U))
+                { RowIndex = 3U });
+            if (includeUsd)
+            {
+                sheetData.Append(new Row(
+                    TextCell("A4", "USD"),
+                    NumberCell("B4", 100m, 3U),
+                    FormulaCell("C4", "B4*0.13", 13m, 3U))
+                { RowIndex = 4U });
+            }
+
+            sheetData.Append(new Row(TextCell("A6", "Fila oculta preservada")) { RowIndex = 6U, Hidden = true });
+            worksheetPart.Worksheet = new Worksheet(
+                new Columns(
+                    new Column { Min = 1U, Max = 1U, Width = 18D, CustomWidth = true },
+                    new Column { Min = 2U, Max = 3U, Width = 22D, CustomWidth = true }),
+                sheetData,
+                new MergeCells(new MergeCell { Reference = "A1:C1" }));
+            worksheetPart.Worksheet.Save();
+            workbookPart.Workbook.Sheets!.Append(new Sheet
+            {
+                Id = workbookPart.GetIdOfPart(worksheetPart),
+                SheetId = sheetId++,
+                Name = name
+            });
+        }
+
+        workbookPart.Workbook.Save();
+    }
+
+    private static void CreateFlmWorkbook(string path)
+    {
+        using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+        var workbookPart = document.AddWorkbookPart();
+        workbookPart.Workbook = new Workbook(new Sheets());
+        AddStyles(workbookPart);
+        var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+        worksheetPart.Worksheet = new Worksheet(new SheetData(
+            new Row(TextCell("A1", "COLONES")) { RowIndex = 1U },
+            new Row(TextCell("A2", "Monto bruto comison"), NumberCell("B2", 25_000m, 2U)) { RowIndex = 2U },
+            new Row(TextCell("A5", "DÓLARES")) { RowIndex = 5U },
+            new Row(TextCell("A6", "Monto bruto comisión"), NumberCell("B6", 50m, 3U)) { RowIndex = 6U }));
+        worksheetPart.Worksheet.Save();
+        workbookPart.Workbook.Sheets!.Append(new Sheet
+        {
+            Id = workbookPart.GetIdOfPart(worksheetPart),
+            SheetId = 1U,
+            Name = "FLM"
+        });
+        workbookPart.Workbook.Save();
+    }
+
+    private static void AddStyles(WorkbookPart workbookPart)
+    {
+        var styles = workbookPart.AddNewPart<WorkbookStylesPart>();
+        styles.Stylesheet = new Stylesheet(
+            new Fonts(
+                new Font(new FontName { Val = "Calibri" }),
+                new Font(new Bold(), new Color { Rgb = "FFFFFFFF" }, new FontName { Val = "Calibri" }))
+            { Count = 2U },
+            new Fills(
+                new Fill(new PatternFill { PatternType = PatternValues.None }),
+                new Fill(new PatternFill { PatternType = PatternValues.Gray125 }),
+                new Fill(new PatternFill(
+                    new ForegroundColor { Rgb = "FF2F6F73" },
+                    new BackgroundColor { Indexed = 64U })
+                { PatternType = PatternValues.Solid }))
+            { Count = 3U },
+            new Borders(new Border()) { Count = 1U },
+            new CellStyleFormats(new CellFormat()) { Count = 1U },
+            new CellFormats(
+                new CellFormat(),
+                new CellFormat { FontId = 1U, FillId = 2U, ApplyFont = true, ApplyFill = true },
+                new CellFormat { NumberFormatId = 4U, ApplyNumberFormat = true },
+                new CellFormat { NumberFormatId = 7U, ApplyNumberFormat = true })
+            { Count = 4U },
+            new CellStyles(new CellStyle { Name = "Normal", FormatId = 0U, BuiltinId = 0U }) { Count = 1U });
+        styles.Stylesheet.Save();
+    }
+
+    private static Cell TextCell(string reference, string value, uint style = 0U) => new()
+    {
+        CellReference = reference,
+        DataType = CellValues.InlineString,
+        InlineString = new InlineString(new Text(value)),
+        StyleIndex = style
+    };
+
+    private static Cell NumberCell(string reference, decimal value, uint style = 0U) => new()
+    {
+        CellReference = reference,
+        DataType = CellValues.Number,
+        CellValue = new CellValue(value.ToString(CultureInfo.InvariantCulture)),
+        StyleIndex = style
+    };
+
+    private static Cell FormulaCell(
+        string reference,
+        string formula,
+        decimal cachedValue,
+        uint style = 0U) => new()
+    {
+        CellReference = reference,
+        CellFormula = new CellFormula(formula),
+        CellValue = new CellValue(cachedValue.ToString(CultureInfo.InvariantCulture)),
+        StyleIndex = style
+    };
+
+    private static string ReadWorksheetXml(string path, string name)
+    {
+        using var document = SpreadsheetDocument.Open(path, false);
+        var part = GetWorksheetPart(document, name);
+        return part.Worksheet!.OuterXml;
+    }
+
+    private static List<ReadCell> ReadCells(string path, string name)
+    {
+        using var document = SpreadsheetDocument.Open(path, false);
+        return GetWorksheetPart(document, name).Worksheet!.Descendants<Cell>().Select(cell =>
+        {
+            var reference = cell.CellReference?.Value ?? string.Empty;
+            var digits = new string(reference.Where(char.IsDigit).ToArray());
+            _ = uint.TryParse(digits, out var row);
+            var numeric = cell.DataType?.Value == CellValues.Number &&
+                          decimal.TryParse(cell.CellValue?.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var value)
+                ? value
+                : (decimal?)null;
+            return new ReadCell(row, cell.InlineString?.InnerText ?? cell.CellValue?.Text ?? string.Empty, numeric);
+        }).ToList();
+    }
+
+    private static WorksheetPart GetWorksheetPart(SpreadsheetDocument document, string name)
+    {
+        var workbookPart = document.WorkbookPart!;
+        var sheet = workbookPart.Workbook!.Sheets!.Elements<Sheet>()
+            .Single(value => value.Name?.Value == name);
+        return (WorksheetPart)workbookPart.GetPartById(sheet.Id!.Value!);
+    }
+
+    private sealed record ReadCell(uint Row, string Text, decimal? NumericValue);
+
+    private sealed class TestDirectory : IDisposable
+    {
+        public TestDirectory()
+        {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                $"ECS-payment-tests-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+            if (Environment.GetEnvironmentVariable("ECS_KEEP_PAYMENT_TEST_OUTPUT") == "1")
+            {
+                File.WriteAllText(
+                    System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ECS-payment-last-test-path.txt"),
+                    Path);
+            }
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            if (Environment.GetEnvironmentVariable("ECS_KEEP_PAYMENT_TEST_OUTPUT") == "1")
+            {
+                return;
+            }
+
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, true);
+            }
+        }
+    }
+}

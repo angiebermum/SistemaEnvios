@@ -255,10 +255,10 @@ internal static class SelfTestRunner
                 .Any(value => value.Contains("firma", StringComparison.OrdinalIgnoreCase)),
             "Firma: una ruta configurada faltante produce recuperación controlada");
 
-        var outlookService = new OutlookEmailService(logger);
-        var availability = outlookService.CheckAvailabilityAsync().GetAwaiter().GetResult();
-        check(!string.IsNullOrWhiteSpace(availability.Message),
-            "Outlook: la comprobación devuelve estado controlado sin enviar correos");
+        var outlookEnvironment = OutlookEnvironmentInspector.Inspect();
+        check(outlookEnvironment.ApartmentState == ApartmentState.STA &&
+              !string.IsNullOrWhiteSpace(outlookEnvironment.ProcessArchitecture),
+            "Outlook: la inspección estática valida el entorno sin crear una instancia COM");
     }
 
     private static void RunMigrationTests(string migrationRoot, Action<bool, string> check)

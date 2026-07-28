@@ -273,7 +273,7 @@ public sealed class PaymentWorkbookGenerationService
             ?? throw new InvalidDataException($"No se encontró la pestaña '{sourceWorksheetName}' en la copia.");
         var selectedRelationshipId = selected.Id?.Value
             ?? throw new InvalidDataException($"La pestaña '{sourceWorksheetName}' no tiene relación interna.");
-        if (workbookPart.GetPartById(selectedRelationshipId) is not WorksheetPart)
+        if (workbookPart.GetPartById(selectedRelationshipId) is not WorksheetPart selectedWorksheetPart)
         {
             throw new InvalidDataException($"La pestaña '{sourceWorksheetName}' no es una hoja compatible.");
         }
@@ -318,6 +318,10 @@ public sealed class PaymentWorkbookGenerationService
             SheetId = nextSheetId,
             Name = "Monto de factura"
         });
+        BrokerPercentageWorksheetNormalizer.Normalize(
+            workbookPart,
+            selectedWorksheetPart,
+            sourceWorksheetName);
         workbook.Save();
     }
 

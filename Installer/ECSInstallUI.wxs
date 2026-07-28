@@ -51,7 +51,7 @@
           Property="INSTALLDESKTOPSHORTCUT"
           CheckBoxValue="1"
           Text="Crear un acceso directo en el escritorio" />
-        <Control Id="VersionText" Type="Text" X="20" Y="185" Width="320" Height="16" NoPrefix="yes" Text="Versión 1.0.3 · Autora: Angie Bermúdez" />
+        <Control Id="VersionText" Type="Text" X="20" Y="185" Width="320" Height="16" NoPrefix="yes" Text="Versión 1.0.4 · Autora: Angie Bermúdez" />
       </Dialog>
 
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />

@@ -332,7 +332,8 @@
                     <ProgressBar Minimum="0" Maximum="{Binding ProgressMaximum}" Value="{Binding ProgressValue}" Margin="0,6,0,0" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" IsEnabled="{Binding IsUiEnabled}">
-                    <Button Content="Enviar seleccionados" Click="SendSelected_Click" />
+                    <Button Content="Enviar seleccionados" Click="SendSelected_Click"
+                            IsEnabled="{Binding CanSendSelected}" />
                     <Button Content="Enviar todos" Click="SendAll_Click" Style="{StaticResource PrimaryButtonStyle}" Margin="0" MinWidth="130" />
                 </StackPanel>
             </Grid>

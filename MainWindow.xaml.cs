@@ -33,6 +33,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly GenerationHistoryService _generationHistoryService;
     private readonly PaymentWorkbookGenerationService _paymentWorkbookGenerationService;
     private readonly GeneratedFileViewerService _generatedFileViewerService;
+    private readonly GeneratedBrokerSelectionService _generatedBrokerSelectionService;
     private readonly ObservableCollection<SentEmailRecord> _recentRecords;
     private readonly List<PaymentGenerationBatch> _paymentGenerationHistory;
     private readonly bool _isUiSmokeTest;
@@ -80,6 +81,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _generatedFileViewerService = new GeneratedFileViewerService(
             new GeneratedFileProcessLauncher(),
             logger);
+        _generatedBrokerSelectionService = new GeneratedBrokerSelectionService(logger);
         _paymentWorkbookGenerationService = new PaymentWorkbookGenerationService(
             new PaymentCalculationService(),
             _fileNameSanitizer,
@@ -245,6 +247,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public bool IsUiEnabled => !_isBusy;
+    public bool CanSendSelected => IsUiEnabled && BrokerItems.Any(item => item.IsSelected);
     public bool IsSelectedBrokerActive => SelectedBrokerItem is not null &&
         _configuration.Brokers.FirstOrDefault(value => value.Id == SelectedBrokerItem.BrokerId)?.IsActive == true;
     public string InactiveBrokersButtonText => $"Ver inactivos ({InactiveBrokers.Count})";
@@ -810,10 +813,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _activePaymentGeneration = batch;
             OnPropertyChanged(nameof(HasActivePaymentGeneration));
             GeneratedOutputDirectory = batch.OutputDirectory;
-            GenerationStatusText = $"{batch.Period}: {batch.Files.Count} archivo(s) listos para envío.";
             ApplyGeneratedAttachments(batch);
+            var selection = SelectBrokersWithCurrentGeneratedFiles(batch);
+            GenerationStatusText = selection.Succeeded
+                ? $"{batch.Period}: {batch.Files.Count} archivo(s) listos; " +
+                  $"{selection.SelectedBrokerCount} corredor(es) seleccionado(s) automáticamente."
+                : $"{batch.Period}: archivos listos, pero la selección automática no pudo completarse.";
             SaveCurrentSession();
-            OperationText = $"Generación completada: {batch.Files.Count} archivo(s).";
+            OperationText = selection.Succeeded
+                ? $"Generación completada: {batch.Files.Count} archivo(s); " +
+                  $"{selection.SelectedBrokerCount} corredor(es) seleccionado(s)."
+                : selection.ErrorMessage;
 
             var perBroker = batch.Files.GroupBy(value => value.BrokerId)
                 .Select(group => $"• {group.First().BrokerName}: {group.Count()} archivo(s)");
@@ -821,16 +831,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ? string.Empty
                 : "\n\nAdvertencias:\n" + string.Join(Environment.NewLine,
                     batch.Warnings.Distinct(StringComparer.OrdinalIgnoreCase).Select(value => $"• {value}"));
+            var excludedText = selection.ExcludedBrokerCount == 0
+                ? string.Empty
+                : $"\n{selection.ExcludedBrokerCount} corredor(es) no fueron seleccionados porque " +
+                  "están inactivos o sus archivos no están disponibles.";
+            var selectionErrorText = selection.Succeeded
+                ? string.Empty
+                : $"\n\n{selection.ErrorMessage}";
+            var hasWarnings = batch.Warnings.Count > 0 ||
+                              selection.ExcludedBrokerCount > 0 ||
+                              !selection.Succeeded;
             MessageBox.Show(
-                $"Se generaron {batch.Files.Count} archivo(s) en:\n{batch.OutputDirectory}\n\n" +
+                $"{(hasWarnings ? "Generación completada con advertencias." : "Generación completada.")}\n\n" +
+                $"{selection.GeneratedFileCount} archivo(s) generado(s).\n" +
+                $"{selection.BrokersWithGeneratedFilesCount} corredor(es) con archivos.\n" +
+                $"{selection.SelectedBrokerCount} corredor(es) seleccionado(s) automáticamente." +
+                excludedText +
+                $"\n\nCarpeta:\n{batch.OutputDirectory}\n\n" +
                 string.Join(Environment.NewLine, perBroker) +
                 warningText +
+                selectionErrorText +
                 "\n\nNo se enviaron correos.",
-                "Generación completada", MessageBoxButton.OK,
-                batch.Warnings.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                hasWarnings ? "Generación completada con advertencias" : "Generación completada",
+                MessageBoxButton.OK,
+                hasWarnings ? MessageBoxImage.Warning : MessageBoxImage.Information);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
+            ClearBrokerSelection();
+            SaveCurrentSessionWithMessageOnError(false);
             _logger.Error("No fue posible generar los detalles de pago.", ex);
             OperationText = "La generación falló; no se dejaron archivos parciales válidos.";
             GenerationStatusText = $"Error de generación: {ex.Message}";
@@ -924,6 +953,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         finally
         {
             SetBusy(false);
+        }
+    }
+
+    private GeneratedBrokerSelectionResult SelectBrokersWithCurrentGeneratedFiles(
+        PaymentGenerationBatch batch)
+    {
+        _isBulkSelectionUpdate = true;
+        try
+        {
+            return _generatedBrokerSelectionService.SelectEligibleBrokers(
+                BrokerItems,
+                _configuration.Brokers,
+                batch,
+                GeneralWorkbookPath);
+        }
+        finally
+        {
+            _isBulkSelectionUpdate = false;
+            OnPropertyChanged(nameof(AreAllBrokersSelected));
+            OnPropertyChanged(nameof(CanSendSelected));
+        }
+    }
+
+    private void ClearBrokerSelection()
+    {
+        _isBulkSelectionUpdate = true;
+        try
+        {
+            GeneratedBrokerSelectionService.ClearSelection(BrokerItems);
+        }
+        finally
+        {
+            _isBulkSelectionUpdate = false;
+            OnPropertyChanged(nameof(AreAllBrokersSelected));
+            OnPropertyChanged(nameof(CanSendSelected));
         }
     }
 
@@ -1436,6 +1500,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return new EmailSendRequest { BrokerId = item.BrokerId, BrokerName = item.BrokerName };
         }
 
+        if (!broker.IsActive)
+        {
+            errors.Add("El corredor está inactivo y no puede recibir envíos.");
+        }
+
         var recipients = _validationService.ResolveRecipients(broker, CommonCcText);
         errors.AddRange(recipients.Errors);
 
@@ -1595,6 +1664,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectedBrokerItem = BrokerItems.FirstOrDefault(item => item.BrokerId == selectedBrokerId) ?? BrokerItems.FirstOrDefault();
         _brokerItemsView.Refresh();
         OnPropertyChanged(nameof(AreAllBrokersSelected));
+        OnPropertyChanged(nameof(CanSendSelected));
         OnPropertyChanged(nameof(InactiveBrokersButtonText));
         OnPropertyChanged(nameof(BrokerSummaryText));
     }
@@ -1607,6 +1677,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(AreAllBrokersSelected));
+        OnPropertyChanged(nameof(CanSendSelected));
         if (_loaded && !_isBusy && !_isBulkSelectionUpdate)
         {
             SaveCurrentSessionWithMessageOnError(false);
@@ -1636,6 +1707,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(AreAllBrokersSelected));
+        OnPropertyChanged(nameof(CanSendSelected));
         if (_loaded)
         {
             SaveCurrentSessionWithMessageOnError(false);
@@ -1719,6 +1791,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _isBusy = busy;
         OnPropertyChanged(nameof(IsUiEnabled));
+        OnPropertyChanged(nameof(CanSendSelected));
     }
 
     private bool FilterBrokerItem(object value)

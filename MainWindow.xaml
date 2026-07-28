@@ -195,7 +195,7 @@
                                   ToolTip="Marcar o desmarcar todos los corredores" />
                     </DataGridCheckBoxColumn.Header>
                 </DataGridCheckBoxColumn>
-                <DataGridTemplateColumn Header="Corredor y correo principal" Width="260">
+                <DataGridTemplateColumn Header="Corredor y correo principal" Width="240">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <StackPanel>
@@ -217,7 +217,7 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Asistentes asociados" Width="240">
+                <DataGridTemplateColumn Header="Asistentes asociados" Width="210">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <TextBlock Text="{Binding AssistantSummary}" TextTrimming="CharacterEllipsis"
@@ -225,12 +225,7 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Excel" Width="76">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate><TextBlock Text="{Binding AttachmentCountText}" ToolTip="{Binding AttachmentSummary}" /></DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Archivos generados" Width="150">
+                <DataGridTemplateColumn Header="Archivos generados" Width="140">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <StackPanel>
@@ -262,7 +257,7 @@
                         <DataTemplate><TextBlock Text="{Binding StatusText}" Style="{StaticResource StatusBadgeStyle}" /></DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Error o advertencia" Width="180">
+                <DataGridTemplateColumn Header="Error o advertencia" Width="160">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <TextBlock Text="{Binding LastError}" TextWrapping="Wrap" MaxHeight="36" ToolTip="{Binding LastError}" Foreground="{StaticResource ErrorBrush}" />

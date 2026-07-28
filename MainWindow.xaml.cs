@@ -32,6 +32,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly DesktopOutputDirectoryService _desktopOutputService = new();
     private readonly GenerationHistoryService _generationHistoryService;
     private readonly PaymentWorkbookGenerationService _paymentWorkbookGenerationService;
+    private readonly GeneratedFileViewerService _generatedFileViewerService;
     private readonly ObservableCollection<SentEmailRecord> _recentRecords;
     private readonly List<PaymentGenerationBatch> _paymentGenerationHistory;
     private readonly bool _isUiSmokeTest;
@@ -57,7 +58,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isBulkSelectionUpdate;
     private string _generalWorkbookPath = string.Empty;
     private string _workbookAnalysisText = "No hay un Excel general cargado.";
-    private string _generationStatusText = "Sin generación activa.";
+    private string _generationStatusText = "Todavía no se han generado archivos para esta sesión.";
     private string _generatedOutputDirectory = string.Empty;
     private WorkbookAnalysisResult? _currentWorkbookAnalysis;
     private PaymentGenerationBatch? _activePaymentGeneration;
@@ -76,6 +77,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var hashService = new GeneratedFileHashService();
         _workbookAnalysisService = new WorkbookAnalysisService(hashService: hashService);
         _generationHistoryService = new GenerationHistoryService(paths, logger);
+        _generatedFileViewerService = new GeneratedFileViewerService(
+            new GeneratedFileProcessLauncher(),
+            logger);
         _paymentWorkbookGenerationService = new PaymentWorkbookGenerationService(
             new PaymentCalculationService(),
             _fileNameSanitizer,
@@ -168,6 +172,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool CanOpenGeneratedFolder =>
         !string.IsNullOrWhiteSpace(GeneratedOutputDirectory) && Directory.Exists(GeneratedOutputDirectory);
+
+    public bool HasActivePaymentGeneration => _activePaymentGeneration is not null;
 
     public string Subject
     {
@@ -802,6 +808,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     _paymentGenerationHistory,
                     progress));
             _activePaymentGeneration = batch;
+            OnPropertyChanged(nameof(HasActivePaymentGeneration));
             GeneratedOutputDirectory = batch.OutputDirectory;
             GenerationStatusText = $"{batch.Period}: {batch.Files.Count} archivo(s) listos para envío.";
             ApplyGeneratedAttachments(batch);
@@ -994,6 +1001,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : $"Se agregaron {added} archivo(s) a {item.BrokerName}.";
     }
 
+    private void ViewGeneratedFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.CommandParameter is not BrokerSendItem item)
+        {
+            return;
+        }
+
+        if (_activePaymentGeneration is null)
+        {
+            MessageBox.Show(
+                "Todavía no se han generado archivos para esta sesión.",
+                "Archivos generados", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var files = _generatedFileViewerService.GetFilesForBroker(_activePaymentGeneration, item);
+        if (files.Count == 0)
+        {
+            MessageBox.Show(
+                $"No hay archivos generados asociados a {item.BrokerName}.",
+                "Archivos generados", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        new GeneratedFilesWindow(item, files, _generatedFileViewerService)
+        {
+            Owner = this
+        }.ShowDialog();
+    }
+
     private void RemoveAttachment_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button button || button.Tag is not BrokerSendItem item || button.DataContext is not string path)
@@ -1123,8 +1160,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _activePaymentGeneration = null;
+        OnPropertyChanged(nameof(HasActivePaymentGeneration));
         GeneratedOutputDirectory = string.Empty;
-        GenerationStatusText = "Sin generación activa.";
+        GenerationStatusText = "Todavía no se han generado archivos para esta sesión.";
 
         if (resetChoice == MessageBoxResult.Yes)
         {

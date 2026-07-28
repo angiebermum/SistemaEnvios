@@ -1,0 +1,84 @@
+<Window x:Class="ECS.CommissionsMailer.Views.GeneratedFilesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:ECS.CommissionsMailer.Views"
+        Title="Archivos generados" Width="940" Height="610" MinWidth="760" MinHeight="460"
+        WindowStartupLocation="CenterOwner" Style="{StaticResource DialogWindowStyle}">
+    <Window.Resources>
+        <views:GeneratedFileNameConverter x:Key="GeneratedFileNameConverter" />
+        <views:GeneratedFileAvailabilityConverter x:Key="GeneratedFileAvailabilityConverter" />
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="{Binding TitleText}" Style="{StaticResource PageTitleTextStyle}"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="{Binding FileCountText}" Style="{StaticResource MutedTextStyle}"
+                       Margin="0,5,0,0" />
+        </StackPanel>
+
+        <DataGrid x:Name="GeneratedFilesGrid" Grid.Row="1" Margin="0,18,0,0"
+                  ItemsSource="{Binding Files}" IsReadOnly="True"
+                  RowDetailsVisibilityMode="Collapsed"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="Archivo" Width="3*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2,5">
+                                <TextBlock Text="{Binding OutputPath, Converter={StaticResource GeneratedFileNameConverter}}"
+                                           FontWeight="SemiBold" TextWrapping="Wrap"
+                                           ToolTip="{Binding OutputPath}" />
+                                <TextBlock Text="{Binding OutputPath}" Style="{StaticResource CaptionTextStyle}"
+                                           TextWrapping="Wrap" ToolTip="{Binding OutputPath}" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Pestaña de origen" Binding="{Binding WorksheetName}"
+                                    Width="1.2*" />
+                <DataGridTemplateColumn Header="Estado" Width="120">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding OutputPath, Converter={StaticResource GeneratedFileAvailabilityConverter}}"
+                                       FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{StaticResource ErrorBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding OutputPath, Converter={StaticResource GeneratedFileAvailabilityConverter}}"
+                                                         Value="Disponible">
+                                                <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Acción" Width="125">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Button Content="Ver archivo" Click="ViewFile_Click" CommandParameter="{Binding}"
+                                    Style="{StaticResource CompactButtonStyle}" Margin="0"
+                                    HorizontalAlignment="Left" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
+                    Margin="0,18,0,0">
+            <Button Content="Cerrar" IsCancel="True" Margin="0" MinWidth="90" />
+        </StackPanel>
+    </Grid>
+</Window>

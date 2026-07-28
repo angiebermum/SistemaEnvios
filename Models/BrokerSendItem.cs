@@ -202,6 +202,11 @@ public sealed class BrokerSendItem : ObservableObject
     public string AttachmentCountText => AttachmentCount == 1 ? "1 archivo" : $"{AttachmentCount} archivos";
 
     [JsonIgnore]
+    public string GeneratedAttachmentCountText => GeneratedAttachmentPaths.Count == 1
+        ? "1 archivo"
+        : $"{GeneratedAttachmentPaths.Count} archivos";
+
+    [JsonIgnore]
     public string AttachmentSummary => AttachmentPaths.Count == 0
         ? "Sin archivos"
         : string.Join(Environment.NewLine, AttachmentPaths.Select(Path.GetFileName));
@@ -265,6 +270,7 @@ public sealed class BrokerSendItem : ObservableObject
     {
         OnPropertyChanged(nameof(AttachmentCount));
         OnPropertyChanged(nameof(AttachmentCountText));
+        OnPropertyChanged(nameof(GeneratedAttachmentCountText));
         OnPropertyChanged(nameof(AttachmentSummary));
         OnPropertyChanged(nameof(ManualAttachmentPaths));
         OnPropertyChanged(nameof(HasGeneratedAttachments));

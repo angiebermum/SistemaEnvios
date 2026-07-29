@@ -234,6 +234,50 @@ public sealed class GeneratedFileViewerServiceTests
         Assert.Single(launcher.Requests);
     }
 
+    [Fact]
+    public void AssociatedManualXlsKeepsExistingViewBehavior()
+    {
+        using var scope = new TestDirectory();
+        var path = scope.File("manual.xls");
+        File.WriteAllText(path, "legacy excel");
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([path])
+        };
+        var launcher = new RecordingProcessLauncher();
+        var service = CreateService(scope, launcher);
+
+        var result = service.OpenAssociated(path, broker);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(path, Assert.Single(launcher.Requests).FileName);
+        Assert.Equal([path], broker.AttachmentPaths);
+        Assert.Empty(broker.GeneratedAttachmentPaths);
+    }
+
+    [Fact]
+    public void MissingAssociatedFileRemainsAssociatedUntilUserUnlinksIt()
+    {
+        using var scope = new TestDirectory();
+        var path = scope.File("missing-associated.xlsx");
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([path])
+        };
+        var launcher = new RecordingProcessLauncher();
+        var service = CreateService(scope, launcher);
+
+        var result = service.OpenAssociated(path, broker);
+
+        Assert.Equal(GeneratedFileOpenStatus.FileNotFound, result.Status);
+        Assert.Empty(launcher.Requests);
+        Assert.Equal([path], broker.AttachmentPaths);
+    }
+
     private static GeneratedFileViewerService CreateService(
         TestDirectory scope,
         IGeneratedFileProcessLauncher launcher) =>

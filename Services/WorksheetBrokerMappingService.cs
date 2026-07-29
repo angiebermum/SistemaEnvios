@@ -102,6 +102,23 @@ public sealed class WorksheetBrokerMappingService
             {
                 errors.Add($"El rebajo '{deduction.Description}' de '{broker.Name}' no tiene un tipo válido.");
             }
+
+            var targetWorksheetName = NormalizeWorksheetName(deduction.TargetWorksheetName);
+            if (targetWorksheetName.Length == 0)
+            {
+                errors.Add(
+                    $"El rebajo '{deduction.Description}' de '{broker.Name}' no tiene una pestaña destino.");
+            }
+            else if (!broker.AssociatedWorksheetNames.Any(value =>
+                         string.Equals(
+                             NormalizeWorksheetName(value),
+                             targetWorksheetName,
+                             StringComparison.OrdinalIgnoreCase)))
+            {
+                errors.Add(
+                    $"El rebajo '{deduction.Description}' de '{broker.Name}' apunta a la pestaña " +
+                    $"'{targetWorksheetName}', que no está asociada a ese corredor.");
+            }
         }
 
         return errors;

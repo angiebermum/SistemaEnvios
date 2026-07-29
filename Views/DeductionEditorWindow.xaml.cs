@@ -8,16 +8,32 @@ namespace ECS.CommissionsMailer.Views;
 
 public partial class DeductionEditorWindow : Window
 {
-    public DeductionEditorWindow(BrokerDeduction? deduction)
+    public DeductionEditorWindow(BrokerDeduction? deduction, IEnumerable<string> worksheetNames)
     {
         InitializeComponent();
         EditedDeduction = deduction?.Clone() ?? new BrokerDeduction();
+        var availableWorksheetNames = worksheetNames
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        WorksheetComboBox.ItemsSource = availableWorksheetNames;
         Title = deduction is null ? "Agregar rebajo" : "Editar rebajo";
         DescriptionTextBox.Text = EditedDeduction.Description;
         AmountTextBox.Text = EditedDeduction.Amount.ToString("0.00", CultureInfo.CurrentCulture);
         CurrencyComboBox.SelectedIndex = EditedDeduction.Currency == DeductionCurrency.CRC ? 0 : 1;
         ApplicationTypeComboBox.SelectedIndex =
             EditedDeduction.ApplicationType == DeductionApplicationType.GrossCommission ? 0 : 1;
+        WorksheetComboBox.SelectedItem = availableWorksheetNames.FirstOrDefault(value =>
+            string.Equals(
+                value,
+                EditedDeduction.TargetWorksheetName?.Trim(),
+                StringComparison.OrdinalIgnoreCase));
+        if (deduction is null && availableWorksheetNames.Count == 1)
+        {
+            WorksheetComboBox.SelectedIndex = 0;
+        }
+
         Loaded += (_, _) => DescriptionTextBox.Focus();
     }
 
@@ -51,6 +67,12 @@ public partial class DeductionEditorWindow : Window
             errors.Add("Seleccione un tipo de aplicación.");
         }
 
+        var targetWorksheetName = WorksheetComboBox.SelectedItem as string;
+        if (string.IsNullOrWhiteSpace(targetWorksheetName))
+        {
+            errors.Add("Seleccione la pestaña donde se aplicará el rebajo.");
+        }
+
         if (errors.Count > 0)
         {
             MessageBox.Show(string.Join(Environment.NewLine, errors.Select(value => $"• {value}")),
@@ -62,6 +84,7 @@ public partial class DeductionEditorWindow : Window
         EditedDeduction.Amount = amount;
         EditedDeduction.Currency = currency;
         EditedDeduction.ApplicationType = applicationType;
+        EditedDeduction.TargetWorksheetName = targetWorksheetName!.Trim();
         DialogResult = true;
     }
 

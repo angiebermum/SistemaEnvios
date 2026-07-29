@@ -144,6 +144,22 @@ public partial class BrokerEditorWindow : Window
 
         var index = WorksheetNames.IndexOf(selected);
         WorksheetNames[index] = editor.WorksheetName;
+        for (var deductionIndex = 0; deductionIndex < Deductions.Count; deductionIndex++)
+        {
+            var deduction = Deductions[deductionIndex];
+            if (!string.Equals(
+                    deduction.TargetWorksheetName?.Trim(),
+                    selected.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var replacement = deduction.Clone();
+            replacement.TargetWorksheetName = editor.WorksheetName;
+            Deductions[deductionIndex] = replacement;
+        }
+
         WorksheetsGrid.SelectedIndex = index;
     }
 
@@ -152,6 +168,20 @@ public partial class BrokerEditorWindow : Window
         if (WorksheetsGrid.SelectedItem is not string selected)
         {
             WarnSelectWorksheet();
+            return;
+        }
+
+        var linkedDeductions = Deductions.Where(value =>
+            string.Equals(
+                value.TargetWorksheetName?.Trim(),
+                selected.Trim(),
+                StringComparison.OrdinalIgnoreCase)).ToList();
+        if (linkedDeductions.Count > 0)
+        {
+            MessageBox.Show(
+                $"La pestaña '{selected}' tiene {linkedDeductions.Count} rebajo(s) asociado(s). " +
+                "Edite o elimine esos rebajos antes de quitar la pestaña.",
+                "Pestaña con rebajos", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -164,7 +194,15 @@ public partial class BrokerEditorWindow : Window
 
     private void AddDeduction_Click(object sender, RoutedEventArgs e)
     {
-        var editor = new DeductionEditorWindow(null) { Owner = this };
+        if (WorksheetNames.Count == 0)
+        {
+            MessageBox.Show(
+                "Agregue al menos una pestaña asociada antes de configurar un rebajo.",
+                "Rebajos", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var editor = new DeductionEditorWindow(null, WorksheetNames) { Owner = this };
         if (editor.ShowDialog() == true)
         {
             editor.EditedDeduction.DisplayOrder = Deductions.Count == 0
@@ -183,7 +221,7 @@ public partial class BrokerEditorWindow : Window
             return;
         }
 
-        var editor = new DeductionEditorWindow(deduction) { Owner = this };
+        var editor = new DeductionEditorWindow(deduction, WorksheetNames) { Owner = this };
         if (editor.ShowDialog() != true)
         {
             return;

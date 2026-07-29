@@ -49,6 +49,11 @@ public sealed class StandardCommissionWorksheetAnalyzer : ICommissionWorksheetAn
     public CommissionWorksheetAnalysis Analyze(WorksheetData worksheet)
     {
         var result = CommissionWorksheetAnalyzerSupport.CreateResult(worksheet.Name, Name);
+        if (CommissionWorksheetAnalyzerSupport.FindGrossSummaryCells(worksheet).Count > 0)
+        {
+            return CommissionWorksheetAnalyzerSupport.AnalyzeSummaryLayout(worksheet, result);
+        }
+
         var header = FindTabularHeader(worksheet);
         if (header is null)
         {
@@ -175,7 +180,9 @@ internal static class CommissionWorksheetAnalyzerSupport
 
     public static List<WorksheetCellData> FindGrossSummaryCells(WorksheetData worksheet) =>
         worksheet.Cells.Where(value =>
-            GrossLabels.Any(label => value.NormalizedText.Contains(label, StringComparison.Ordinal))).ToList();
+                GrossLabels.Any(label => value.NormalizedText.Contains(label, StringComparison.Ordinal)) &&
+                FindAmountNearLabel(worksheet, value) is not null)
+            .ToList();
 
     public static CommissionWorksheetAnalysis AnalyzeSummaryLayout(
         WorksheetData worksheet,
@@ -309,7 +316,9 @@ internal static class CommissionWorksheetAnalyzerSupport
             .Where(value =>
                 value.RowIndex <= label.RowIndex &&
                 label.RowIndex - value.RowIndex <= 30 &&
-                Math.Abs(value.ColumnIndex - amount.ColumnIndex) <= 3 &&
+                Math.Min(
+                    Math.Abs(value.ColumnIndex - label.ColumnIndex),
+                    Math.Abs(value.ColumnIndex - amount.ColumnIndex)) <= 3 &&
                 TryParseCurrency(value.Text, out _))
             .OrderBy(value => label.RowIndex - value.RowIndex)
             .ThenBy(value => Math.Abs(value.ColumnIndex - amount.ColumnIndex))

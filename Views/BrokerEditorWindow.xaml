@@ -141,7 +141,7 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock Text="Rebajos configurables" Style="{StaticResource SectionTitleTextStyle}" />
-                            <TextBlock Text="Se aplican por moneda y por etapa, en el orden mostrado."
+                            <TextBlock Text="Cada rebajo se aplica solo a la pestaña seleccionada."
                                        Style="{StaticResource CaptionTextStyle}" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
@@ -156,8 +156,9 @@
                               IsReadOnly="True" AutoGenerateColumns="False">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Descripción" Binding="{Binding Description}" Width="2*" />
+                            <DataGridTextColumn Header="Pestaña destino" Binding="{Binding TargetWorksheetText}" Width="140" />
                             <DataGridTextColumn Header="Monto" Binding="{Binding Amount, StringFormat=N2}" Width="110" />
-                            <DataGridTextColumn Header="Moneda" Binding="{Binding CurrencyText}" Width="130" />
+                            <DataGridTextColumn Header="Moneda" Binding="{Binding CurrencyText}" Width="120" />
                             <DataGridTextColumn Header="Aplicación" Binding="{Binding ApplicationTypeText}" Width="2*" />
                         </DataGrid.Columns>
                     </DataGrid>

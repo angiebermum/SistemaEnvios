@@ -85,7 +85,8 @@ public sealed class MappingAndPersistenceTests
             Description = "Ahorro",
             Amount = 1250.75m,
             Currency = DeductionCurrency.CRC,
-            ApplicationType = DeductionApplicationType.PayableAmount
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "SYN"
         };
         broker.Deductions.Add(deduction);
         broker.Deductions[0].Description = "Ahorro voluntario";
@@ -96,6 +97,7 @@ public sealed class MappingAndPersistenceTests
         Assert.Single(reloaded.Deductions);
         Assert.Equal("Ahorro voluntario", reloaded.Deductions[0].Description);
         Assert.Equal(1250.75m, reloaded.Deductions[0].Amount);
+        Assert.Equal("SYN", reloaded.Deductions[0].TargetWorksheetName);
         reloaded.Deductions.RemoveAt(0);
         Assert.Empty(reloaded.Deductions);
     }
@@ -108,7 +110,27 @@ public sealed class MappingAndPersistenceTests
 
         var errors = _service.ValidateDeductions(broker);
 
-        Assert.Equal(2, errors.Count);
+        Assert.Equal(3, errors.Count);
+        Assert.Contains(errors, value => value.Contains("pestaña destino", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void DeductionTargetMustBelongToTheSameBroker()
+    {
+        var broker = Broker("Corredor sintético", "AQO", "AQM (HC)");
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ahorro",
+            Amount = 100_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "OTRA"
+        });
+
+        var errors = _service.ValidateDeductions(broker);
+
+        var error = Assert.Single(errors);
+        Assert.Contains("no está asociada", error, StringComparison.OrdinalIgnoreCase);
     }
 
     private static Broker Broker(string name, params string[] worksheetNames) => new()

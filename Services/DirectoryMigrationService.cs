@@ -110,6 +110,24 @@ internal sealed class DirectoryMigrationService
                 }
 
                 deduction.Description = deduction.Description?.Trim() ?? string.Empty;
+                var targetWorksheetName = WorksheetBrokerMappingService.NormalizeWorksheetName(
+                    deduction.TargetWorksheetName);
+                if (targetWorksheetName.Length == 0 && broker.AssociatedWorksheetNames.Count == 1)
+                {
+                    deduction.TargetWorksheetName = broker.AssociatedWorksheetNames[0];
+                }
+                else
+                {
+                    deduction.TargetWorksheetName = broker.AssociatedWorksheetNames.FirstOrDefault(value =>
+                        string.Equals(
+                            WorksheetBrokerMappingService.NormalizeWorksheetName(value),
+                            targetWorksheetName,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (deduction.TargetWorksheetName is null && targetWorksheetName.Length > 0)
+                    {
+                        deduction.TargetWorksheetName = targetWorksheetName;
+                    }
+                }
             }
 
             foreach (var assistant in broker.Assistants)

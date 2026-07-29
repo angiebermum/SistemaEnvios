@@ -14,6 +14,7 @@ public sealed class PaymentCalculationService
         IEnumerable<BrokerDeduction> deductions)
     {
         var ordered = deductions
+            .Where(value => value.AppliesToWorksheet(analysis.WorksheetName))
             .OrderBy(value => value.DisplayOrder)
             .ThenBy(value => value.Description, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
@@ -45,6 +46,7 @@ public sealed class PaymentCalculationService
             AppliedAmount = 0m,
             Currency = value.Currency,
             ApplicationType = value.ApplicationType,
+            TargetWorksheetName = value.TargetWorksheetName!.Trim(),
             DisplayOrder = value.DisplayOrder
         }).ToList();
 
@@ -63,7 +65,7 @@ public sealed class PaymentCalculationService
 
         if (summary.GrossCommission < 0)
         {
-            result.Observation = "Comisión negativa: no se paga en esta moneda.";
+            result.Observation = "Comisión negativa: no procede el pago ni la facturación.";
             result.Warnings.Add(
                 $"La comisión original en {summary.Currency} es negativa. El bloque financiero se muestra en cero.");
             return result;
@@ -85,7 +87,7 @@ public sealed class PaymentCalculationService
         if (adjusted < minimum)
         {
             result.MinimumApplied = true;
-            result.Observation = "No se paga: comisión inferior al mínimo establecido.";
+            result.Observation = "Comisión acumulada por ser inferior al monto mínimo establecido.";
             result.Warnings.Add(
                 $"La comisión ajustada en {summary.Currency} ({adjusted:N2}) es inferior al mínimo ({minimum:N2}); " +
                 "el bloque financiero se muestra en cero.");

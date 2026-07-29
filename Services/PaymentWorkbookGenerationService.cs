@@ -344,16 +344,22 @@ public sealed class PaymentWorkbookGenerationService
         var styles = EnsurePaymentStyles(workbookPart);
         var worksheet = new Worksheet();
         worksheet.Append(new Columns(
-            new Column { Min = 1U, Max = 1U, Width = 42D, CustomWidth = true },
-            new Column { Min = 2U, Max = 2U, Width = 22D, CustomWidth = true }));
+            new Column { Min = 1U, Max = 1U, Width = 4D, CustomWidth = true },
+            new Column { Min = 2U, Max = 2U, Width = 42D, CustomWidth = true },
+            new Column { Min = 3U, Max = 3U, Width = 22D, CustomWidth = true },
+            new Column { Min = 4U, Max = 4U, Width = 4D, CustomWidth = true },
+            new Column { Min = 5U, Max = 5U, Width = 42D, CustomWidth = true },
+            new Column { Min = 6U, Max = 6U, Width = 22D, CustomWidth = true }));
         var sheetData = new SheetData();
         worksheet.Append(sheetData);
         var mergeCells = new MergeCells();
         worksheet.Append(mergeCells);
-        uint rowIndex = 1;
-        WriteCurrencyBlock(sheetData, mergeCells, ref rowIndex, "COLONES", calculation.Crc, styles);
-        rowIndex += 2;
-        WriteCurrencyBlock(sheetData, mergeCells, ref rowIndex, "DÓLARES", calculation.Usd, styles);
+        uint crcRowIndex = 2;
+        uint usdRowIndex = 2;
+        WriteCurrencyBlock(
+            sheetData, mergeCells, ref crcRowIndex, "B", "C", "COLONES", calculation.Crc, styles);
+        WriteCurrencyBlock(
+            sheetData, mergeCells, ref usdRowIndex, "E", "F", "DÓLARES", calculation.Usd, styles);
         worksheet.Append(new PageMargins
         {
             Left = 0.4D,
@@ -376,6 +382,8 @@ public sealed class PaymentWorkbookGenerationService
         SheetData sheetData,
         MergeCells mergeCells,
         ref uint rowIndex,
+        string labelColumn,
+        string amountColumn,
         string title,
         PaymentCurrencyCalculation calculation,
         PaymentSheetStyles styles)
@@ -389,16 +397,20 @@ public sealed class PaymentWorkbookGenerationService
                                    calculation.IsValid &&
                                    calculation.GrossCommissionOriginal >= calculation.MinimumAmount;
 
-        var titleRow = new Row { RowIndex = rowIndex, Height = 24D, CustomHeight = true };
-        titleRow.Append(TextCell($"A{rowIndex}", title, styles.Title));
-        titleRow.Append(TextCell($"B{rowIndex}", string.Empty, styles.Title));
-        sheetData.Append(titleRow);
-        mergeCells.Append(new MergeCell { Reference = $"A{rowIndex}:B{rowIndex}" });
+        var titleRow = GetOrCreateRow(sheetData, rowIndex, 24D);
+        titleRow.Append(TextCell($"{labelColumn}{rowIndex}", title, styles.Title));
+        titleRow.Append(TextCell($"{amountColumn}{rowIndex}", string.Empty, styles.Title));
+        mergeCells.Append(new MergeCell
+        {
+            Reference = $"{labelColumn}{rowIndex}:{amountColumn}{rowIndex}"
+        });
         rowIndex++;
 
         WriteAmountRow(
             sheetData,
             rowIndex++,
+            labelColumn,
+            amountColumn,
             "Monto bruto comisión",
             showFinancialAmounts ? calculation.GrossCommissionOriginal : 0m,
             styles.StrongLabel,
@@ -408,11 +420,12 @@ public sealed class PaymentWorkbookGenerationService
             .Where(value => value.ApplicationType == DeductionApplicationType.GrossCommission)
             .OrderBy(value => value.DisplayOrder)
             .ToList();
-        WriteAmountRow(
+        WriteEmptyAmountRow(
             sheetData,
             rowIndex++,
-            "Rebajos al monto bruto",
-            showFinancialAmounts ? -calculation.GrossDeductions : 0m,
+            labelColumn,
+            amountColumn,
+            "Ajustes al monto bruto",
             styles.StrongLabel,
             amountStyle);
         foreach (var deduction in grossDeductions)
@@ -420,6 +433,8 @@ public sealed class PaymentWorkbookGenerationService
             WriteAmountRow(
                 sheetData,
                 rowIndex++,
+                labelColumn,
+                amountColumn,
                 $"   {deduction.Description}",
                 showFinancialAmounts ? -deduction.AppliedAmount : 0m,
                 styles.Label,
@@ -429,6 +444,8 @@ public sealed class PaymentWorkbookGenerationService
         WriteAmountRow(
             sheetData,
             rowIndex++,
+            labelColumn,
+            amountColumn,
             "Monto bruto ajustado",
             showFinancialAmounts ? calculation.AdjustedGrossCommission : 0m,
             styles.StrongLabel,
@@ -436,6 +453,8 @@ public sealed class PaymentWorkbookGenerationService
         WriteAmountRow(
             sheetData,
             rowIndex++,
+            labelColumn,
+            amountColumn,
             "IVA 13%",
             showFinancialAmounts ? calculation.Vat : 0m,
             styles.Label,
@@ -443,13 +462,19 @@ public sealed class PaymentWorkbookGenerationService
         WriteAmountRow(
             sheetData,
             rowIndex++,
+            labelColumn,
+            amountColumn,
             "Monto factura",
             showFinancialAmounts ? calculation.InvoiceAmount : 0m,
-            styles.StrongLabel,
-            strongAmountStyle);
+            styles.InvoiceLabel,
+            calculation.Currency == DeductionCurrency.CRC
+                ? styles.CrcInvoiceAmount
+                : styles.UsdInvoiceAmount);
         WriteAmountRow(
             sheetData,
             rowIndex++,
+            labelColumn,
+            amountColumn,
             "Retención 2%",
             showFinancialAmounts ? -calculation.Withholding : 0m,
             styles.Label,
@@ -459,11 +484,12 @@ public sealed class PaymentWorkbookGenerationService
             .Where(value => value.ApplicationType == DeductionApplicationType.PayableAmount)
             .OrderBy(value => value.DisplayOrder)
             .ToList();
-        WriteAmountRow(
+        WriteEmptyAmountRow(
             sheetData,
             rowIndex++,
-            "Rebajos al monto a pagar",
-            showFinancialAmounts ? -calculation.FinalDeductions : 0m,
+            labelColumn,
+            amountColumn,
+            "Deducciones",
             styles.StrongLabel,
             amountStyle);
         foreach (var deduction in finalDeductions)
@@ -471,6 +497,8 @@ public sealed class PaymentWorkbookGenerationService
             WriteAmountRow(
                 sheetData,
                 rowIndex++,
+                labelColumn,
+                amountColumn,
                 $"   {deduction.Description}",
                 showFinancialAmounts ? -deduction.AppliedAmount : 0m,
                 styles.Label,
@@ -480,17 +508,25 @@ public sealed class PaymentWorkbookGenerationService
         WriteAmountRow(
             sheetData,
             rowIndex++,
+            labelColumn,
+            amountColumn,
             "Monto depositado",
             showFinancialAmounts ? calculation.DepositedAmount : 0m,
             styles.TotalLabel,
             calculation.Currency == DeductionCurrency.CRC ? styles.CrcTotalAmount : styles.UsdTotalAmount);
         if (!string.IsNullOrWhiteSpace(calculation.Observation))
         {
-            var noteRow = new Row { RowIndex = rowIndex };
-            noteRow.Append(TextCell($"A{rowIndex}", calculation.Observation, styles.Note));
-            noteRow.Append(TextCell($"B{rowIndex}", string.Empty, styles.Note));
-            sheetData.Append(noteRow);
-            mergeCells.Append(new MergeCell { Reference = $"A{rowIndex}:B{rowIndex}" });
+            var noteStyle = calculation.MinimumApplied ||
+                            calculation.Observation.StartsWith("Comisión negativa:", StringComparison.Ordinal)
+                ? styles.MinimumNote
+                : styles.Note;
+            var noteRow = GetOrCreateRow(sheetData, rowIndex);
+            noteRow.Append(TextCell($"{labelColumn}{rowIndex}", calculation.Observation, noteStyle));
+            noteRow.Append(TextCell($"{amountColumn}{rowIndex}", string.Empty, noteStyle));
+            mergeCells.Append(new MergeCell
+            {
+                Reference = $"{labelColumn}{rowIndex}:{amountColumn}{rowIndex}"
+            });
             rowIndex++;
         }
     }
@@ -498,15 +534,48 @@ public sealed class PaymentWorkbookGenerationService
     private static void WriteAmountRow(
         SheetData sheetData,
         uint rowIndex,
+        string labelColumn,
+        string amountColumn,
         string label,
         decimal amount,
         uint labelStyle,
         uint amountStyle)
     {
-        var row = new Row { RowIndex = rowIndex, Height = 19D, CustomHeight = true };
-        row.Append(TextCell($"A{rowIndex}", label, labelStyle));
-        row.Append(NumberCell($"B{rowIndex}", amount, amountStyle));
-        sheetData.Append(row);
+        var row = GetOrCreateRow(sheetData, rowIndex, 19D);
+        row.Append(TextCell($"{labelColumn}{rowIndex}", label, labelStyle));
+        row.Append(NumberCell($"{amountColumn}{rowIndex}", amount, amountStyle));
+    }
+
+    private static void WriteEmptyAmountRow(
+        SheetData sheetData,
+        uint rowIndex,
+        string labelColumn,
+        string amountColumn,
+        string label,
+        uint labelStyle,
+        uint amountStyle)
+    {
+        var row = GetOrCreateRow(sheetData, rowIndex, 19D);
+        row.Append(TextCell($"{labelColumn}{rowIndex}", label, labelStyle));
+        row.Append(TextCell($"{amountColumn}{rowIndex}", string.Empty, amountStyle));
+    }
+
+    private static Row GetOrCreateRow(SheetData sheetData, uint rowIndex, double? height = null)
+    {
+        var row = sheetData.Elements<Row>().FirstOrDefault(value => value.RowIndex?.Value == rowIndex);
+        if (row is null)
+        {
+            row = new Row { RowIndex = rowIndex };
+            sheetData.Append(row);
+        }
+
+        if (height.HasValue && (row.Height?.Value ?? 0D) < height.Value)
+        {
+            row.Height = height.Value;
+            row.CustomHeight = true;
+        }
+
+        return row;
     }
 
     private static Cell TextCell(string reference, string value, uint style) => new()
@@ -563,6 +632,12 @@ public sealed class PaymentWorkbookGenerationService
             new Color { Rgb = "FF6B7280" },
             new FontSize { Val = 10D },
             new FontName { Val = "Calibri" }));
+        var minimumNoteFont = Append(stylesheet.Fonts, new Font(
+            new Bold(),
+            new Italic(),
+            new Color { Rgb = "FF6B7280" },
+            new FontSize { Val = 10D },
+            new FontName { Val = "Calibri" }));
         var headerFill = Append(stylesheet.Fills, new Fill(new PatternFill(
             new ForegroundColor { Rgb = "FF2F6F73" },
             new BackgroundColor { Indexed = 64U })
@@ -571,11 +646,15 @@ public sealed class PaymentWorkbookGenerationService
             new ForegroundColor { Rgb = "FFE8F3F3" },
             new BackgroundColor { Indexed = 64U })
         { PatternType = PatternValues.Solid }));
+        var invoiceFill = Append(stylesheet.Fills, new Fill(new PatternFill(
+            new ForegroundColor { Rgb = "FFFFF2CC" },
+            new BackgroundColor { Indexed = 64U })
+        { PatternType = PatternValues.Solid }));
         var thinBorder = Append(stylesheet.Borders, new Border(
-            new LeftBorder { Style = BorderStyleValues.Thin, Color = new Color { Rgb = "FFD1D5DB" } },
-            new RightBorder { Style = BorderStyleValues.Thin, Color = new Color { Rgb = "FFD1D5DB" } },
-            new TopBorder { Style = BorderStyleValues.Thin, Color = new Color { Rgb = "FFD1D5DB" } },
-            new BottomBorder { Style = BorderStyleValues.Thin, Color = new Color { Rgb = "FFD1D5DB" } },
+            new LeftBorder { Style = BorderStyleValues.Thin, Color = new Color { Rgb = "FF7A7A7A" } },
+            new RightBorder { Style = BorderStyleValues.Thin, Color = new Color { Rgb = "FF7A7A7A" } },
+            new TopBorder { Style = BorderStyleValues.Thin, Color = new Color { Rgb = "FF7A7A7A" } },
+            new BottomBorder { Style = BorderStyleValues.Thin, Color = new Color { Rgb = "FF7A7A7A" } },
             new DiagonalBorder()));
 
         stylesheet.NumberingFormats ??= new NumberingFormats();
@@ -614,7 +693,14 @@ public sealed class PaymentWorkbookGenerationService
             HorizontalAlignmentValues.Right));
         var usdTotal = Append(stylesheet.CellFormats, Format(boldFont, totalFill, thinBorder, usdFormatId, true,
             HorizontalAlignmentValues.Right));
-        var note = Append(stylesheet.CellFormats, Format(noteFont, 0U, 0U, 0U, true,
+        var invoiceLabel = Append(stylesheet.CellFormats, Format(boldFont, invoiceFill, thinBorder));
+        var crcInvoice = Append(stylesheet.CellFormats, Format(
+            boldFont, invoiceFill, thinBorder, crcFormatId, true, HorizontalAlignmentValues.Right));
+        var usdInvoice = Append(stylesheet.CellFormats, Format(
+            boldFont, invoiceFill, thinBorder, usdFormatId, true, HorizontalAlignmentValues.Right));
+        var note = Append(stylesheet.CellFormats, Format(noteFont, 0U, thinBorder, 0U, true,
+            HorizontalAlignmentValues.Left, wrapText: true));
+        var minimumNote = Append(stylesheet.CellFormats, Format(minimumNoteFont, 0U, thinBorder, 0U, true,
             HorizontalAlignmentValues.Left, wrapText: true));
 
         stylesheet.Fonts.Count = (uint)stylesheet.Fonts.ChildElements.Count;
@@ -624,7 +710,7 @@ public sealed class PaymentWorkbookGenerationService
         stylesheet.Save();
         return new PaymentSheetStyles(
             title, label, strongLabel, totalLabel, crcAmount, usdAmount,
-            crcStrong, usdStrong, crcTotal, usdTotal, note);
+            crcStrong, usdStrong, crcTotal, usdTotal, invoiceLabel, crcInvoice, usdInvoice, note, minimumNote);
     }
 
     private static CellFormat Format(
@@ -777,5 +863,9 @@ public sealed class PaymentWorkbookGenerationService
         uint UsdStrongAmount,
         uint CrcTotalAmount,
         uint UsdTotalAmount,
-        uint Note);
+        uint InvoiceLabel,
+        uint CrcInvoiceAmount,
+        uint UsdInvoiceAmount,
+        uint Note,
+        uint MinimumNote);
 }

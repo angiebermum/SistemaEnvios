@@ -373,14 +373,16 @@ internal static class SelfTestRunner
                     Description = "Ajuste sintético",
                     Amount = 10_000m,
                     Currency = DeductionCurrency.CRC,
-                    ApplicationType = DeductionApplicationType.GrossCommission
+                    ApplicationType = DeductionApplicationType.GrossCommission,
+                    TargetWorksheetName = "SYN"
                 },
                 new BrokerDeduction
                 {
                     Description = "Ahorro sintético",
                     Amount = 15_000m,
                     Currency = DeductionCurrency.CRC,
-                    ApplicationType = DeductionApplicationType.PayableAmount
+                    ApplicationType = DeductionApplicationType.PayableAmount,
+                    TargetWorksheetName = "SYN"
                 }
             ]
         };

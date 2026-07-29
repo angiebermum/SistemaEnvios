@@ -107,10 +107,45 @@ internal static class BrokerPercentageWorksheetNormalizer
                                        (nextHeaderRow == 0U || row.Key < nextHeaderRow))
                          .OrderBy(row => row.Key))
             {
-                if (IsSummaryRow(row.Value))
+                var percentageData = FindCell(row.Value, layout.PercentageColumn);
+                if (percentageData is null ||
+                    !cellsByReference.TryGetValue(percentageData.Reference, out var percentageCell) ||
+                    !CellHasContent(percentageCell))
                 {
                     continue;
                 }
+
+                var rawText = percentageData.Text.Trim();
+                if (string.IsNullOrWhiteSpace(rawText) ||
+                    rawText.Equals("% Corredor", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                decimal normalizedPercentage;
+                try
+                {
+                    normalizedPercentage = BrokerPercentageNormalizer.NormalizeBrokerPercentage(
+                        rawText,
+                        IsNumericCell(percentageCell),
+                        HasPercentageNumberFormat(percentageCell, workbookPart.WorkbookStylesPart?.Stylesheet));
+                }
+                catch (Exception ex) when (ex is FormatException or ArgumentOutOfRangeException)
+                {
+                    throw CreateInvalidPercentageException(
+                        worksheetName,
+                        percentageData.Reference,
+                        row.Key,
+                        rawText,
+                        ex);
+                }
+
+                WriteNormalizedPercentage(
+                    percentageCell,
+                    normalizedPercentage,
+                    workbookPart,
+                    styleIndexes);
+                changed = true;
 
                 var grossData = FindCell(row.Value, layout.GrossCommissionColumn);
                 if (grossData is null ||
@@ -119,33 +154,6 @@ internal static class BrokerPercentageWorksheetNormalizer
                 {
                     continue;
                 }
-
-                var percentageData = FindCell(row.Value, layout.PercentageColumn);
-                cellsByReference.TryGetValue(percentageData?.Reference ?? string.Empty, out var percentageCell);
-                if (!IsRealCommissionRow(row.Value, cellsByReference, layout, percentageCell))
-                {
-                    continue;
-                }
-
-                var rawValue = percentageCell is null ? string.Empty : percentageData?.Text ?? string.Empty;
-                decimal normalizedPercentage;
-                try
-                {
-                    normalizedPercentage = BrokerPercentageNormalizer.NormalizeBrokerPercentage(
-                        rawValue,
-                        IsNumericCell(percentageCell),
-                        HasPercentageNumberFormat(percentageCell, workbookPart.WorkbookStylesPart?.Stylesheet));
-                }
-                catch (Exception ex) when (ex is FormatException or ArgumentOutOfRangeException)
-                {
-                    throw CreateInvalidPercentageException(worksheetName, row.Key, rawValue, ex);
-                }
-
-                WriteNormalizedPercentage(
-                    percentageCell!,
-                    normalizedPercentage,
-                    workbookPart,
-                    styleIndexes);
 
                 var grossValue = TryReadDecimal(grossCell, out var parsedGross) ? parsedGross : (decimal?)null;
                 var commissionValue = grossValue * normalizedPercentage / 100m;
@@ -183,7 +191,6 @@ internal static class BrokerPercentageWorksheetNormalizer
                         commissionValue - retentionValue);
                 }
 
-                changed = true;
             }
         }
 
@@ -286,48 +293,8 @@ internal static class BrokerPercentageWorksheetNormalizer
     private static bool IsPercentageHeader(string normalized) =>
         normalized is "% corredor" or "porcentaje corredor";
 
-    private static bool IsSummaryRow(IEnumerable<WorksheetCellData> cells) =>
-        cells.Any(cell =>
-        {
-            var normalized = CanonicalHeader(cell.NormalizedText);
-            return normalized.StartsWith("total", StringComparison.Ordinal) ||
-                   normalized.StartsWith("subtotal", StringComparison.Ordinal) ||
-                   normalized.StartsWith("resumen", StringComparison.Ordinal) ||
-                   CommissionWorksheetAnalyzerSupport.IsSummaryLabel(normalized);
-        });
-
     private static WorksheetCellData? FindCell(IEnumerable<WorksheetCellData> cells, int column) =>
         cells.FirstOrDefault(cell => cell.ColumnIndex == column);
-
-    private static bool IsRealCommissionRow(
-        IReadOnlyList<WorksheetCellData> row,
-        IReadOnlyDictionary<string, Cell> cellsByReference,
-        BrokerPercentageHeaderLayout layout,
-        Cell? percentageCell)
-    {
-        if (CellHasContent(percentageCell) ||
-            RowCellHasContent(row, cellsByReference, layout.BrokerCommissionColumn) ||
-            layout.RetentionColumn is { } retentionColumn &&
-            RowCellHasContent(row, cellsByReference, retentionColumn) ||
-            layout.TotalFinalColumn is { } totalColumn &&
-            RowCellHasContent(row, cellsByReference, totalColumn))
-        {
-            return true;
-        }
-
-        return row.Any(cell => CommissionWorksheetAnalyzerSupport.TryParseCurrency(cell.Text, out _));
-    }
-
-    private static bool RowCellHasContent(
-        IReadOnlyList<WorksheetCellData> row,
-        IReadOnlyDictionary<string, Cell> cellsByReference,
-        int column)
-    {
-        var data = FindCell(row, column);
-        return data is not null &&
-               cellsByReference.TryGetValue(data.Reference, out var cell) &&
-               CellHasContent(cell);
-    }
 
     private static bool CellHasContent(Cell? cell) =>
         cell is not null &&
@@ -508,6 +475,7 @@ internal static class BrokerPercentageWorksheetNormalizer
 
     private static InvalidDataException CreateInvalidPercentageException(
         string worksheetName,
+        string cellReference,
         uint row,
         string rawValue,
         Exception innerException)
@@ -524,7 +492,7 @@ internal static class BrokerPercentageWorksheetNormalizer
 
         return new InvalidDataException(
             $"No se pudo generar la pestaña '{worksheetName}'.{Environment.NewLine}" +
-            $"El porcentaje del corredor en la fila {row} no es válido: “{displayValue}”.{Environment.NewLine}" +
+            $"El porcentaje del corredor en la celda {cellReference} (fila {row}) no es válido: “{displayValue}”.{Environment.NewLine}" +
             "Corrija el Excel general e intente nuevamente.",
             innerException);
     }

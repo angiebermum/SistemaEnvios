@@ -19,6 +19,7 @@ public sealed class BrokerDeduction
     public decimal Amount { get; set; }
     public DeductionCurrency Currency { get; set; }
     public DeductionApplicationType ApplicationType { get; set; }
+    public string? TargetWorksheetName { get; set; }
     public int DisplayOrder { get; set; }
 
     [System.Text.Json.Serialization.JsonIgnore]
@@ -29,6 +30,18 @@ public sealed class BrokerDeduction
         ? "Monto bruto de comisión"
         : "Monto a pagar";
 
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string TargetWorksheetText => string.IsNullOrWhiteSpace(TargetWorksheetName)
+        ? "Sin asignar"
+        : TargetWorksheetName;
+
+    public bool AppliesToWorksheet(string? worksheetName) =>
+        !string.IsNullOrWhiteSpace(TargetWorksheetName) &&
+        string.Equals(
+            TargetWorksheetName.Trim(),
+            (worksheetName ?? string.Empty).Trim(),
+            StringComparison.OrdinalIgnoreCase);
+
     public BrokerDeduction Clone() => new()
     {
         Id = Id,
@@ -36,6 +49,7 @@ public sealed class BrokerDeduction
         Amount = Amount,
         Currency = Currency,
         ApplicationType = ApplicationType,
+        TargetWorksheetName = TargetWorksheetName,
         DisplayOrder = DisplayOrder
     };
 }
@@ -78,6 +92,7 @@ public sealed class AppliedDeductionSnapshot
     public decimal AppliedAmount { get; set; }
     public DeductionCurrency Currency { get; set; }
     public DeductionApplicationType ApplicationType { get; set; }
+    public string TargetWorksheetName { get; set; } = string.Empty;
     public int DisplayOrder { get; set; }
 }
 

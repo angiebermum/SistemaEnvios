@@ -46,6 +46,31 @@ public sealed class WorkbookAutomationTests
     }
 
     [Fact]
+    public void StandardAnalyzerPrefersGrossSummaryOverRawCommissionColumn()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "detalle-con-resumen.xlsx");
+        CreateDetailedWorkbookWithGrossSummary(source);
+
+        var result = new WorkbookAnalysisService().Analyze(source);
+
+        Assert.True(result.IsValid, string.Join(" ", result.Worksheets.SelectMany(value => value.Errors)));
+        var sheet = Assert.Single(result.Worksheets);
+        Assert.Equal("Estándar", sheet.AnalyzerName);
+        Assert.Equal(85_963.16m, sheet.Crc.GrossCommission);
+        Assert.Equal(-8.25m, sheet.Usd.GrossCommission);
+        Assert.Equal(["L4"], sheet.Crc.SourceCells);
+        Assert.Equal(["L8"], sheet.Usd.SourceCells);
+
+        var crc = new PaymentCalculationService().Calculate(sheet, []).Crc;
+        Assert.Equal(85_963.16m, crc.GrossCommissionOriginal);
+        Assert.Equal(11_175.21m, crc.Vat);
+        Assert.Equal(97_138.37m, crc.InvoiceAmount);
+        Assert.Equal(1_719.26m, crc.Withholding);
+        Assert.Equal(95_419.11m, crc.DepositedAmount);
+    }
+
+    [Fact]
     public void GeneratesOneFilePerWorksheetAndGroupsThreeByBroker()
     {
         using var scope = new TestDirectory();
@@ -60,6 +85,31 @@ public sealed class WorkbookAutomationTests
         Assert.All(batch.Files, value => Assert.True(File.Exists(value.OutputPath)));
         Assert.Equal(3, Directory.GetFiles(batch.OutputDirectory, "*.xlsx").Length);
         Assert.Contains(batch.Files, value => Path.GetFileName(value.OutputPath).Contains("AR2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DeductionIsGeneratedOnlyForItsSelectedWorksheet()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AQO", "AQM (HC)"], includeUsd: true);
+        var broker = Broker("Luis Arturo Quesada Ovares", "AQO", "AQM (HC)");
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ahorro",
+            Amount = 10_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "AQO"
+        });
+
+        var batch = Generate(scope, source, [broker]);
+
+        var aqo = batch.Files.Single(value => value.WorksheetName == "AQO");
+        var aqm = batch.Files.Single(value => value.WorksheetName == "AQM (HC)");
+        Assert.Single(aqo.Crc.Deductions);
+        Assert.Empty(aqm.Crc.Deductions);
+        Assert.Equal(aqm.Crc.DepositedAmount - 10_000m, aqo.Crc.DepositedAmount);
     }
 
     [Fact]
@@ -113,13 +163,163 @@ public sealed class WorkbookAutomationTests
         var cells = ReadCells(generated, "Monto de factura");
         var dollarTitle = cells.Single(value => value.Text == "DÓLARES");
         var dollarAmounts = cells.Where(value =>
-                value.Row > dollarTitle.Row && value.NumericValue.HasValue)
+                value.Reference.StartsWith('F') &&
+                value.Row > dollarTitle.Row &&
+                value.NumericValue.HasValue)
             .Select(value => value.NumericValue!.Value)
             .ToList();
 
-        Assert.Contains(cells, value => value.Text == "COLONES");
+        var colonesTitle = cells.Single(value => value.Text == "COLONES");
+        Assert.Equal("B2", colonesTitle.Reference);
+        Assert.Equal("E2", dollarTitle.Reference);
+        Assert.Equal(dollarTitle.Row, colonesTitle.Row);
         Assert.NotEmpty(dollarAmounts);
         Assert.All(dollarAmounts, value => Assert.Equal(0m, value));
+    }
+
+    [Fact]
+    public void PaymentSheetUsesBordersSpacingAndYellowInvoiceRows()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+
+        var batch = Generate(scope, source, [Broker("Corredor sintético", "AR")]);
+        var generated = Assert.Single(batch.Files).OutputPath;
+
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var workbookPart = document.WorkbookPart!;
+        var worksheet = GetWorksheetPart(document, "Monto de factura").Worksheet!;
+        var cells = worksheet.Descendants<Cell>().ToDictionary(
+            value => value.CellReference!.Value!,
+            StringComparer.Ordinal);
+        var columns = worksheet.Elements<Columns>().Single().Elements<Column>().ToList();
+
+        Assert.Equal(4D, columns.Single(value => value.Min?.Value == 1U).Width!.Value);
+        Assert.Equal(4D, columns.Single(value => value.Min?.Value == 4U).Width!.Value);
+        Assert.Equal("COLONES", cells["B2"].InlineString!.InnerText);
+        Assert.Equal("DÓLARES", cells["E2"].InlineString!.InnerText);
+        Assert.DoesNotContain(cells.Keys, reference =>
+            reference.StartsWith('A') || reference.EndsWith('1'));
+
+        AssertVisibleBorder(workbookPart, cells["B3"]);
+        AssertVisibleBorder(workbookPart, cells["C3"]);
+        AssertVisibleBorder(workbookPart, cells["E3"]);
+        AssertVisibleBorder(workbookPart, cells["F3"]);
+
+        var colonesInvoiceLabel = cells.Values.Single(value =>
+            value.CellReference?.Value?.StartsWith('B') == true &&
+            value.InlineString?.InnerText == "Monto factura");
+        var dollarInvoiceLabel = cells.Values.Single(value =>
+            value.CellReference?.Value?.StartsWith('E') == true &&
+            value.InlineString?.InnerText == "Monto factura");
+        AssertYellowFill(workbookPart, colonesInvoiceLabel);
+        AssertYellowFill(workbookPart, cells[$"C{colonesInvoiceLabel.CellReference!.Value![1..]}"]);
+        AssertYellowFill(workbookPart, dollarInvoiceLabel);
+        AssertYellowFill(workbookPart, cells[$"F{dollarInvoiceLabel.CellReference!.Value![1..]}"]);
+    }
+
+    [Fact]
+    public void DeductionHeadersAreRenamedAndDoNotRepeatDeductionAmounts()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+        var broker = Broker("Adriana Arroyo", "AR");
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ajuste",
+            Amount = 10_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.GrossCommission,
+            TargetWorksheetName = "AR"
+        });
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ahorro",
+            Amount = 15_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "AR"
+        });
+
+        var batch = Generate(scope, source, [broker]);
+        var cells = ReadCells(Assert.Single(batch.Files).OutputPath, "Monto de factura");
+        var byReference = cells.ToDictionary(value => value.Reference, StringComparer.Ordinal);
+        var grossHeader = cells.Single(value =>
+            value.Reference.StartsWith('B') && value.Text == "Ajustes al monto bruto");
+        var finalHeader = cells.Single(value =>
+            value.Reference.StartsWith('B') && value.Text == "Deducciones");
+        var grossDeduction = cells.Single(value => value.Text.Trim() == "Ajuste");
+        var finalDeduction = cells.Single(value => value.Text.Trim() == "Ahorro");
+
+        Assert.Null(byReference[$"C{grossHeader.Row}"].NumericValue);
+        Assert.Equal(string.Empty, byReference[$"C{grossHeader.Row}"].Text);
+        Assert.Equal(-10_000m, byReference[$"C{grossDeduction.Row}"].NumericValue);
+        Assert.Null(byReference[$"C{finalHeader.Row}"].NumericValue);
+        Assert.Equal(string.Empty, byReference[$"C{finalHeader.Row}"].Text);
+        Assert.Equal(-15_000m, byReference[$"C{finalDeduction.Row}"].NumericValue);
+        Assert.DoesNotContain(cells, value => value.Text == "Rebajos al monto bruto");
+        Assert.DoesNotContain(cells, value => value.Text == "Rebajos al monto a pagar");
+    }
+
+    [Fact]
+    public void MinimumAccumulationNoteIsBoldInBothCurrencyBlocks()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(
+            source,
+            ["AR"],
+            includeUsd: true,
+            crcCommission: 10_000m,
+            usdCommission: 20m);
+
+        var batch = Generate(scope, source, [Broker("Corredor sintético", "AR")]);
+        var generated = Assert.Single(batch.Files).OutputPath;
+
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var workbookPart = document.WorkbookPart!;
+        var notes = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .Where(value =>
+                value.InlineString?.InnerText == "Comisión acumulada por ser inferior al monto mínimo establecido.")
+            .ToList();
+
+        Assert.Equal(2, notes.Count);
+        Assert.Contains(notes, value => value.CellReference?.Value == "B11");
+        Assert.Contains(notes, value => value.CellReference?.Value == "E11");
+        Assert.All(notes, value => AssertBoldFont(workbookPart, value));
+    }
+
+    [Fact]
+    public void NegativeCommissionNoteUsesRequestedTextAndIsBoldInBothCurrencyBlocks()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(
+            source,
+            ["AR"],
+            includeUsd: true,
+            crcCommission: -10m,
+            usdCommission: -5m);
+
+        var batch = Generate(scope, source, [Broker("Corredor sintético", "AR")]);
+        var generated = Assert.Single(batch.Files).OutputPath;
+
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var workbookPart = document.WorkbookPart!;
+        var notes = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .Where(value =>
+                value.InlineString?.InnerText ==
+                "Comisión negativa: no procede el pago ni la facturación.")
+            .ToList();
+
+        Assert.Equal(2, notes.Count);
+        Assert.Contains(notes, value => value.CellReference?.Value == "B11");
+        Assert.Contains(notes, value => value.CellReference?.Value == "E11");
+        Assert.All(notes, value => AssertBoldFont(workbookPart, value));
     }
 
     [Fact]
@@ -134,7 +334,8 @@ public sealed class WorkbookAutomationTests
             Description = "Ahorro original",
             Amount = 10_000m,
             Currency = DeductionCurrency.CRC,
-            ApplicationType = DeductionApplicationType.PayableAmount
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "AR"
         });
 
         var batch = Generate(scope, source, [broker]);
@@ -239,7 +440,12 @@ public sealed class WorkbookAutomationTests
         AssociatedWorksheetNames = [.. worksheetNames]
     };
 
-    private static void CreateStandardWorkbook(string path, IReadOnlyList<string> names, bool includeUsd)
+    private static void CreateStandardWorkbook(
+        string path,
+        IReadOnlyList<string> names,
+        bool includeUsd,
+        decimal crcCommission = 100_000m,
+        decimal usdCommission = 100m)
     {
         using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
         var workbookPart = document.AddWorkbookPart();
@@ -262,15 +468,15 @@ public sealed class WorkbookAutomationTests
                 { RowIndex = 2U },
                 new Row(
                     TextCell("A3", "CRC"),
-                    NumberCell("B3", 100_000m, 2U),
-                    FormulaCell("C3", "B3*0.13", 13_000m, 2U))
+                    NumberCell("B3", crcCommission, 2U),
+                    FormulaCell("C3", "B3*0.13", decimal.Round(crcCommission * 0.13m, 2), 2U))
                 { RowIndex = 3U });
             if (includeUsd)
             {
                 sheetData.Append(new Row(
                     TextCell("A4", "USD"),
-                    NumberCell("B4", 100m, 3U),
-                    FormulaCell("C4", "B4*0.13", 13m, 3U))
+                    NumberCell("B4", usdCommission, 3U),
+                    FormulaCell("C4", "B4*0.13", decimal.Round(usdCommission * 0.13m, 2), 3U))
                 { RowIndex = 4U });
             }
 
@@ -311,6 +517,52 @@ public sealed class WorkbookAutomationTests
             Id = workbookPart.GetIdOfPart(worksheetPart),
             SheetId = 1U,
             Name = "FLM"
+        });
+        workbookPart.Workbook.Save();
+    }
+
+    private static void CreateDetailedWorkbookWithGrossSummary(string path)
+    {
+        using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+        var workbookPart = document.AddWorkbookPart();
+        workbookPart.Workbook = new Workbook(new Sheets());
+        AddStyles(workbookPart);
+        var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+        worksheetPart.Worksheet = new Worksheet(new SheetData(
+            new Row(
+                TextCell("H1", "Moneda"),
+                TextCell("J1", "Comisión Bruta"),
+                TextCell("L1", "Comisión Corredor"))
+            { RowIndex = 1U },
+            new Row(
+                TextCell("H2", "Colones"),
+                NumberCell("J2", 143_271.94m, 2U),
+                NumberCell("L2", 85_963.16m, 2U))
+            { RowIndex = 2U },
+            new Row(
+                TextCell("J4", "Monto bruto comison"),
+                NumberCell("L4", 85_963.16m, 2U))
+            { RowIndex = 4U },
+            new Row(
+                TextCell("H5", "Moneda"),
+                TextCell("J5", "Comisión Bruta"),
+                TextCell("L5", "Comisión Corredor"))
+            { RowIndex = 5U },
+            new Row(
+                TextCell("H6", "Dólares"),
+                NumberCell("J6", -13.75m, 3U),
+                NumberCell("L6", -8.25m, 3U))
+            { RowIndex = 6U },
+            new Row(
+                TextCell("J8", "Monto bruto comison"),
+                NumberCell("L8", -8.25m, 3U))
+            { RowIndex = 8U }));
+        worksheetPart.Worksheet.Save();
+        workbookPart.Workbook.Sheets!.Append(new Sheet
+        {
+            Id = workbookPart.GetIdOfPart(worksheetPart),
+            SheetId = 1U,
+            Name = "Adriana Ar AAV Vargas"
         });
         workbookPart.Workbook.Save();
     }
@@ -390,8 +642,52 @@ public sealed class WorkbookAutomationTests
                           decimal.TryParse(cell.CellValue?.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var value)
                 ? value
                 : (decimal?)null;
-            return new ReadCell(row, cell.InlineString?.InnerText ?? cell.CellValue?.Text ?? string.Empty, numeric);
+            return new ReadCell(
+                reference,
+                row,
+                cell.InlineString?.InnerText ?? cell.CellValue?.Text ?? string.Empty,
+                numeric);
         }).ToList();
+    }
+
+    private static void AssertVisibleBorder(WorkbookPart workbookPart, Cell cell)
+    {
+        var style = workbookPart.WorkbookStylesPart!.Stylesheet!.CellFormats!
+            .Elements<CellFormat>()
+            .ElementAt((int)(cell.StyleIndex?.Value ?? 0U));
+        var border = workbookPart.WorkbookStylesPart.Stylesheet.Borders!
+            .Elements<Border>()
+            .ElementAt((int)(style.BorderId?.Value ?? 0U));
+
+        Assert.Equal(BorderStyleValues.Thin, border.LeftBorder?.Style?.Value);
+        Assert.Equal(BorderStyleValues.Thin, border.RightBorder?.Style?.Value);
+        Assert.Equal(BorderStyleValues.Thin, border.TopBorder?.Style?.Value);
+        Assert.Equal(BorderStyleValues.Thin, border.BottomBorder?.Style?.Value);
+    }
+
+    private static void AssertYellowFill(WorkbookPart workbookPart, Cell cell)
+    {
+        var style = workbookPart.WorkbookStylesPart!.Stylesheet!.CellFormats!
+            .Elements<CellFormat>()
+            .ElementAt((int)(cell.StyleIndex?.Value ?? 0U));
+        var fill = workbookPart.WorkbookStylesPart.Stylesheet.Fills!
+            .Elements<Fill>()
+            .ElementAt((int)(style.FillId?.Value ?? 0U));
+
+        Assert.Equal(PatternValues.Solid, fill.PatternFill?.PatternType?.Value);
+        Assert.Equal("FFFFF2CC", fill.PatternFill?.ForegroundColor?.Rgb?.Value);
+    }
+
+    private static void AssertBoldFont(WorkbookPart workbookPart, Cell cell)
+    {
+        var style = workbookPart.WorkbookStylesPart!.Stylesheet!.CellFormats!
+            .Elements<CellFormat>()
+            .ElementAt((int)(cell.StyleIndex?.Value ?? 0U));
+        var font = workbookPart.WorkbookStylesPart.Stylesheet.Fonts!
+            .Elements<Font>()
+            .ElementAt((int)(style.FontId?.Value ?? 0U));
+
+        Assert.NotNull(font.Bold);
     }
 
     private static WorksheetPart GetWorksheetPart(SpreadsheetDocument document, string name)
@@ -402,7 +698,7 @@ public sealed class WorkbookAutomationTests
         return (WorksheetPart)workbookPart.GetPartById(sheet.Id!.Value!);
     }
 
-    private sealed record ReadCell(uint Row, string Text, decimal? NumericValue);
+    private sealed record ReadCell(string Reference, uint Row, string Text, decimal? NumericValue);
 
     private sealed class TestDirectory : IDisposable
     {

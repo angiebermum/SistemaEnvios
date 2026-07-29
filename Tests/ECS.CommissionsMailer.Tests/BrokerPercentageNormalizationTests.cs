@@ -77,27 +77,40 @@ public sealed class BrokerPercentageNormalizationTests
         AssertNormalizedPercentage(workbookPart, cells["F2"], 80m);
         AssertNormalizedPercentage(workbookPart, cells["F3"], 80m);
         AssertNormalizedPercentage(workbookPart, cells["F4"], 20m);
+        AssertNormalizedPercentage(workbookPart, cells["F12"], 50m);
         Assert.Equal("C2*F2/100", cells["H2"].CellFormula!.Text);
         Assert.Equal("C3*F3/100", cells["H3"].CellFormula!.Text);
         Assert.Equal("C4*F4/100", cells["H4"].CellFormula!.Text);
+        Assert.Equal("C12*F12/100", cells["H12"].CellFormula!.Text);
         Assert.Equal("H2*2%", cells["J2"].CellFormula!.Text);
         Assert.Equal("H3*2%", cells["J3"].CellFormula!.Text);
         Assert.Equal("H4*2%", cells["J4"].CellFormula!.Text);
+        Assert.Equal("H12*2%", cells["J12"].CellFormula!.Text);
         Assert.Equal("H2-J2", cells["L2"].CellFormula!.Text);
         Assert.Equal("H3-J3", cells["L3"].CellFormula!.Text);
         Assert.Equal("H4-J4", cells["L4"].CellFormula!.Text);
+        Assert.Equal("H12-J12", cells["L12"].CellFormula!.Text);
         Assert.Equal(800m, ReadDecimal(cells["H2"]));
         Assert.Equal(800m, ReadDecimal(cells["H3"]));
         Assert.Equal(200m, ReadDecimal(cells["H4"]));
+        Assert.Equal(500m, ReadDecimal(cells["H12"]));
         Assert.Equal(16m, ReadDecimal(cells["J2"]));
         Assert.Equal(16m, ReadDecimal(cells["J3"]));
         Assert.Equal(4m, ReadDecimal(cells["J4"]));
+        Assert.Equal(10m, ReadDecimal(cells["J12"]));
         Assert.Equal(784m, ReadDecimal(cells["L2"]));
         Assert.Equal(784m, ReadDecimal(cells["L3"]));
         Assert.Equal(196m, ReadDecimal(cells["L4"]));
+        Assert.Equal(490m, ReadDecimal(cells["L12"]));
 
-        Assert.Equal("fila vacía ignorada", cells["F5"].InlineString!.InnerText);
-        Assert.Equal("resumen ignorado", cells["F6"].InlineString!.InnerText);
+        Assert.Null(cells["F5"].CellValue);
+        Assert.Null(cells["F5"].InlineString);
+        Assert.Equal(2U, cells["F5"].StyleIndex!.Value);
+        Assert.Equal("   ", cells["F6"].InlineString!.InnerText);
+        Assert.Equal(CellValues.InlineString, cells["F10"].DataType!.Value);
+        Assert.Equal("% Corredor", cells["F10"].InlineString!.InnerText);
+        Assert.Equal(CellValues.InlineString, cells["F11"].DataType!.Value);
+        Assert.Equal(" %   Corredor ", cells["F11"].InlineString!.InnerText);
         Assert.NotNull(workbookPart.Workbook!.CalculationProperties);
         Assert.True(workbookPart.Workbook.CalculationProperties!.ForceFullCalculation!.Value);
         Assert.True(workbookPart.Workbook.CalculationProperties.FullCalculationOnLoad!.Value);
@@ -108,7 +121,7 @@ public sealed class BrokerPercentageNormalizationTests
 
     [Theory]
     [InlineData("80..0", "80..0")]
-    [InlineData("", "(vacío)")]
+    [InlineData("texto", "texto")]
     public void InvalidPercentageStopsOnlyThatFileWithWorksheetRowAndValue(
         string invalidPercentage,
         string expectedDisplayValue)
@@ -120,11 +133,36 @@ public sealed class BrokerPercentageNormalizationTests
         var exception = Assert.Throws<InvalidDataException>(() => Generate(scope, source, "VB"));
 
         Assert.Contains("VB", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("F12", exception.Message, StringComparison.Ordinal);
         Assert.Contains("fila 12", exception.Message, StringComparison.Ordinal);
         Assert.Contains(expectedDisplayValue, exception.Message, StringComparison.Ordinal);
         Assert.Contains("Corrija el Excel general", exception.Message, StringComparison.Ordinal);
         Assert.False(Directory.Exists(Path.Combine(scope.Path, "salida")));
         Assert.True(File.Exists(source));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void EmptyPercentageCellInCommissionRowIsIgnoredAndLeftUnchanged(string emptyPercentage)
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general-porcentaje-vacio.xlsx");
+        CreatePercentageWorkbook(source, "AAV", emptyPercentage, headerRow: 10U, detailRow: 12U);
+
+        var batch = Generate(scope, source, "AAV");
+
+        var output = Assert.Single(batch.Files).OutputPath;
+        using var document = SpreadsheetDocument.Open(output, false);
+        var detail = GetWorksheetPart(document, "Detalle");
+        var cells = detail.Worksheet!.Descendants<Cell>().ToDictionary(
+            cell => cell.CellReference!.Value!,
+            StringComparer.Ordinal);
+        Assert.Equal(CellValues.InlineString, cells["F12"].DataType!.Value);
+        Assert.Equal(emptyPercentage, cells["F12"].InlineString!.InnerText);
+        Assert.Equal(2U, cells["F12"].StyleIndex!.Value);
+        Assert.Equal("C12*F12%", cells["H12"].CellFormula!.Text);
+        Assert.Equal(8m, ReadDecimal(cells["H12"]));
     }
 
     [Fact]
@@ -224,15 +262,38 @@ public sealed class BrokerPercentageNormalizationTests
             sheetData.Append(CreateDetailRow(2U, "CRC", TextCell("F2", " 80.00 ", 2U)));
             sheetData.Append(CreateDetailRow(3U, "USD", NumberCell("F3", 0.80m, 3U)));
             sheetData.Append(CreateDetailRow(4U, "CRC", NumberCell("F4", 0.20m, 3U)));
-            sheetData.Append(new Row(TextCell("F5", "fila vacía ignorada", 2U)) { RowIndex = 5U });
             sheetData.Append(new Row(
-                TextCell("A6", "Total"),
-                NumberCell("C6", 3_000m, 2U),
-                TextCell("F6", "resumen ignorado", 2U),
-                FormulaCell("H6", "SUM(H2:H4)", 1_800m, 2U),
-                FormulaCell("J6", "SUM(J2:J4)", 36m, 2U),
-                FormulaCell("L6", "SUM(L2:L4)", 1_764m, 2U))
+                TextCell("A5", "Monto bruto comisión"),
+                NumberCell("C5", 3_000m, 2U),
+                EmptyCell("F5", 2U))
+            { RowIndex = 5U });
+            sheetData.Append(new Row(
+                TextCell("A6", "IVA"),
+                NumberCell("C6", 390m, 2U),
+                TextCell("F6", "   ", 2U))
             { RowIndex = 6U });
+            sheetData.Append(new Row(
+                TextCell("A7", "Monto factura"),
+                NumberCell("C7", 3_390m, 2U))
+            { RowIndex = 7U });
+            sheetData.Append(new Row(
+                TextCell("A8", "Retención"),
+                NumberCell("C8", 60m, 2U))
+            { RowIndex = 8U });
+            sheetData.Append(new Row(
+                TextCell("A9", "Monto depositado"),
+                NumberCell("C9", 3_330m, 2U))
+            { RowIndex = 9U });
+            sheetData.Append(new Row(TextCell("F10", "% Corredor", 2U)) { RowIndex = 10U });
+            sheetData.Append(new Row(
+                TextCell("A11", "Moneda"),
+                TextCell("C11", "COMISIÓN BRUTA"),
+                TextCell("F11", " %   Corredor "),
+                TextCell("H11", "Comisión Corredor"),
+                TextCell("J11", "2 %"),
+                TextCell("L11", "Total Final"))
+            { RowIndex = 11U });
+            sheetData.Append(CreateDetailRow(12U, "CRC", TextCell("F12", "50", 2U)));
         }
 
         worksheetPart.Worksheet = new Worksheet(sheetData);
@@ -348,6 +409,12 @@ public sealed class BrokerPercentageNormalizationTests
         CellReference = reference,
         DataType = CellValues.Number,
         CellValue = new CellValue(value.ToString(CultureInfo.InvariantCulture)),
+        StyleIndex = style
+    };
+
+    private static Cell EmptyCell(string reference, uint style = 0U) => new()
+    {
+        CellReference = reference,
         StyleIndex = style
     };
 

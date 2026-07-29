@@ -95,11 +95,12 @@ Cada `BrokerDeduction` incluye:
   "Amount": 15000.00,
   "Currency": "CRC",
   "ApplicationType": "PayableAmount",
+  "TargetWorksheetName": "AR",
   "DisplayOrder": 0
 }
 ```
 
-Las descripciones son libres. La interfaz permite agregar, editar y eliminar. El monto almacenado es positivo; la hoja lo presenta como descuento. Se valida descripción, decimal mayor o igual que cero, moneda y tipo.
+Las descripciones son libres. La interfaz permite agregar, editar y eliminar. Cada rebajo debe seleccionar una de las pestañas asociadas al corredor y se aplica únicamente al cálculo de esa pestaña. El monto almacenado es positivo; la hoja lo presenta como descuento. Se valida descripción, decimal mayor o igual que cero, moneda, tipo y pestaña destino.
 
 Tipos:
 
@@ -156,14 +157,18 @@ Si no existen comisiones, o si el monto ajustado está bajo el mínimo, la prese
 
 ```text
 Monto bruto comisión          0.00
-Rebajos al monto bruto        0.00
+Ajustes al monto bruto
 Monto bruto ajustado          0.00
 IVA 13%                       0.00
 Monto factura                 0.00
 Retención 2%                  0.00
-Rebajos al monto a pagar      0.00
+Deducciones
 Monto depositado              0.00
 ```
+
+Los encabezados `Ajustes al monto bruto` y `Deducciones` no muestran importes; cada monto se presenta únicamente en la fila de su ajuste o deducción específica. La fila `Monto factura` se resalta en amarillo. Los bloques aparecen en paralelo y comienzan en la celda `B2`: colones ocupa las columnas B:C, una columna separadora queda en D y dólares ocupa E:F.
+
+Cuando el monto debe acumularse por ser inferior al mínimo, la nota `Comisión acumulada por ser inferior al monto mínimo establecido.` se presenta en negrita.
 
 Un monto ajustado negativo causado por rebajos o un depósito negativo bloquea la generación. Una comisión fuente negativa se advierte y su bloque se presenta en cero, sin conversión.
 
@@ -187,13 +192,13 @@ Si la carpeta existe, la aplicación pide confirmación. Solo reemplaza archivos
 
 ## Persistencia y migración
 
-El esquema actual es `DataSchemaVersion = 2`.
+El esquema actual es `DataSchemaVersion = 3`.
 
 Los JSON antiguos siguen cargando porque las propiedades nuevas tienen valores predeterminados y la normalización garantiza listas no nulas:
 
 ```json
 {
-  "DataSchemaVersion": 2,
+  "DataSchemaVersion": 3,
   "Brokers": [
     {
       "Id": "f0c80e1a-64d0-4e45-814e-d8fe78261dbc",
@@ -208,6 +213,7 @@ Los JSON antiguos siguen cargando porque las propiedades nuevas tienen valores p
           "Amount": 15000.00,
           "Currency": "CRC",
           "ApplicationType": "PayableAmount",
+          "TargetWorksheetName": "AR",
           "DisplayOrder": 0
         }
       ],
@@ -217,7 +223,7 @@ Los JSON antiguos siguen cargando porque las propiedades nuevas tienen valores p
 }
 ```
 
-No se eliminan asistentes, correos, estado, marcas de revisión ni propiedades previas.
+No se eliminan asistentes, correos, estado, marcas de revisión ni propiedades previas. Al cargar un rebajo anterior sin destino, se asigna automáticamente cuando el corredor tiene una sola pestaña; si tiene varias, debe elegirse el destino antes de generar.
 
 ## Historial y snapshots
 
@@ -237,7 +243,7 @@ Cada lote registra:
 - analizador;
 - cálculos CRC/USD;
 - mínimos y observaciones;
-- copia de cada rebajo aplicado;
+- copia de cada rebajo aplicado, incluida su pestaña destino;
 - corredores enviados o fallidos.
 
 Estados: `Generated`, `ReadyToSend`, `Sent`, `PartialSend`, `Failed`.
@@ -289,4 +295,3 @@ Advierten:
 - rebajo de una moneda sin comisión;
 - carpeta ya existente;
 - corredor con varias pestañas.
-

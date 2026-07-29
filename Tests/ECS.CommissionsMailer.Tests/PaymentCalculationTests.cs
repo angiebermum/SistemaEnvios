@@ -47,6 +47,35 @@ public sealed class PaymentCalculationTests
         Assert.Equal(79.90m, result.Usd.DepositedAmount);
     }
 
+    [Fact]
+    public void AppliesOnlyDeductionsAssignedToTheAnalyzedWorksheet()
+    {
+        var deductions = new[]
+        {
+            Deduction(
+                "Ahorro AQO",
+                10_000m,
+                DeductionCurrency.CRC,
+                DeductionApplicationType.PayableAmount,
+                "AQO"),
+            Deduction(
+                "Ahorro AQM",
+                20_000m,
+                DeductionCurrency.CRC,
+                DeductionApplicationType.PayableAmount,
+                "AQM (HC)")
+        };
+
+        var analysis = Analysis(100_000m, true, 0m, false);
+        analysis.WorksheetName = "AQO";
+        var result = _service.Calculate(analysis, deductions).Crc;
+
+        var applied = Assert.Single(result.Deductions);
+        Assert.Equal("Ahorro AQO", applied.Description);
+        Assert.Equal("AQO", applied.TargetWorksheetName);
+        Assert.Equal(101_000m, result.DepositedAmount);
+    }
+
     [Theory]
     [InlineData(14999.99, true)]
     [InlineData(15000, false)]
@@ -130,6 +159,9 @@ public sealed class PaymentCalculationTests
 
         Assert.True(result.IsValid);
         Assert.Equal(0m, result.Crc.DepositedAmount);
+        Assert.Equal(
+            "Comisión negativa: no procede el pago ni la facturación.",
+            result.Crc.Observation);
         Assert.NotEmpty(result.Crc.Warnings);
         Assert.Equal(113m - 2m, result.Usd.DepositedAmount);
     }
@@ -147,12 +179,14 @@ public sealed class PaymentCalculationTests
         string description,
         decimal amount,
         DeductionCurrency currency,
-        DeductionApplicationType type) => new()
+        DeductionApplicationType type,
+        string targetWorksheetName = "SYN") => new()
     {
         Description = description,
         Amount = amount,
         Currency = currency,
-        ApplicationType = type
+        ApplicationType = type,
+        TargetWorksheetName = targetWorksheetName
     };
 
     private static CommissionWorksheetAnalysis Analysis(

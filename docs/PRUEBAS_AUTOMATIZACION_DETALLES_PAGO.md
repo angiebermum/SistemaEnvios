@@ -71,9 +71,9 @@ Agregar a `SYN` formato visible, una fórmula, una combinación, una fila oculta
 2. Crear un corredor sintético sin datos reales.
 3. En `Pestañas asociadas`, agregar `SYN` y `SYN2`.
 4. En `Rebajos`, agregar:
-   - `Ajuste`, CRC, 10000, `Monto bruto de comisión`;
-   - `Ahorro`, CRC, 15000, `Monto a pagar`;
-   - `Adelanto`, USD, 20, `Monto a pagar`.
+   - `Ajuste`, CRC, 10000, `Monto bruto de comisión`, pestaña `SYN`;
+   - `Ahorro`, CRC, 15000, `Monto a pagar`, pestaña `SYN`;
+   - `Adelanto`, USD, 20, `Monto a pagar`, pestaña `SYN2`.
 5. Guardar.
 6. Seleccionar el libro sintético.
 7. Confirmar que se detectan tres pestañas y que `FLM` aparece sin asociación.
@@ -101,12 +101,18 @@ Detalle de pago - Corredor sintético - FLM - IQ validación 2026.xlsx
     - `Detalle`;
     - `Monto de factura`.
 17. En `Detalle`, comprobar valores, fórmula, estilo, color, borde, ancho, alto, combinación, fila oculta e impresión.
-18. En `Monto de factura`, comprobar `COLONES` y `DÓLARES`.
+18. En `Monto de factura`, comprobar:
+    - el conjunto comienza en `B2`: `COLONES` ocupa B:C y `DÓLARES` ocupa E:F, separados por la columna D;
+    - bordes visibles alrededor de ambos cuadros;
+    - la fila `Monto factura` resaltada en amarillo;
+    - los encabezados `Ajustes al monto bruto` y `Deducciones` sin importe;
+    - cada rebajo mostrado una sola vez, junto a su tipo.
 19. Comprobar que el rebajo bruto reduce la base de IVA y retención.
 20. Comprobar que los rebajos al pago aparecen después de la retención.
 21. Editar el libro sintético para dejar una moneda sin filas, regenerar en otro periodo y confirmar ocho importes `0.00` en ese bloque.
 22. Probar CRC `14999.99` y `15000.00`.
 23. Probar USD `29.99` y `30.00`.
+    - Para los importes inferiores al mínimo, comprobar que la nota `Comisión acumulada por ser inferior al monto mínimo establecido.` aparece en negrita.
 24. Configurar un rebajo al pago superior al disponible y confirmar que no se crea ningún archivo final.
 25. Regenerar el mismo periodo y confirmar el diálogo de carpeta existente.
 26. Cancelar y comprobar que no aparecen nombres `(1)`, `(2)` ni `Copia`.
@@ -125,8 +131,16 @@ No se debe ejecutar un envío real durante esta validación.
 2. Iniciar con un `configuracion.json` anterior sin `DataSchemaVersion`, `AssociatedWorksheetNames` ni `Deductions`.
 3. Confirmar que abre sin error.
 4. Editar un corredor y guardar.
-5. Confirmar listas nuevas y `DataSchemaVersion: 2`.
+5. Confirmar listas nuevas y `DataSchemaVersion: 3`.
 6. Confirmar que correos, asistentes, activo, revisión, asunto, cuerpo, CC y firma siguen presentes.
+
+## Prueba de rebajo por pestaña
+
+1. Asociar `AQO` y `AQM (HC)` al mismo corredor.
+2. Crear un rebajo en CRC y seleccionar únicamente `AQO`.
+3. Generar ambos detalles de pago.
+4. Confirmar que el rebajo y su importe aparecen en `AQO`.
+5. Confirmar que `AQM (HC)` no contiene ni aplica ese rebajo.
 
 ## Prueba de agrupación y envío seguro
 
@@ -173,4 +187,3 @@ dotnet publish .\ECS.CommissionsMailer.csproj -c Release -r win-x64 --self-conta
 ```
 
 No instalar automáticamente el MSI. Inspeccionar que la publicación contenga `DocumentFormat.OpenXml.dll` y sus dependencias, y que no incluya reportes, detalles generados, historial ni archivos de prueba.
-

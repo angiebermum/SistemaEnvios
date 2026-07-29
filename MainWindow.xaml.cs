@@ -33,6 +33,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly GenerationHistoryService _generationHistoryService;
     private readonly PaymentWorkbookGenerationService _paymentWorkbookGenerationService;
     private readonly GeneratedFileViewerService _generatedFileViewerService;
+    private readonly AssociatedFileAssociationService _associatedFileAssociationService;
+    private readonly AssociatedWorkbookEditService _associatedWorkbookEditService;
     private readonly GeneratedBrokerSelectionService _generatedBrokerSelectionService;
     private readonly ObservableCollection<SentEmailRecord> _recentRecords;
     private readonly List<PaymentGenerationBatch> _paymentGenerationHistory;
@@ -81,6 +83,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _generatedFileViewerService = new GeneratedFileViewerService(
             new GeneratedFileProcessLauncher(),
             logger);
+        _associatedFileAssociationService = new AssociatedFileAssociationService(logger);
+        _associatedWorkbookEditService = new AssociatedWorkbookEditService(paths, logger);
         _generatedBrokerSelectionService = new GeneratedBrokerSelectionService(logger);
         _paymentWorkbookGenerationService = new PaymentWorkbookGenerationService(
             new PaymentCalculationService(),
@@ -1033,6 +1037,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        AddManualFiles(this, item);
+    }
+
+    private void AddManualFiles(Window owner, BrokerSendItem item)
+    {
         var dialog = new OpenFileDialog
         {
             Title = $"Adjuntar archivos para {item.BrokerName}",
@@ -1040,7 +1049,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Multiselect = true,
             CheckFileExists = true
         };
-        if (dialog.ShowDialog(this) != true)
+        if (dialog.ShowDialog(owner) != true)
         {
             return;
         }
@@ -1072,24 +1081,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (_activePaymentGeneration is null)
-        {
-            MessageBox.Show(
-                "Todavía no se han generado archivos para esta sesión.",
-                "Archivos generados", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var files = _generatedFileViewerService.GetFilesForBroker(_activePaymentGeneration, item);
-        if (files.Count == 0)
-        {
-            MessageBox.Show(
-                $"No hay archivos generados asociados a {item.BrokerName}.",
-                "Archivos generados", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        new GeneratedFilesWindow(item, files, _generatedFileViewerService)
+        new GeneratedFilesWindow(
+            item,
+            _generatedFileViewerService,
+            _associatedWorkbookEditService,
+            AddManualFiles,
+            UnlinkAssociatedFile,
+            PersistAssociatedReplacement)
         {
             Owner = this
         }.ShowDialog();
@@ -1102,11 +1100,124 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        item.AttachmentPaths.Remove(path);
-        item.GeneratedAttachmentPaths.Remove(path);
-        item.LastError = string.Empty;
-        UpdateReadiness(item);
-        SaveCurrentSessionWithMessageOnError();
+        _ = UnlinkAssociatedFile(item, path);
+    }
+
+    private AssociatedFileUnlinkResult UnlinkAssociatedFile(BrokerSendItem item, string path)
+    {
+        var generatedFile = AssociatedFileAssociationService.IsGenerated(item, path)
+            ? _activePaymentGeneration?.Files.FirstOrDefault(file =>
+                file.BrokerId == item.BrokerId &&
+                PathsEqual(file.OutputPath, path))
+            : null;
+        var generatedFileIndex = generatedFile is null || _activePaymentGeneration is null
+            ? -1
+            : _activePaymentGeneration.Files.IndexOf(generatedFile);
+        var generationHistoryUpdated = false;
+        var result = _associatedFileAssociationService.Unlink(
+            item,
+            path,
+            () =>
+            {
+                if (generatedFile is not null && _activePaymentGeneration is not null)
+                {
+                    _activePaymentGeneration.Files.Remove(generatedFile);
+                    try
+                    {
+                        _generationHistoryService.Upsert(
+                            _paymentGenerationHistory,
+                            _activePaymentGeneration);
+                        generationHistoryUpdated = true;
+                    }
+                    catch
+                    {
+                        _activePaymentGeneration.Files.Insert(generatedFileIndex, generatedFile);
+                        throw;
+                    }
+                }
+
+                try
+                {
+                    item.LastError = string.Empty;
+                    UpdateReadiness(item);
+                    SaveCurrentSession();
+                }
+                catch
+                {
+                    if (generationHistoryUpdated &&
+                        generatedFile is not null &&
+                        _activePaymentGeneration is not null)
+                    {
+                        _activePaymentGeneration.Files.Insert(generatedFileIndex, generatedFile);
+                        _generationHistoryService.Upsert(
+                            _paymentGenerationHistory,
+                            _activePaymentGeneration);
+                    }
+
+                    throw;
+                }
+            });
+        if (result.Succeeded && result.WasGenerated && _activePaymentGeneration is not null)
+        {
+            GenerationStatusText =
+                $"{_activePaymentGeneration.Period}: {_activePaymentGeneration.Files.Count} archivo(s) listos.";
+        }
+
+        OnPropertyChanged(nameof(AreAllBrokersSelected));
+        OnPropertyChanged(nameof(CanSendSelected));
+        return result;
+    }
+
+    private void PersistAssociatedReplacement(BrokerSendItem item, string path, string sha256)
+    {
+        if (!AssociatedFileAssociationService.IsAssociated(item, path))
+        {
+            throw new InvalidOperationException(
+                "El archivo dejó de estar asociado antes de completar el reemplazo.");
+        }
+
+        GeneratedPaymentFile? generatedFile = null;
+        string? previousHash = null;
+        var generationHistoryUpdated = false;
+        try
+        {
+            if (AssociatedFileAssociationService.IsGenerated(item, path))
+            {
+                generatedFile = _activePaymentGeneration?.Files.FirstOrDefault(file =>
+                    file.BrokerId == item.BrokerId &&
+                    PathsEqual(file.OutputPath, path));
+                if (generatedFile is null || _activePaymentGeneration is null)
+                {
+                    throw new InvalidOperationException(
+                        "No se encontró el registro de la generación activa para actualizar su contenido.");
+                }
+
+                previousHash = generatedFile.Sha256;
+                generatedFile.Sha256 = sha256;
+                _generationHistoryService.Upsert(
+                    _paymentGenerationHistory,
+                    _activePaymentGeneration);
+                generationHistoryUpdated = true;
+            }
+
+            item.LastError = string.Empty;
+            UpdateReadiness(item);
+        }
+        catch
+        {
+            if (generatedFile is not null && previousHash is not null)
+            {
+                generatedFile.Sha256 = previousHash;
+                if (generationHistoryUpdated && _activePaymentGeneration is not null)
+                {
+                    _generationHistoryService.Upsert(
+                        _paymentGenerationHistory,
+                        _activePaymentGeneration);
+                }
+            }
+
+            throw;
+        }
     }
 
     private async void SendSelected_Click(object sender, RoutedEventArgs e)
@@ -1807,6 +1918,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                item.Assistants.Any(assistant =>
                    assistant.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
                    assistant.Email.Contains(query, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(left),
+                Path.GetFullPath(right),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private void LoadSignaturePreview()

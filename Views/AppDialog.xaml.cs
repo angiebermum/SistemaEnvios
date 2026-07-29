@@ -28,6 +28,32 @@ public static class AppDialog
         dialog.ShowDialog();
         return dialog.Result;
     }
+
+    public static MessageBoxResult Show(
+        string messageBoxText,
+        string caption,
+        MessageBoxButton button,
+        MessageBoxImage icon,
+        string primaryButtonText,
+        string secondaryButtonText)
+    {
+        var dialog = new AppDialogWindow(messageBoxText, caption, button, icon);
+        dialog.SetButtonTexts(primaryButtonText, secondaryButtonText);
+        var owner = Application.Current?.Windows
+            .OfType<Window>()
+            .FirstOrDefault(window => window.IsActive && window.IsVisible);
+        if (owner is not null)
+        {
+            dialog.Owner = owner;
+        }
+        else
+        {
+            dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        }
+
+        dialog.ShowDialog();
+        return dialog.Result;
+    }
 }
 
 public partial class AppDialogWindow : Window
@@ -50,6 +76,12 @@ public partial class AppDialogWindow : Window
     }
 
     public MessageBoxResult Result => _result == MessageBoxResult.None ? _closeResult : _result;
+
+    public void SetButtonTexts(string primaryButtonText, string secondaryButtonText)
+    {
+        PrimaryButton.Content = primaryButtonText;
+        SecondaryButton.Content = secondaryButtonText;
+    }
 
     private void ConfigureIcon(MessageBoxImage icon)
     {

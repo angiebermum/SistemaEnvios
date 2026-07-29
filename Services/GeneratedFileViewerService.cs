@@ -77,7 +77,7 @@ public sealed class GeneratedFileViewerService
         {
             if (string.IsNullOrWhiteSpace(path) ||
                 !Path.IsPathFullyQualified(path) ||
-                !string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase))
+                !EmailValidationService.IsAllowedExcelFile(path))
             {
                 return GeneratedFileAvailability.NotFound;
             }
@@ -148,6 +148,59 @@ public sealed class GeneratedFileViewerService
         }
     }
 
+    public GeneratedFileOpenResult OpenAssociated(string path, BrokerSendItem broker)
+    {
+        ArgumentNullException.ThrowIfNull(broker);
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return Reject(path, GeneratedFileOpenStatus.MissingPath, "la ruta está vacía");
+            }
+
+            if (!Path.IsPathFullyQualified(path))
+            {
+                return Reject(path, GeneratedFileOpenStatus.NonAbsolutePath, "la ruta no es absoluta");
+            }
+
+            if (!File.Exists(path))
+            {
+                return Reject(path, GeneratedFileOpenStatus.FileNotFound, "el archivo no existe");
+            }
+
+            if (!EmailValidationService.IsAllowedExcelFile(path))
+            {
+                return Reject(
+                    path,
+                    GeneratedFileOpenStatus.UnsupportedExtension,
+                    "la extensión no es un formato de Excel permitido");
+            }
+
+            if (!AssociatedFileAssociationService.IsAssociated(broker, path))
+            {
+                return Reject(
+                    path,
+                    GeneratedFileOpenStatus.NotAssociated,
+                    "la ruta ya no pertenece a los adjuntos del corredor");
+            }
+
+            _processLauncher.Start(new ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true
+            });
+            return new GeneratedFileOpenResult(GeneratedFileOpenStatus.Opened);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(
+                $"No fue posible abrir el archivo asociado '{path}' para '{broker.BrokerName}'.",
+                ex);
+            return new GeneratedFileOpenResult(GeneratedFileOpenStatus.OpenFailed);
+        }
+    }
+
     private GeneratedFileOpenResult Reject(
         GeneratedPaymentFile file,
         GeneratedFileOpenStatus status,
@@ -155,6 +208,15 @@ public sealed class GeneratedFileViewerService
     {
         _logger.Error(
             $"Se rechazó la apertura del archivo generado '{file.OutputPath}': {reason}.");
+        return new GeneratedFileOpenResult(status);
+    }
+
+    private GeneratedFileOpenResult Reject(
+        string path,
+        GeneratedFileOpenStatus status,
+        string reason)
+    {
+        _logger.Error($"Se rechazó la apertura del archivo asociado '{path}': {reason}.");
         return new GeneratedFileOpenResult(status);
     }
 

@@ -33,6 +33,20 @@ public sealed record InformationalRebateAmounts(
     decimal EquivalentTotalUsd,
     decimal RemainingPayableCrc);
 
+internal sealed record AndresAswCrcInvoiceAmounts(
+    decimal GrossAmountCrc,
+    decimal TotalRebateCrc,
+    decimal? GrossAdjustmentCrc,
+    decimal AdjustedGrossAmountCrc,
+    decimal? VatCrc,
+    decimal? InvoiceAmountCrc,
+    decimal? WithholdingCrc,
+    decimal? DeductionsCrc,
+    decimal? DepositedAmountCrc)
+{
+    public bool RequiresInvoice => GrossAmountCrc > TotalRebateCrc;
+}
+
 public sealed class SpecialRebateSheetService
 {
     public const decimal FixedExchangeRate = 460m;
@@ -123,6 +137,48 @@ public sealed class SpecialRebateSheetService
             remaining);
     }
 
+    internal static AndresAswCrcInvoiceAmounts CalculateAndresAswCrcInvoiceAmounts(
+        decimal grossAmountCrc,
+        decimal totalRebateCrc,
+        decimal deductionsCrc = 0m)
+    {
+        var gross = Math.Max(PaymentCalculationService.Round(grossAmountCrc), 0m);
+        var totalRebate = Math.Max(PaymentCalculationService.Round(totalRebateCrc), 0m);
+        if (gross <= totalRebate)
+        {
+            return new AndresAswCrcInvoiceAmounts(
+                gross,
+                totalRebate,
+                null,
+                gross,
+                null,
+                null,
+                null,
+                null,
+                null);
+        }
+
+        var adjustedGross = PaymentCalculationService.Round(gross - totalRebate);
+        var vat = PaymentCalculationService.Round(adjustedGross * PaymentCalculationService.VatRate);
+        var invoiceAmount = PaymentCalculationService.Round(adjustedGross + vat);
+        var withholding = PaymentCalculationService.Round(
+            adjustedGross * PaymentCalculationService.WithholdingRate);
+        var deductions = Math.Max(PaymentCalculationService.Round(deductionsCrc), 0m);
+        var depositedAmount = Math.Max(
+            PaymentCalculationService.Round(invoiceAmount - withholding - deductions),
+            0m);
+        return new AndresAswCrcInvoiceAmounts(
+            gross,
+            totalRebate,
+            totalRebate,
+            adjustedGross,
+            vat,
+            invoiceAmount,
+            withholding,
+            deductions,
+            depositedAmount);
+    }
+
     internal bool AppendInformationalSheet(
         WorkbookPart workbookPart,
         Broker broker,
@@ -178,7 +234,7 @@ public sealed class SpecialRebateSheetService
             workbookPart,
             importedWorksheetPart.Worksheet,
             definition,
-            calculation.Crc.GrossCommissionOriginal);
+            calculation);
         importedWorksheetPart.Worksheet.Save();
 
         var workbook = workbookPart.Workbook
@@ -496,21 +552,33 @@ public sealed class SpecialRebateSheetService
         WorkbookPart workbookPart,
         Worksheet worksheet,
         SpecialRebateSheetDefinition definition,
-        decimal grossAmountCrc)
+        PaymentCalculationResult calculation)
     {
         switch (definition.TemplateKind)
         {
             case SpecialRebateTemplateKind.Andres:
-                ApplyAndresRules(worksheet, grossAmountCrc);
+                var amounts = ApplyAndresRules(
+                    worksheet,
+                    calculation.Crc.GrossCommissionOriginal);
+                ApplyAndresAswCrcInvoiceRules(
+                    workbookPart,
+                    calculation.Crc,
+                    amounts.TotalRebateCrc);
                 break;
             case SpecialRebateTemplateKind.Roberto:
-                ApplyRobertoRules(worksheet, grossAmountCrc);
+                ApplyRobertoRules(worksheet, calculation.Crc.GrossCommissionOriginal);
                 break;
             case SpecialRebateTemplateKind.Sylvia:
-                ApplySylviaRules(workbookPart, worksheet, grossAmountCrc);
+                ApplySylviaRules(
+                    workbookPart,
+                    worksheet,
+                    calculation.Crc.GrossCommissionOriginal);
                 break;
             case SpecialRebateTemplateKind.Arturo:
-                ApplyArturoRules(workbookPart, worksheet, grossAmountCrc);
+                ApplyArturoRules(
+                    workbookPart,
+                    worksheet,
+                    calculation.Crc.GrossCommissionOriginal);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(
@@ -520,7 +588,9 @@ public sealed class SpecialRebateSheetService
         }
     }
 
-    private static void ApplyAndresRules(Worksheet worksheet, decimal grossAmountCrc)
+    private static InformationalRebateAmounts ApplyAndresRules(
+        Worksheet worksheet,
+        decimal grossAmountCrc)
     {
         var totalRebate = ReadNonNegativeDecimal(worksheet, "D8");
         var amounts = CalculateAmounts(grossAmountCrc, totalRebate, FixedExchangeRate);
@@ -555,6 +625,214 @@ public sealed class SpecialRebateSheetService
             amounts.RemainingPayableCrc,
             "MAX(MAX(ROUND('Monto de factura'!C3,2),0)-D8,0)");
         SetText(worksheet, "E13", string.Empty);
+        return amounts;
+    }
+
+    private static void ApplyAndresAswCrcInvoiceRules(
+        WorkbookPart workbookPart,
+        PaymentCurrencyCalculation calculation,
+        decimal totalRebateCrc)
+    {
+        var worksheet = GetWorksheet(workbookPart, "Monto de factura");
+        var labelColumnIndex = FindCurrencyLabelColumn(worksheet, "COLONES");
+        var amountColumnIndex = labelColumnIndex + 1U;
+        var finalDeductions = calculation.Deductions
+            .Where(value => value.ApplicationType == DeductionApplicationType.PayableAmount)
+            .Sum(value => value.AppliedAmount);
+        var amounts = CalculateAndresAswCrcInvoiceAmounts(
+            calculation.GrossCommissionOriginal,
+            totalRebateCrc,
+            finalDeductions);
+
+        SetLabeledAmount(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Monto bruto comisión",
+            amounts.GrossAmountCrc);
+        SetLabeledAmount(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Ajustes al monto bruto",
+            amounts.GrossAdjustmentCrc);
+        ClearRowsBetween(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Ajustes al monto bruto",
+            "Monto bruto ajustado");
+        SetLabeledAmount(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Monto bruto ajustado",
+            amounts.AdjustedGrossAmountCrc);
+        SetLabeledAmount(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "IVA 13%",
+            amounts.VatCrc);
+        SetLabeledAmount(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Monto factura",
+            amounts.InvoiceAmountCrc);
+        SetLabeledAmount(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Retención 2%",
+            amounts.WithholdingCrc);
+        SetLabeledAmount(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Deducciones",
+            null);
+        if (!amounts.RequiresInvoice)
+        {
+            ClearRowsBetween(
+                worksheet,
+                labelColumnIndex,
+                amountColumnIndex,
+                "Deducciones",
+                "Monto depositado");
+        }
+
+        SetLabeledAmount(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Monto depositado",
+            amounts.DepositedAmountCrc);
+        worksheet.Save();
+    }
+
+    private static Worksheet GetWorksheet(WorkbookPart workbookPart, string worksheetName)
+    {
+        var sheet = workbookPart.Workbook?.Sheets?.Elements<Sheet>()
+            .SingleOrDefault(value =>
+                string.Equals(
+                    NormalizeExact(value.Name?.Value),
+                    NormalizeExact(worksheetName),
+                    StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidDataException(
+                $"El archivo generado no contiene la hoja '{worksheetName}'.");
+        if (sheet.Id?.Value is not { } relationshipId ||
+            workbookPart.GetPartById(relationshipId) is not WorksheetPart worksheetPart ||
+            worksheetPart.Worksheet is null)
+        {
+            throw new InvalidDataException(
+                $"La hoja '{worksheetName}' del archivo generado no es compatible.");
+        }
+
+        return worksheetPart.Worksheet;
+    }
+
+    private static uint FindCurrencyLabelColumn(Worksheet worksheet, string currencyTitle)
+    {
+        var titleCell = worksheet.Descendants<Cell>()
+            .SingleOrDefault(value =>
+                string.Equals(
+                    NormalizeExact(GetText(value)),
+                    NormalizeExact(currencyTitle),
+                    StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidDataException(
+                $"La hoja Monto de factura no contiene el bloque '{currencyTitle}'.");
+        return ParseColumnIndex(
+            titleCell.CellReference?.Value
+            ?? throw new InvalidDataException(
+                $"El bloque '{currencyTitle}' no tiene una referencia de celda válida."));
+    }
+
+    private static void SetLabeledAmount(
+        Worksheet worksheet,
+        uint labelColumnIndex,
+        uint amountColumnIndex,
+        string label,
+        decimal? amount)
+    {
+        var labelCell = FindLabelCell(worksheet, labelColumnIndex, label);
+        var rowIndex = ParseRowIndex(
+            labelCell.CellReference?.Value
+            ?? throw new InvalidDataException(
+                $"El concepto '{label}' no tiene una referencia de celda válida."));
+        var amountCell = GetOrCreateCell(
+            worksheet,
+            $"{ColumnName(amountColumnIndex)}{rowIndex}");
+        if (amount.HasValue)
+        {
+            SetNumber(amountCell, amount.Value);
+        }
+        else
+        {
+            ClearCell(amountCell);
+        }
+    }
+
+    private static void ClearRowsBetween(
+        Worksheet worksheet,
+        uint labelColumnIndex,
+        uint amountColumnIndex,
+        string firstLabel,
+        string lastLabel)
+    {
+        var firstRow = ParseRowIndex(
+            FindLabelCell(worksheet, labelColumnIndex, firstLabel).CellReference!.Value!);
+        var lastRow = ParseRowIndex(
+            FindLabelCell(worksheet, labelColumnIndex, lastLabel).CellReference!.Value!);
+        for (var rowIndex = firstRow + 1U; rowIndex < lastRow; rowIndex++)
+        {
+            ClearCell(GetOrCreateCell(
+                worksheet,
+                $"{ColumnName(labelColumnIndex)}{rowIndex}"));
+            ClearCell(GetOrCreateCell(
+                worksheet,
+                $"{ColumnName(amountColumnIndex)}{rowIndex}"));
+        }
+    }
+
+    private static Cell FindLabelCell(
+        Worksheet worksheet,
+        uint labelColumnIndex,
+        string label)
+    {
+        return worksheet.Descendants<Cell>()
+                   .SingleOrDefault(value =>
+                       ParseColumnIndex(value.CellReference?.Value ?? "A1") == labelColumnIndex &&
+                       string.Equals(
+                           NormalizeExact(GetText(value)),
+                           NormalizeExact(label),
+                           StringComparison.OrdinalIgnoreCase))
+               ?? throw new InvalidDataException(
+                   $"La hoja Monto de factura no contiene el concepto '{label}'.");
+    }
+
+    private static string GetText(Cell cell) =>
+        cell.InlineString?.InnerText ?? cell.CellValue?.Text ?? string.Empty;
+
+    private static string ColumnName(uint columnIndex)
+    {
+        var characters = new Stack<char>();
+        while (columnIndex > 0U)
+        {
+            columnIndex--;
+            characters.Push((char)('A' + columnIndex % 26U));
+            columnIndex /= 26U;
+        }
+
+        return new string(characters.ToArray());
+    }
+
+    private static void ClearCell(Cell cell)
+    {
+        cell.CellFormula = null;
+        cell.CellValue = null;
+        cell.InlineString = null;
+        cell.DataType = null;
     }
 
     private static void ApplyRobertoRules(Worksheet worksheet, decimal grossAmountCrc)
@@ -673,7 +951,14 @@ public sealed class SpecialRebateSheetService
         decimal value,
         string? formula = null)
     {
-        var cell = GetOrCreateCell(worksheet, reference);
+        SetNumber(GetOrCreateCell(worksheet, reference), value, formula);
+    }
+
+    private static void SetNumber(
+        Cell cell,
+        decimal value,
+        string? formula = null)
+    {
         cell.InlineString = null;
         cell.DataType = CellValues.Number;
         cell.CellFormula = formula is null ? null : new CellFormula(formula);

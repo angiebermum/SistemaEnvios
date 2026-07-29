@@ -24,6 +24,7 @@ public sealed class SpecialRebateSheetTests
     [InlineData("luis-arturo-quesada-essential", "Nombre editado", "AQO", true)]
     [InlineData("luis-arturo-quesada-essential", "Nombre editado", "AQM (HC)", false)]
     [InlineData("corredor-normal", "Roberto Merino", "RMB", false)]
+    [InlineData("corredor-normal", "Andrés Steimberg - Agent for EssentialGroupLA", "ASW", false)]
     public void UsesExactBrokerAndWorksheetActivationMatrix(
         string seedKey,
         string brokerName,
@@ -85,8 +86,58 @@ public sealed class SpecialRebateSheetTests
             value => Assert.True(value >= 0m));
     }
 
+    [Theory]
+    [InlineData(
+        "394406.57", "2200499.89", false,
+        null, "394406.57", null, null, null, null, null)]
+    [InlineData(
+        "2200000", "2200000", false,
+        null, "2200000", null, null, null, null, null)]
+    [InlineData(
+        "2500000", "2200000", true,
+        "2200000", "300000", "39000", "339000", "6000", "0", "333000")]
+    public void CalculatesAndresAswCrcInvoiceCases(
+        string grossText,
+        string totalText,
+        bool requiresInvoice,
+        string? adjustmentText,
+        string adjustedGrossText,
+        string? vatText,
+        string? invoiceText,
+        string? withholdingText,
+        string? deductionsText,
+        string? depositedText)
+    {
+        var result = SpecialRebateSheetService.CalculateAndresAswCrcInvoiceAmounts(
+            Decimal(grossText),
+            Decimal(totalText));
+
+        Assert.Equal(requiresInvoice, result.RequiresInvoice);
+        Assert.Equal(OptionalDecimal(adjustmentText), result.GrossAdjustmentCrc);
+        Assert.Equal(Decimal(adjustedGrossText), result.AdjustedGrossAmountCrc);
+        Assert.Equal(OptionalDecimal(vatText), result.VatCrc);
+        Assert.Equal(OptionalDecimal(invoiceText), result.InvoiceAmountCrc);
+        Assert.Equal(OptionalDecimal(withholdingText), result.WithholdingCrc);
+        Assert.Equal(OptionalDecimal(deductionsText), result.DeductionsCrc);
+        Assert.Equal(OptionalDecimal(depositedText), result.DepositedAmountCrc);
+        Assert.All(
+            new decimal?[]
+            {
+                result.GrossAmountCrc,
+                result.TotalRebateCrc,
+                result.GrossAdjustmentCrc,
+                result.AdjustedGrossAmountCrc,
+                result.VatCrc,
+                result.InvoiceAmountCrc,
+                result.WithholdingCrc,
+                result.DeductionsCrc,
+                result.DepositedAmountCrc
+            }.Where(value => value.HasValue),
+            value => Assert.True(value >= 0m));
+    }
+
     [Fact]
-    public void GeneratesOnlyTheConfiguredSpecialSheetsAndPreservesPaymentSheet()
+    public void GeneratesOnlyTheConfiguredSpecialSheetsAndChangesOnlyAndresAswCrcBlock()
     {
         using var scope = new TestDirectory();
         var source = scope.File("general.xlsx");
@@ -125,12 +176,34 @@ public sealed class SpecialRebateSheetTests
         var aswPath = FileFor(batch, "ASW");
         var normalPath = FileFor(batch, "NORMAL");
         Assert.Equal(460m, ReadDecimal(aswPath, "REBAJO", "F1"));
-        Assert.Equal(
+        Assert.NotEqual(
             ReadWorksheetXml(normalPath, "Monto de factura"),
             ReadWorksheetXml(aswPath, "Monto de factura"));
-        Assert.DoesNotContain(
-            ReadFormulas(aswPath, "Monto de factura"),
-            value => value.Contains("REBAJO", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(
+            ReadWorksheetXml(normalPath, "Monto de factura"),
+            ReadWorksheetXml(FileFor(batch, "SIG"), "Monto de factura"));
+        Assert.Equal(
+            ReadWorksheetXml(normalPath, "Monto de factura"),
+            ReadWorksheetXml(FileFor(batch, "VEINSA"), "Monto de factura"));
+        Assert.Equal(
+            ReadWorksheetXml(normalPath, "Monto de factura"),
+            ReadWorksheetXml(FileFor(batch, "OTRA"), "Monto de factura"));
+        Assert.Empty(ReadFormulas(aswPath, "Monto de factura"));
+        foreach (var reference in new[] { "E2", "F2", "E3", "F3", "E4", "F4", "E5", "F5",
+                     "E6", "F6", "E7", "F7", "E8", "F8", "E9", "F9", "E10", "F10" })
+        {
+            Assert.Equal(
+                ReadCellXml(normalPath, "Monto de factura", reference),
+                ReadCellXml(aswPath, "Monto de factura", reference));
+        }
+
+        foreach (var reference in new[] { "B2", "C2", "B3", "C3", "B4", "C4", "B5", "C5",
+                     "B6", "C6", "B7", "C7", "B8", "C8", "B9", "C9", "B10", "C10" })
+        {
+            Assert.Equal(
+                ReadStyleIndex(normalPath, "Monto de factura", reference),
+                ReadStyleIndex(aswPath, "Monto de factura", reference));
+        }
 
         var robertoPath = FileFor(batch, "RMB");
         Assert.Equal(460m, ReadDecimal(robertoPath, "REBAJO", "F1"));
@@ -158,42 +231,80 @@ public sealed class SpecialRebateSheetTests
     }
 
     [Theory]
-    [InlineData("100000")]
+    [InlineData("394406.57")]
     [InlineData("2200499.89")]
     [InlineData("2500000")]
-    public void AndresGeneratedSheetHandlesGrossAmountCases(string grossText)
+    public void AndresGeneratedSheetHandlesGrossAmountCasesInCrcBlock(string grossText)
     {
         using var scope = new TestDirectory();
         var source = scope.File("general.xlsx");
         var gross = Decimal(grossText);
         CreateStandardWorkbook(source, ["ASW"], gross);
+        var andres = Broker(
+            "Andrés Steimberg - Agent for EssentialGroupLA",
+            "andres-steimberg-seguru",
+            "ASW");
         var batch = Generate(
             scope,
             source,
-            [Broker(
-                "Andrés Steimberg - Agent for EssentialGroupLA",
-                "andres-steimberg-seguru",
-                "ASW")]);
+            [andres]);
         var generated = Assert.Single(batch.Files).OutputPath;
 
         var total = ReadDecimal(generated, "REBAJO", "D8");
-        var expected = SpecialRebateSheetService.CalculateAmounts(
+        var expectedRebate = SpecialRebateSheetService.CalculateAmounts(
             gross,
             total,
             SpecialRebateSheetService.FixedExchangeRate);
+        var expectedInvoice = SpecialRebateSheetService.CalculateAndresAswCrcInvoiceAmounts(
+            gross,
+            total);
 
-        Assert.Equal(expected.AppliedRebateCrc, ReadDecimal(generated, "REBAJO", "D10"));
-        Assert.Equal(expected.PendingBalanceCrc, ReadDecimal(generated, "REBAJO", "D11"));
-        Assert.Equal(expected.InformationalRebateUsd, ReadDecimal(generated, "REBAJO", "D12"));
-        Assert.Equal(expected.RemainingPayableCrc, ReadDecimal(generated, "REBAJO", "D13"));
+        Assert.Equal(expectedRebate.AppliedRebateCrc, ReadDecimal(generated, "REBAJO", "D10"));
+        Assert.Equal(expectedRebate.PendingBalanceCrc, ReadDecimal(generated, "REBAJO", "D11"));
+        Assert.Equal(expectedRebate.InformationalRebateUsd, ReadDecimal(generated, "REBAJO", "D12"));
+        Assert.Equal(expectedRebate.RemainingPayableCrc, ReadDecimal(generated, "REBAJO", "D13"));
         Assert.Equal(460m, ReadDecimal(generated, "REBAJO", "F1"));
+        Assert.Equal(expectedInvoice.GrossAmountCrc, ReadOptionalDecimal(
+            generated, "Monto de factura", "C3"));
+        Assert.Equal(expectedInvoice.GrossAdjustmentCrc, ReadOptionalDecimal(
+            generated, "Monto de factura", "C4"));
+        Assert.Equal(expectedInvoice.AdjustedGrossAmountCrc, ReadOptionalDecimal(
+            generated, "Monto de factura", "C5"));
+        Assert.Equal(expectedInvoice.VatCrc, ReadOptionalDecimal(
+            generated, "Monto de factura", "C6"));
+        Assert.Equal(expectedInvoice.InvoiceAmountCrc, ReadOptionalDecimal(
+            generated, "Monto de factura", "C7"));
+        Assert.Equal(expectedInvoice.WithholdingCrc, ReadOptionalDecimal(
+            generated, "Monto de factura", "C8"));
+        Assert.Null(ReadOptionalDecimal(generated, "Monto de factura", "C9"));
+        Assert.Equal(expectedInvoice.DepositedAmountCrc, ReadOptionalDecimal(
+            generated, "Monto de factura", "C10"));
+        Assert.Empty(ReadFormulas(generated, "Monto de factura"));
         Assert.All(
             new[] { "D8", "D9", "D10", "D11", "D12", "D13" },
             reference => Assert.True(ReadDecimal(generated, "REBAJO", reference) >= 0m));
         Assert.Contains(
             ReadFormulas(generated, "REBAJO"),
             value => value.Contains("'Monto de factura'!C3", StringComparison.Ordinal));
+        Assert.Empty(andres.Deductions);
         AssertWorkbookOpensWithoutFormulaErrors(generated);
+    }
+
+    [Fact]
+    public void OtherBrokerWithAswKeepsTheNormalPaymentSheet()
+    {
+        using var scope = new TestDirectory();
+        var source = scope.File("general.xlsx");
+        CreateStandardWorkbook(source, ["ASW", "NORMAL"], 2500000m);
+        var broker = Broker("Corredor normal", "corredor-normal", "ASW", "NORMAL");
+
+        var batch = Generate(scope, source, [broker]);
+
+        Assert.Equal(
+            ReadWorksheetXml(FileFor(batch, "NORMAL"), "Monto de factura"),
+            ReadWorksheetXml(FileFor(batch, "ASW"), "Monto de factura"));
+        AssertSheetNames(batch, "ASW", "Detalle", "Monto de factura");
+        Assert.Empty(broker.Deductions);
     }
 
     private static PaymentGenerationBatch Generate(
@@ -348,6 +459,29 @@ public sealed class SpecialRebateSheetTests
         return value;
     }
 
+    private static decimal? ReadOptionalDecimal(
+        string path,
+        string worksheetName,
+        string reference)
+    {
+        using var document = SpreadsheetDocument.Open(path, false);
+        var cell = GetWorksheetPart(document, worksheetName).Worksheet!
+            .Descendants<Cell>()
+            .Single(value =>
+                string.Equals(
+                    value.CellReference?.Value,
+                    reference,
+                    StringComparison.OrdinalIgnoreCase));
+        Assert.Null(cell.CellFormula);
+        return decimal.TryParse(
+            cell.CellValue?.Text,
+            NumberStyles.Number,
+            CultureInfo.InvariantCulture,
+            out var value)
+            ? value
+            : null;
+    }
+
     private static IReadOnlyList<string> ReadTexts(string path, string worksheetName)
     {
         using var document = SpreadsheetDocument.Open(path, false);
@@ -400,6 +534,39 @@ public sealed class SpecialRebateSheetTests
             .GetStream(FileMode.Open, FileAccess.Read);
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
+    }
+
+    private static string ReadCellXml(
+        string path,
+        string worksheetName,
+        string reference)
+    {
+        using var document = SpreadsheetDocument.Open(path, false);
+        return GetWorksheetPart(document, worksheetName).Worksheet!
+            .Descendants<Cell>()
+            .Single(value =>
+                string.Equals(
+                    value.CellReference?.Value,
+                    reference,
+                    StringComparison.OrdinalIgnoreCase))
+            .OuterXml;
+    }
+
+    private static uint ReadStyleIndex(
+        string path,
+        string worksheetName,
+        string reference)
+    {
+        using var document = SpreadsheetDocument.Open(path, false);
+        return GetWorksheetPart(document, worksheetName).Worksheet!
+                   .Descendants<Cell>()
+                   .Single(value =>
+                       string.Equals(
+                           value.CellReference?.Value,
+                           reference,
+                           StringComparison.OrdinalIgnoreCase))
+                   .StyleIndex?.Value
+               ?? 0U;
     }
 
     private static void AssertNoExchangeRate(string path)
@@ -461,6 +628,9 @@ public sealed class SpecialRebateSheetTests
 
     private static decimal Decimal(string value) =>
         decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
+
+    private static decimal? OptionalDecimal(string? value) =>
+        value is null ? null : Decimal(value);
 
     private sealed class TestDirectory : IDisposable
     {

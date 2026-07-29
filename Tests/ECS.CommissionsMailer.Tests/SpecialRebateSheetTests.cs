@@ -49,9 +49,9 @@ public sealed class SpecialRebateSheetTests
     }
 
     [Theory]
-    [InlineData("2000000", "2200000", "2000000", "200000", "400", "4400", "0")]
-    [InlineData("2200000", "2200000", "2200000", "0", "0", "4400", "0")]
-    [InlineData("2500000", "2200000", "2200000", "0", "0", "4400", "300000")]
+    [InlineData("2000000", "2200000", "2000000", "200000", "434.78260869565217391304347826", "4782.6086956521739130434782609", "0")]
+    [InlineData("2200000", "2200000", "2200000", "0", "0", "4782.6086956521739130434782609", "0")]
+    [InlineData("2500000", "2200000", "2200000", "0", "0", "4782.6086956521739130434782609", "300000")]
     public void CalculatesAndresAmountsWithoutNegativeResults(
         string grossText,
         string totalText,
@@ -124,7 +124,7 @@ public sealed class SpecialRebateSheetTests
 
         var aswPath = FileFor(batch, "ASW");
         var normalPath = FileFor(batch, "NORMAL");
-        Assert.Equal(500m, ReadDecimal(aswPath, "REBAJO", "F1"));
+        Assert.Equal(460m, ReadDecimal(aswPath, "REBAJO", "F1"));
         Assert.Equal(
             ReadWorksheetXml(normalPath, "Monto de factura"),
             ReadWorksheetXml(aswPath, "Monto de factura"));
@@ -133,7 +133,7 @@ public sealed class SpecialRebateSheetTests
             value => value.Contains("REBAJO", StringComparison.OrdinalIgnoreCase));
 
         var robertoPath = FileFor(batch, "RMB");
-        Assert.Equal(500m, ReadDecimal(robertoPath, "REBAJO", "F1"));
+        Assert.Equal(460m, ReadDecimal(robertoPath, "REBAJO", "F1"));
         Assert.Contains("Yerika Vega", ReadTexts(robertoPath, "REBAJO"));
 
         var sylviaPath = FileFor(batch, "SSM");
@@ -186,7 +186,7 @@ public sealed class SpecialRebateSheetTests
         Assert.Equal(expected.PendingBalanceCrc, ReadDecimal(generated, "REBAJO", "D11"));
         Assert.Equal(expected.InformationalRebateUsd, ReadDecimal(generated, "REBAJO", "D12"));
         Assert.Equal(expected.RemainingPayableCrc, ReadDecimal(generated, "REBAJO", "D13"));
-        Assert.Equal(500m, ReadDecimal(generated, "REBAJO", "F1"));
+        Assert.Equal(460m, ReadDecimal(generated, "REBAJO", "F1"));
         Assert.All(
             new[] { "D8", "D9", "D10", "D11", "D12", "D13" },
             reference => Assert.True(ReadDecimal(generated, "REBAJO", reference) >= 0m));

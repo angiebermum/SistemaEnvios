@@ -35,7 +35,7 @@ public sealed record InformationalRebateAmounts(
 
 public sealed class SpecialRebateSheetService
 {
-    public const decimal FixedExchangeRate = 500m;
+    public const decimal FixedExchangeRate = 460m;
 
     private static readonly IReadOnlyList<SpecialRebateSheetDefinition> SpecialDefinitions =
     [

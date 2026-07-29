@@ -1,4 +1,4 @@
-# Instalador de ECS Envío de Correos 1.0.4
+# Instalador de ECS Envío de Correos 1.0.5
 
 El proyecto crea un MSI de 64 bits, autocontenido y en español. Permite seleccionar la carpeta de instalación y decidir si se crea un acceso directo en el escritorio. También crea un acceso directo normal en el menú Inicio.
 

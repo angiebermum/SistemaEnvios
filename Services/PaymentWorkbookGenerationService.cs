@@ -13,19 +13,22 @@ public sealed class PaymentWorkbookGenerationService
     private readonly GeneratedFileHashService _hashService;
     private readonly GenerationHistoryService _historyService;
     private readonly FileLogger _logger;
+    private readonly SpecialRebateSheetService _specialRebateSheetService;
 
     public PaymentWorkbookGenerationService(
         PaymentCalculationService calculationService,
         FileNameSanitizer fileNameSanitizer,
         GeneratedFileHashService hashService,
         GenerationHistoryService historyService,
-        FileLogger logger)
+        FileLogger logger,
+        SpecialRebateSheetService? specialRebateSheetService = null)
     {
         _calculationService = calculationService;
         _fileNameSanitizer = fileNameSanitizer;
         _hashService = hashService;
         _historyService = historyService;
         _logger = logger;
+        _specialRebateSheetService = specialRebateSheetService ?? new SpecialRebateSheetService();
     }
 
     public PaymentGenerationBatch Generate(
@@ -150,8 +153,10 @@ public sealed class PaymentWorkbookGenerationService
                     CreateIndividualWorkbook(
                         stagedPath,
                         item.Analysis.WorksheetName,
-                        item.Calculation);
-                    ValidateGeneratedWorkbook(stagedPath);
+                        item.Assignment.Broker,
+                        item.Calculation,
+                        out var rebateSheetAdded);
+                    ValidateGeneratedWorkbook(stagedPath, rebateSheetAdded);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
                                                or DocumentFormat.OpenXml.Packaging.OpenXmlPackageException)
@@ -257,10 +262,12 @@ public sealed class PaymentWorkbookGenerationService
         }
     }
 
-    private static void CreateIndividualWorkbook(
+    private void CreateIndividualWorkbook(
         string path,
         string sourceWorksheetName,
-        PaymentCalculationResult calculation)
+        Broker broker,
+        PaymentCalculationResult calculation,
+        out bool rebateSheetAdded)
     {
         using var document = SpreadsheetDocument.Open(path, true);
         var workbookPart = document.WorkbookPart
@@ -318,6 +325,11 @@ public sealed class PaymentWorkbookGenerationService
             SheetId = nextSheetId,
             Name = "Monto de factura"
         });
+        rebateSheetAdded = _specialRebateSheetService.AppendInformationalSheet(
+            workbookPart,
+            broker,
+            sourceWorksheetName,
+            calculation);
         BrokerPercentageWorksheetNormalizer.Normalize(
             workbookPart,
             selectedWorksheetPart,
@@ -672,16 +684,17 @@ public sealed class PaymentWorkbookGenerationService
         }
     }
 
-    private static void ValidateGeneratedWorkbook(string path)
+    private static void ValidateGeneratedWorkbook(string path, bool rebateSheetExpected)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var document = SpreadsheetDocument.Open(stream, false);
         var names = document.WorkbookPart?.Workbook?.Sheets?.Elements<Sheet>()
             .Select(value => value.Name?.Value)
             .ToList() ?? [];
-        if (names.Count != 2 ||
-            !names.Contains("Detalle", StringComparer.Ordinal) ||
-            !names.Contains("Monto de factura", StringComparer.Ordinal))
+        var expectedNames = rebateSheetExpected
+            ? new[] { "Detalle", "Monto de factura", "REBAJO" }
+            : ["Detalle", "Monto de factura"];
+        if (!names.SequenceEqual(expectedNames, StringComparer.Ordinal))
         {
             throw new InvalidDataException(
                 $"El archivo '{Path.GetFileName(path)}' no contiene exactamente las hojas requeridas.");

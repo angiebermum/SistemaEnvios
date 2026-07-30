@@ -11,10 +11,10 @@
     UpgradeCode="7BB15A55-BAE3-41CB-963B-E557C1A35182">
 
     <SummaryInformation
-      Description="Instalador de ECS Envío de Correos 1.0.5"
+      Description="Instalador de ECS Envío de Correos 1.0.6"
       Manufacturer="Angie Bermúdez"
       Keywords="ECS, correo, Outlook, instalador"
-      Comments="Versión 1.0.5 con envío para todos los corredores seleccionados" />
+      Comments="Versión 1.0.6 con envío para todos los corredores seleccionados" />
 
     <MajorUpgrade DowngradeErrorMessage="Ya está instalada una versión más reciente de [ProductName]." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />

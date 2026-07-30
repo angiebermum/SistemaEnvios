@@ -21,10 +21,10 @@
     <Authors>Angie Bermúdez</Authors>
     <Company>Angie Bermúdez</Company>
     <Copyright>© 2026 Angie Bermúdez</Copyright>
-    <Version>1.0.5</Version>
-    <AssemblyVersion>1.0.5.0</AssemblyVersion>
-    <FileVersion>1.0.5.0</FileVersion>
-    <InformationalVersion>1.0.5</InformationalVersion>
+    <Version>1.0.6</Version>
+    <AssemblyVersion>1.0.6.0</AssemblyVersion>
+    <FileVersion>1.0.6.0</FileVersion>
+    <InformationalVersion>1.0.6</InformationalVersion>
     <NeutralLanguage>es-CR</NeutralLanguage>
   </PropertyGroup>
 

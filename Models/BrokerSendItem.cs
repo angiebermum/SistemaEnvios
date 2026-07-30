@@ -14,6 +14,7 @@ public sealed class BrokerSendItem : ObservableObject
     private List<BrokerAssistant> _assistants = [];
     private bool _isSelected = true;
     private ObservableCollection<string> _attachmentPaths = [];
+    private ObservableCollection<string> _generatedAttachmentPaths = [];
     private SendStatus _status;
     private string _lastError = string.Empty;
     private bool _isSending;
@@ -23,7 +24,11 @@ public sealed class BrokerSendItem : ObservableObject
     private string _batchReviewNote = string.Empty;
     private string? _seedKey;
 
-    public BrokerSendItem() => AttachCollection(_attachmentPaths);
+    public BrokerSendItem()
+    {
+        AttachCollection(_attachmentPaths);
+        AttachGeneratedCollection(_generatedAttachmentPaths);
+    }
 
     public Guid BrokerId
     {
@@ -122,6 +127,24 @@ public sealed class BrokerSendItem : ObservableObject
         }
     }
 
+    public ObservableCollection<string> GeneratedAttachmentPaths
+    {
+        get => _generatedAttachmentPaths;
+        set
+        {
+            if (ReferenceEquals(_generatedAttachmentPaths, value))
+            {
+                return;
+            }
+
+            DetachGeneratedCollection(_generatedAttachmentPaths);
+            _generatedAttachmentPaths = value ?? [];
+            AttachGeneratedCollection(_generatedAttachmentPaths);
+            OnPropertyChanged();
+            NotifyAttachmentProperties();
+        }
+    }
+
     public SendStatus Status
     {
         get => _status;
@@ -179,9 +202,30 @@ public sealed class BrokerSendItem : ObservableObject
     public string AttachmentCountText => AttachmentCount == 1 ? "1 archivo" : $"{AttachmentCount} archivos";
 
     [JsonIgnore]
+    public string GeneratedAttachmentCountText => GeneratedAttachmentPaths.Count == 1
+        ? "1 archivo"
+        : $"{GeneratedAttachmentPaths.Count} archivos";
+
+    [JsonIgnore]
     public string AttachmentSummary => AttachmentPaths.Count == 0
         ? "Sin archivos"
         : string.Join(Environment.NewLine, AttachmentPaths.Select(Path.GetFileName));
+
+    [JsonIgnore]
+    public IReadOnlyList<string> ManualAttachmentPaths
+    {
+        get
+        {
+            var generated = GeneratedAttachmentPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return AttachmentPaths.Where(path => !generated.Contains(path)).ToList();
+        }
+    }
+
+    [JsonIgnore]
+    public bool HasGeneratedAttachments => GeneratedAttachmentPaths.Count > 0;
+
+    [JsonIgnore]
+    public bool HasManualAttachments => ManualAttachmentPaths.Count > 0;
 
     [JsonIgnore]
     public string StatusText => Status switch
@@ -213,11 +257,24 @@ public sealed class BrokerSendItem : ObservableObject
     private void AttachmentPaths_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
         NotifyAttachmentProperties();
 
+    private void AttachGeneratedCollection(ObservableCollection<string> collection) =>
+        collection.CollectionChanged += GeneratedAttachmentPaths_CollectionChanged;
+
+    private void DetachGeneratedCollection(ObservableCollection<string> collection) =>
+        collection.CollectionChanged -= GeneratedAttachmentPaths_CollectionChanged;
+
+    private void GeneratedAttachmentPaths_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+        NotifyAttachmentProperties();
+
     private void NotifyAttachmentProperties()
     {
         OnPropertyChanged(nameof(AttachmentCount));
         OnPropertyChanged(nameof(AttachmentCountText));
+        OnPropertyChanged(nameof(GeneratedAttachmentCountText));
         OnPropertyChanged(nameof(AttachmentSummary));
+        OnPropertyChanged(nameof(ManualAttachmentPaths));
+        OnPropertyChanged(nameof(HasGeneratedAttachments));
+        OnPropertyChanged(nameof(HasManualAttachments));
     }
 
     private void NotifyAssistantProperties()

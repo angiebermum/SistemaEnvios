@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$ConfigurationPath = (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'ECSCommissionsMailer\configuracion.json'),
+    [Parameter(Mandatory)]
+    [ValidateNotNullOrEmpty()]
+    [string]$ConfigurationPath,
     [int]$SeedVersion = 3
 )
 

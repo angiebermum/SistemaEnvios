@@ -185,7 +185,8 @@ public partial class ResendWindow : Window
             RequiresReview = requiresReview,
             ReviewNote = broker?.ReviewNote ?? string.Empty,
             ReviewConfirmed = reviewConfirmed,
-            ResendOfRecordId = originalRecord.Id
+            ResendOfRecordId = originalRecord.Id,
+            PaymentGenerationId = originalRecord.PaymentGenerationId
         };
         var errors = new List<string>();
         errors.AddRange(resolved.Errors);
@@ -240,7 +241,8 @@ public partial class ResendWindow : Window
                 ArchivedAttachmentPaths = archivedPaths,
                 WasSuccessful = result.WasSuccessful,
                 ErrorMessage = recordError,
-                ResendOfRecordId = originalRecord.Id
+                ResendOfRecordId = originalRecord.Id,
+                PaymentGenerationId = originalRecord.PaymentGenerationId
             };
             _records.Insert(0, NewRecord);
             _sessionService.SaveRecentSends(_records);

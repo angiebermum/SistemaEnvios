@@ -28,6 +28,7 @@ internal static class SelfTestRunner
         {
             RunCoreTests(testRoot, Check);
             RunMigrationTests(migrationRoot, Check);
+            RunPaymentAutomationTests(Check);
         }
         catch (Exception ex)
         {
@@ -254,10 +255,10 @@ internal static class SelfTestRunner
                 .Any(value => value.Contains("firma", StringComparison.OrdinalIgnoreCase)),
             "Firma: una ruta configurada faltante produce recuperación controlada");
 
-        var outlookService = new OutlookEmailService(logger);
-        var availability = outlookService.CheckAvailabilityAsync().GetAwaiter().GetResult();
-        check(!string.IsNullOrWhiteSpace(availability.Message),
-            "Outlook: la comprobación devuelve estado controlado sin enviar correos");
+        var outlookEnvironment = OutlookEnvironmentInspector.Inspect();
+        check(outlookEnvironment.ApartmentState == ApartmentState.STA &&
+              !string.IsNullOrWhiteSpace(outlookEnvironment.ProcessArchitecture),
+            "Outlook: la inspección estática valida el entorno sin crear una instancia COM");
     }
 
     private static void RunMigrationTests(string migrationRoot, Action<bool, string> check)
@@ -355,6 +356,95 @@ internal static class SelfTestRunner
               recovered.CommonCcAddresses.Count == 1 &&
                Directory.GetFiles(migrationRoot, "configuracion.json.broken-*").Length == 1,
             "Recuperación: JSON corrupto se respalda, se aparta y recibe una configuración segura");
+    }
+
+    private static void RunPaymentAutomationTests(Action<bool, string> check)
+    {
+        var broker = new Broker
+        {
+            Id = Guid.NewGuid(),
+            Name = "Corredor sintético",
+            PrimaryEmailAddresses = ["synthetic@example.com"],
+            AssociatedWorksheetNames = ["SYN", "SYN2", "SYN3"],
+            Deductions =
+            [
+                new BrokerDeduction
+                {
+                    Description = "Ajuste sintético",
+                    Amount = 10_000m,
+                    Currency = DeductionCurrency.CRC,
+                    ApplicationType = DeductionApplicationType.GrossCommission,
+                    TargetWorksheetName = "SYN"
+                },
+                new BrokerDeduction
+                {
+                    Description = "Ahorro sintético",
+                    Amount = 15_000m,
+                    Currency = DeductionCurrency.CRC,
+                    ApplicationType = DeductionApplicationType.PayableAmount,
+                    TargetWorksheetName = "SYN"
+                }
+            ]
+        };
+        var mappingService = new WorksheetBrokerMappingService();
+        var mapping = mappingService.Resolve(["syn", "SYN2", "SYN3"], [broker]);
+        check(mapping.IsValid && mapping.Assignments.Count == 3 &&
+              mapping.Assignments.All(value => value.Broker.Id == broker.Id),
+            "Automatización: tres pestañas exactas se agrupan por el identificador estable de un corredor");
+        var partial = mappingService.Resolve(["SYN Especial"], [broker]);
+        check(!partial.IsValid && partial.MissingWorksheetNames.SequenceEqual(["SYN Especial"]),
+            "Automatización: no utiliza coincidencias parciales para asociar pestañas");
+
+        var calculation = new PaymentCalculationService().Calculate(
+            new CommissionWorksheetAnalysis
+            {
+                WorksheetName = "SYN",
+                Crc = new CommissionCurrencySummary
+                {
+                    Currency = DeductionCurrency.CRC,
+                    HasCommission = true,
+                    GrossCommission = 100_000m
+                },
+                Usd = new CommissionCurrencySummary
+                {
+                    Currency = DeductionCurrency.USD,
+                    HasCommission = false
+                }
+            },
+            broker.Deductions);
+        check(calculation.IsValid &&
+              calculation.Crc.AdjustedGrossCommission == 90_000m &&
+              calculation.Crc.Vat == 11_700m &&
+              calculation.Crc.Withholding == 1_800m &&
+              calculation.Crc.DepositedAmount == 84_900m,
+            "Automatización: calcula rebajo bruto, IVA, retención y rebajo al pago en el orden definido");
+        check(!calculation.Usd.HasCommission &&
+              calculation.Usd.GrossCommissionOriginal == 0m &&
+              calculation.Usd.Vat == 0m &&
+              calculation.Usd.DepositedAmount == 0m,
+            "Automatización: una moneda sin comisión conserva todo el bloque financiero en cero");
+
+        var exactMinimum = new PaymentCalculationService().Calculate(
+            new CommissionWorksheetAnalysis
+            {
+                Crc = new CommissionCurrencySummary
+                {
+                    Currency = DeductionCurrency.CRC,
+                    HasCommission = true,
+                    GrossCommission = PaymentCalculationService.CrcMinimum
+                },
+                Usd = new CommissionCurrencySummary { Currency = DeductionCurrency.USD }
+            },
+            []);
+        check(!exactMinimum.Crc.MinimumApplied && exactMinimum.Crc.DepositedAmount > 0,
+            "Automatización: CRC exactamente en el mínimo sí se paga");
+
+        var sanitizer = new FileNameSanitizer();
+        var fileName = sanitizer.CreatePaymentFileName(
+            "Corredor / sintético", "SYN:1", "IQ prueba 2026");
+        check(fileName == "Detalle de pago - Corredor - sintético - SYN-1 - IQ prueba 2026.xlsx" &&
+              sanitizer.ValidatePeriod("periodo.").Count > 0,
+            "Automatización: sanitiza nombres de archivo y bloquea periodos inválidos de Windows");
     }
 
     private static void CreateTestImage(string path, BitmapEncoder encoder)

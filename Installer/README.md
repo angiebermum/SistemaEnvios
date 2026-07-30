@@ -1,4 +1,4 @@
-# Instalador de ECS Envío de Correos 1.0.3
+# Instalador de ECS Envío de Correos 1.0.6
 
 El proyecto crea un MSI de 64 bits, autocontenido y en español. Permite seleccionar la carpeta de instalación y decidir si se crea un acceso directo en el escritorio. También crea un acceso directo normal en el menú Inicio.
 
@@ -13,9 +13,16 @@ dotnet tool install --global wix --version 5.0.2
 
 El resultado se guarda en `artifacts\installer`.
 
-Antes de publicar, el proceso toma la configuración activa de
-`%LOCALAPPDATA%\ECSCommissionsMailer\configuracion.json`, elimina las rutas locales y genera una
-semilla portátil en `Data\correos-iniciales.v3.json`. La firma configurada se copia como recurso
-del instalador. No se incorporan sesiones, historial, adjuntos ni registros de envío.
+El proceso usa exclusivamente la semilla y la firma aprobadas y versionadas en `Data`. El build
+se detiene si esos archivos tienen cambios locales, para que datos del perfil del operador no
+entren accidentalmente al MSI. No se incorporan sesiones, historial, adjuntos ni registros de
+envío.
+
+La sincronización de una nueva semilla es una operación manual y separada. Requiere indicar
+explícitamente la configuración aprobada:
+
+```powershell
+.\Installer\Sync-InstallerData.ps1 -ConfigurationPath C:\ruta\aprobada\configuracion.json
+```
 
 La aplicación se publica como `win-x64` autocontenida, por lo que no requiere instalar .NET en la computadora de destino. Outlook Classic sí debe estar instalado y configurado para las funciones de correo.

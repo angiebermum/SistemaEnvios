@@ -18,6 +18,7 @@ public sealed class SentEmailRecord
     public bool WasSuccessful { get; set; }
     public string ErrorMessage { get; set; } = string.Empty;
     public Guid? ResendOfRecordId { get; set; }
+    public Guid? PaymentGenerationId { get; set; }
 
     [JsonIgnore]
     public string BrokerIdentityText

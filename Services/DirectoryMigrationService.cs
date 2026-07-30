@@ -85,6 +85,7 @@ internal sealed class DirectoryMigrationService
     {
         configuration.Brokers ??= [];
         configuration.CommonCcAddresses ??= [];
+        configuration.DataSchemaVersion = AppConfiguration.CurrentDataSchemaVersion;
         foreach (var broker in configuration.Brokers)
         {
             if (broker.Id == Guid.Empty)
@@ -94,6 +95,41 @@ internal sealed class DirectoryMigrationService
 
             broker.PrimaryEmailAddresses ??= [];
             broker.Assistants ??= [];
+            broker.AssociatedWorksheetNames ??= [];
+            broker.AssociatedWorksheetNames = broker.AssociatedWorksheetNames
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            broker.Deductions ??= [];
+            foreach (var deduction in broker.Deductions)
+            {
+                if (deduction.Id == Guid.Empty)
+                {
+                    deduction.Id = Guid.NewGuid();
+                }
+
+                deduction.Description = deduction.Description?.Trim() ?? string.Empty;
+                var targetWorksheetName = WorksheetBrokerMappingService.NormalizeWorksheetName(
+                    deduction.TargetWorksheetName);
+                if (targetWorksheetName.Length == 0 && broker.AssociatedWorksheetNames.Count == 1)
+                {
+                    deduction.TargetWorksheetName = broker.AssociatedWorksheetNames[0];
+                }
+                else
+                {
+                    deduction.TargetWorksheetName = broker.AssociatedWorksheetNames.FirstOrDefault(value =>
+                        string.Equals(
+                            WorksheetBrokerMappingService.NormalizeWorksheetName(value),
+                            targetWorksheetName,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (deduction.TargetWorksheetName is null && targetWorksheetName.Length > 0)
+                    {
+                        deduction.TargetWorksheetName = targetWorksheetName;
+                    }
+                }
+            }
+
             foreach (var assistant in broker.Assistants)
             {
                 if (assistant.Id == Guid.Empty)

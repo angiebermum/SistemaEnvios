@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,7 +26,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly SignatureImageService _signatureService;
     private readonly AttachmentArchiveService _archiveService;
     private readonly OutlookEmailService _outlookService;
+    private readonly WorksheetBrokerMappingService _worksheetMappingService = new();
+    private readonly WorkbookAnalysisService _workbookAnalysisService;
+    private readonly FileNameSanitizer _fileNameSanitizer = new();
+    private readonly DesktopOutputDirectoryService _desktopOutputService = new();
+    private readonly GenerationHistoryService _generationHistoryService;
+    private readonly PaymentWorkbookGenerationService _paymentWorkbookGenerationService;
+    private readonly GeneratedFileViewerService _generatedFileViewerService;
+    private readonly AssociatedFileAssociationService _associatedFileAssociationService;
+    private readonly AssociatedWorkbookEditService _associatedWorkbookEditService;
+    private readonly GeneratedBrokerSelectionService _generatedBrokerSelectionService;
     private readonly ObservableCollection<SentEmailRecord> _recentRecords;
+    private readonly List<PaymentGenerationBatch> _paymentGenerationHistory;
     private readonly bool _isUiSmokeTest;
     private readonly ICollectionView _brokerItemsView;
     private AppConfiguration _configuration;
@@ -47,6 +59,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _signatureStateText = "No hay una firma configurada.";
     private string? _signatureLoadWarning;
     private bool _isBulkSelectionUpdate;
+    private string _generalWorkbookPath = string.Empty;
+    private string _workbookAnalysisText = "No hay un Excel general cargado.";
+    private string _generationStatusText = "Todavía no se han generado archivos para esta sesión.";
+    private string _generatedOutputDirectory = string.Empty;
+    private WorkbookAnalysisResult? _currentWorkbookAnalysis;
+    private PaymentGenerationBatch? _activePaymentGeneration;
 
     public MainWindow(AppDataPaths paths, FileLogger logger, bool isUiSmokeTest = false)
     {
@@ -59,10 +77,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _signatureService = new SignatureImageService(paths);
         _archiveService = new AttachmentArchiveService(paths, logger);
         _outlookService = new OutlookEmailService(logger);
+        var hashService = new GeneratedFileHashService();
+        _workbookAnalysisService = new WorkbookAnalysisService(hashService: hashService);
+        _generationHistoryService = new GenerationHistoryService(paths, logger);
+        _generatedFileViewerService = new GeneratedFileViewerService(
+            new GeneratedFileProcessLauncher(),
+            logger);
+        _associatedFileAssociationService = new AssociatedFileAssociationService(logger);
+        _associatedWorkbookEditService = new AssociatedWorkbookEditService(paths, logger);
+        _generatedBrokerSelectionService = new GeneratedBrokerSelectionService(logger);
+        _paymentWorkbookGenerationService = new PaymentWorkbookGenerationService(
+            new PaymentCalculationService(),
+            _fileNameSanitizer,
+            hashService,
+            _generationHistoryService,
+            logger);
 
         _configuration = _configurationService.Load();
         var session = _sessionService.LoadCurrent();
         _recentRecords = new ObservableCollection<SentEmailRecord>(_sessionService.LoadRecentSends());
+        _paymentGenerationHistory = _generationHistoryService.Load();
+        _activePaymentGeneration = _generationHistoryService.FindActive(
+            _paymentGenerationHistory,
+            session?.ActivePaymentGenerationId);
+        _generalWorkbookPath = session?.GeneralWorkbookPath ?? string.Empty;
+        _generatedOutputDirectory = session?.GeneratedOutputDirectory ?? string.Empty;
+        if (_activePaymentGeneration is not null)
+        {
+            _generationStatusText =
+                $"{_activePaymentGeneration.Period}: {_activePaymentGeneration.Files.Count} archivo(s) listos.";
+        }
+        else if (!string.IsNullOrWhiteSpace(session?.GeneratedPeriod))
+        {
+            _generationStatusText = $"{session.GeneratedPeriod}: la generación ya no está disponible.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(_generalWorkbookPath))
+        {
+            _workbookAnalysisText = File.Exists(_generalWorkbookPath)
+                ? $"Cargado: {Path.GetFileName(_generalWorkbookPath)}. Se analizará antes de generar."
+                : "El Excel general guardado ya no existe.";
+        }
         _brokerItemsView = CollectionViewSource.GetDefaultView(BrokerItems);
         _brokerItemsView.Filter = FilterBrokerItem;
         Subject = string.IsNullOrEmpty(session?.Subject) ? _configuration.DefaultSubject : session.Subject;
@@ -80,6 +135,51 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<BrokerSendItem> BrokerItems { get; } = [];
     public ObservableCollection<Broker> InactiveBrokers { get; } = [];
     public ICollectionView BrokerItemsView => _brokerItemsView;
+
+    public string GeneralWorkbookPath
+    {
+        get => _generalWorkbookPath;
+        private set
+        {
+            if (SetProperty(ref _generalWorkbookPath, value ?? string.Empty))
+            {
+                OnPropertyChanged(nameof(GeneralWorkbookFileName));
+            }
+        }
+    }
+
+    public string GeneralWorkbookFileName => string.IsNullOrWhiteSpace(GeneralWorkbookPath)
+        ? "Ningún archivo seleccionado"
+        : Path.GetFileName(GeneralWorkbookPath);
+
+    public string WorkbookAnalysisText
+    {
+        get => _workbookAnalysisText;
+        private set => SetProperty(ref _workbookAnalysisText, value);
+    }
+
+    public string GenerationStatusText
+    {
+        get => _generationStatusText;
+        private set => SetProperty(ref _generationStatusText, value);
+    }
+
+    public string GeneratedOutputDirectory
+    {
+        get => _generatedOutputDirectory;
+        private set
+        {
+            if (SetProperty(ref _generatedOutputDirectory, value ?? string.Empty))
+            {
+                OnPropertyChanged(nameof(CanOpenGeneratedFolder));
+            }
+        }
+    }
+
+    public bool CanOpenGeneratedFolder =>
+        !string.IsNullOrWhiteSpace(GeneratedOutputDirectory) && Directory.Exists(GeneratedOutputDirectory);
+
+    public bool HasActivePaymentGeneration => _activePaymentGeneration is not null;
 
     public string Subject
     {
@@ -151,6 +251,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public bool IsUiEnabled => !_isBusy;
+    public bool CanSendSelected => IsUiEnabled && BrokerItems.Any(item => item.IsSelected);
     public bool IsSelectedBrokerActive => SelectedBrokerItem is not null &&
         _configuration.Brokers.FirstOrDefault(value => value.Id == SelectedBrokerItem.BrokerId)?.IsActive == true;
     public string InactiveBrokersButtonText => $"Ver inactivos ({InactiveBrokers.Count})";
@@ -229,6 +330,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         warnings.AddRange(_sessionService.Warnings);
+        warnings.AddRange(_generationHistoryService.Warnings);
         if (!string.IsNullOrWhiteSpace(_signatureLoadWarning))
         {
             warnings.Add(_signatureLoadWarning);
@@ -332,7 +434,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void AddBroker_Click(object sender, RoutedEventArgs e)
     {
-        var editor = new BrokerEditorWindow(null, _validationService) { Owner = this };
+        var editor = new BrokerEditorWindow(
+            null,
+            _validationService,
+            _configuration.Brokers,
+            _worksheetMappingService) { Owner = this };
         if (editor.ShowDialog() != true)
         {
             return;
@@ -358,7 +464,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var editor = new BrokerEditorWindow(broker, _validationService) { Owner = this };
+        var editor = new BrokerEditorWindow(
+            broker,
+            _validationService,
+            _configuration.Brokers,
+            _worksheetMappingService) { Owner = this };
         if (editor.ShowDialog() != true)
         {
             return;
@@ -368,6 +478,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         broker.Name = edited.Name;
         broker.PrimaryEmailAddresses = edited.PrimaryEmailAddresses;
         broker.Assistants = edited.Assistants;
+        broker.AssociatedWorksheetNames = edited.AssociatedWorksheetNames;
+        broker.Deductions = edited.Deductions;
         broker.IsActive = edited.IsActive;
         broker.RequiresReview = edited.RequiresReview;
         broker.ReviewNote = edited.ReviewNote;
@@ -529,6 +641,395 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         window.ShowDialog();
     }
 
+    private async void SelectGeneralWorkbook_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Seleccionar Excel general de comisiones",
+            Filter = "Libro de Excel compatible (*.xlsx)|*.xlsx",
+            Multiselect = false,
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        GeneralWorkbookPath = Path.GetFullPath(dialog.FileName);
+        await AnalyzeGeneralWorkbookAsync(showResult: true);
+        SaveCurrentSessionWithMessageOnError(false);
+    }
+
+    private async void GenerateFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isBusy)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(GeneralWorkbookPath) || !File.Exists(GeneralWorkbookPath))
+        {
+            MessageBox.Show(
+                "Seleccione primero el Excel general de comisiones.",
+                "Generar archivos", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var configurationErrors = _worksheetMappingService.ValidateConfiguration(_configuration.Brokers);
+        if (configurationErrors.Count > 0)
+        {
+            MessageBox.Show(
+                "Corrija la configuración antes de generar:\n\n" +
+                string.Join(Environment.NewLine, configurationErrors.Select(value => $"• {value}")),
+                "Configuración inválida", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var analysis = await AnalyzeGeneralWorkbookAsync(showResult: false);
+        if (analysis is null || !analysis.IsValid)
+        {
+            return;
+        }
+
+        var mapping = _worksheetMappingService.Resolve(
+            analysis.Worksheets.Select(value => value.WorksheetName),
+            _configuration.Brokers);
+        if (mapping.Errors.Count > 0)
+        {
+            MessageBox.Show(string.Join(Environment.NewLine, mapping.Errors.Select(value => $"• {value}")),
+                "Asociaciones duplicadas", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (mapping.MissingWorksheetNames.Count > 0)
+        {
+            var mappingWindow = new WorksheetMappingWindow(
+                mapping.MissingWorksheetNames,
+                _configuration.Brokers,
+                _validationService,
+                _worksheetMappingService)
+            {
+                Owner = this
+            };
+            if (mappingWindow.ShowDialog() != true)
+            {
+                OperationText = "Generación cancelada: quedaron pestañas sin asociar.";
+                return;
+            }
+
+            foreach (var createdBroker in mappingWindow.CreatedBrokers)
+            {
+                _configuration.Brokers.Add(createdBroker);
+            }
+
+            try
+            {
+                _configurationService.Save(_configuration);
+                ReloadBrokerRows(BrokerItems.ToList());
+                SaveCurrentSession();
+            }
+            catch (Exception ex)
+            {
+                ShowSaveError(ex);
+                return;
+            }
+
+            mapping = _worksheetMappingService.Resolve(
+                analysis.Worksheets.Select(value => value.WorksheetName),
+                _configuration.Brokers);
+        }
+
+        if (!mapping.IsValid)
+        {
+            MessageBox.Show(
+                "No se puede generar hasta que todas las pestañas estén asociadas.",
+                "Asociaciones incompletas", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var inactiveAssignments = mapping.Assignments.Where(value => !value.Broker.IsActive).ToList();
+        if (inactiveAssignments.Count > 0)
+        {
+            MessageBox.Show(
+                "Las siguientes pestañas están asociadas a corredores inactivos. Active esos corredores antes de generar:\n\n" +
+                string.Join(Environment.NewLine, inactiveAssignments.Select(value =>
+                    $"• {value.WorksheetName} — {value.Broker.Name}")),
+                "Corredores inactivos", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var periodWindow = new GenerationPeriodWindow(
+            analysis.Worksheets.Count,
+            mapping.Assignments.Select(value => value.Broker.Id).Distinct().Count(),
+            mapping.Assignments[0].Broker.Name,
+            mapping.Assignments[0].WorksheetName,
+            _desktopOutputService,
+            _fileNameSanitizer)
+        {
+            Owner = this
+        };
+        if (periodWindow.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var replaceExisting = false;
+        if (periodWindow.OutputDirectoryExists)
+        {
+            if (MessageBox.Show(
+                    $"La carpeta ya existe:\n\n{periodWindow.OutputDirectory}\n\n" +
+                    "¿Desea reemplazar únicamente los archivos con los nombres de esta generación? " +
+                    "Los demás archivos de la carpeta se conservarán.",
+                    "Carpeta existente", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            replaceExisting = true;
+        }
+
+        SetBusy(true);
+        ProgressMaximum = analysis.Worksheets.Count;
+        ProgressValue = 0;
+        OperationText = "Preparando generación...";
+        var generatedProgress = 0;
+        var progress = new Progress<string>(message =>
+        {
+            OperationText = message;
+            ProgressValue = Math.Min(++generatedProgress, ProgressMaximum);
+        });
+        try
+        {
+            var request = new PaymentGenerationRequest
+            {
+                SourceWorkbookPath = GeneralWorkbookPath,
+                Period = periodWindow.Period,
+                OutputDirectory = periodWindow.OutputDirectory,
+                Analysis = analysis,
+                Assignments = mapping.Assignments,
+                ReplaceExistingFiles = replaceExisting
+            };
+            var batch = await Task.Run(() =>
+                _paymentWorkbookGenerationService.Generate(
+                    request,
+                    _paymentGenerationHistory,
+                    progress));
+            _activePaymentGeneration = batch;
+            OnPropertyChanged(nameof(HasActivePaymentGeneration));
+            GeneratedOutputDirectory = batch.OutputDirectory;
+            ApplyGeneratedAttachments(batch);
+            var selection = SelectBrokersWithCurrentGeneratedFiles(batch);
+            GenerationStatusText = selection.Succeeded
+                ? $"{batch.Period}: {batch.Files.Count} archivo(s) listos; " +
+                  $"{selection.SelectedBrokerCount} corredor(es) seleccionado(s) automáticamente."
+                : $"{batch.Period}: archivos listos, pero la selección automática no pudo completarse.";
+            SaveCurrentSession();
+            OperationText = selection.Succeeded
+                ? $"Generación completada: {batch.Files.Count} archivo(s); " +
+                  $"{selection.SelectedBrokerCount} corredor(es) seleccionado(s)."
+                : selection.ErrorMessage;
+
+            var perBroker = batch.Files.GroupBy(value => value.BrokerId)
+                .Select(group => $"• {group.First().BrokerName}: {group.Count()} archivo(s)");
+            var warningText = batch.Warnings.Count == 0
+                ? string.Empty
+                : "\n\nAdvertencias:\n" + string.Join(Environment.NewLine,
+                    batch.Warnings.Distinct(StringComparer.OrdinalIgnoreCase).Select(value => $"• {value}"));
+            var excludedText = selection.ExcludedBrokerCount == 0
+                ? string.Empty
+                : $"\n{selection.ExcludedBrokerCount} corredor(es) no fueron seleccionados porque " +
+                  "están inactivos o sus archivos no están disponibles.";
+            var selectionErrorText = selection.Succeeded
+                ? string.Empty
+                : $"\n\n{selection.ErrorMessage}";
+            var hasWarnings = batch.Warnings.Count > 0 ||
+                              selection.ExcludedBrokerCount > 0 ||
+                              !selection.Succeeded;
+            MessageBox.Show(
+                $"{(hasWarnings ? "Generación completada con advertencias." : "Generación completada.")}\n\n" +
+                $"{selection.GeneratedFileCount} archivo(s) generado(s).\n" +
+                $"{selection.BrokersWithGeneratedFilesCount} corredor(es) con archivos.\n" +
+                $"{selection.SelectedBrokerCount} corredor(es) seleccionado(s) automáticamente." +
+                excludedText +
+                $"\n\nCarpeta:\n{batch.OutputDirectory}\n\n" +
+                string.Join(Environment.NewLine, perBroker) +
+                warningText +
+                selectionErrorText +
+                "\n\nNo se enviaron correos.",
+                hasWarnings ? "Generación completada con advertencias" : "Generación completada",
+                MessageBoxButton.OK,
+                hasWarnings ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClearBrokerSelection();
+            SaveCurrentSessionWithMessageOnError(false);
+            _logger.Error("No fue posible generar los detalles de pago.", ex);
+            OperationText = "La generación falló; no se dejaron archivos parciales válidos.";
+            GenerationStatusText = $"Error de generación: {ex.Message}";
+            MessageBox.Show(
+                $"No fue posible generar los archivos.\n\n{ex.Message}",
+                "Error de generación", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private void OpenGeneratedFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (!CanOpenGeneratedFolder)
+        {
+            MessageBox.Show(
+                "La carpeta de la generación no está disponible.",
+                "Abrir carpeta", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = GeneratedOutputDirectory,
+            UseShellExecute = true
+        });
+    }
+
+    private async Task<WorkbookAnalysisResult?> AnalyzeGeneralWorkbookAsync(bool showResult)
+    {
+        SetBusy(true);
+        OperationText = "Analizando todas las pestañas del Excel general...";
+        try
+        {
+            var analysis = await Task.Run(() => _workbookAnalysisService.Analyze(GeneralWorkbookPath));
+            _currentWorkbookAnalysis = analysis;
+            var errors = analysis.Errors
+                .Concat(analysis.Worksheets.SelectMany(value =>
+                    value.Errors.Select(error => $"{value.WorksheetName}: {error}")))
+                .ToList();
+            if (errors.Count > 0)
+            {
+                WorkbookAnalysisText =
+                    $"{analysis.Worksheets.Count} pestaña(s) detectada(s); {errors.Count} error(es) de interpretación.";
+                OperationText = "El Excel general contiene incidencias que bloquean la generación.";
+                MessageBox.Show(
+                    "No se puede usar el Excel general:\n\n" +
+                    string.Join(Environment.NewLine, errors.Select(value => $"• {value}")),
+                    "Análisis del Excel", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return analysis;
+            }
+
+            var currentMapping = _worksheetMappingService.Resolve(
+                analysis.Worksheets.Select(value => value.WorksheetName),
+                _configuration.Brokers);
+            var brokerCount = currentMapping.Assignments
+                .Select(value => value.Broker.Id).Distinct().Count();
+            WorkbookAnalysisText =
+                $"{analysis.Worksheets.Count} pestaña(s), {brokerCount} corredor(es) asociado(s).";
+            OperationText = "Excel general analizado.";
+            if (showResult)
+            {
+                var warnings = analysis.Worksheets.SelectMany(value => value.Warnings).ToList();
+                MessageBox.Show(
+                    $"Excel cargado: {Path.GetFileName(GeneralWorkbookPath)}\n\n" +
+                    $"Pestañas: {analysis.Worksheets.Count}\n" +
+                    $"Asociadas actualmente: {currentMapping.Assignments.Count}\n" +
+                    $"Corredores relacionados: {brokerCount}\n" +
+                    $"Sin asociación: {currentMapping.MissingWorksheetNames.Count}" +
+                    (warnings.Count == 0
+                        ? string.Empty
+                        : $"\n\nAdvertencias:\n{string.Join(Environment.NewLine, warnings.Select(value => $"• {value}"))}"),
+                    "Análisis del Excel", MessageBoxButton.OK,
+                    warnings.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            }
+
+            return analysis;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error inesperado al analizar el Excel general.", ex);
+            WorkbookAnalysisText = "No fue posible analizar el Excel general.";
+            OperationText = "Error al analizar el Excel general.";
+            MessageBox.Show(
+                $"No fue posible analizar el Excel general.\n\n{ex.Message}",
+                "Análisis del Excel", MessageBoxButton.OK, MessageBoxImage.Error);
+            return null;
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private GeneratedBrokerSelectionResult SelectBrokersWithCurrentGeneratedFiles(
+        PaymentGenerationBatch batch)
+    {
+        _isBulkSelectionUpdate = true;
+        try
+        {
+            return _generatedBrokerSelectionService.SelectEligibleBrokers(
+                BrokerItems,
+                _configuration.Brokers,
+                batch,
+                GeneralWorkbookPath);
+        }
+        finally
+        {
+            _isBulkSelectionUpdate = false;
+            OnPropertyChanged(nameof(AreAllBrokersSelected));
+            OnPropertyChanged(nameof(CanSendSelected));
+        }
+    }
+
+    private void ClearBrokerSelection()
+    {
+        _isBulkSelectionUpdate = true;
+        try
+        {
+            GeneratedBrokerSelectionService.ClearSelection(BrokerItems);
+        }
+        finally
+        {
+            _isBulkSelectionUpdate = false;
+            OnPropertyChanged(nameof(AreAllBrokersSelected));
+            OnPropertyChanged(nameof(CanSendSelected));
+        }
+    }
+
+    private void ApplyGeneratedAttachments(PaymentGenerationBatch batch)
+    {
+        foreach (var item in BrokerItems)
+        {
+            foreach (var previousGenerated in item.GeneratedAttachmentPaths.ToList())
+            {
+                item.AttachmentPaths.Remove(previousGenerated);
+            }
+
+            item.GeneratedAttachmentPaths.Clear();
+        }
+
+        foreach (var group in batch.Files.GroupBy(value => value.BrokerId))
+        {
+            var item = BrokerItems.FirstOrDefault(value => value.BrokerId == group.Key);
+            if (item is null)
+            {
+                continue;
+            }
+
+            foreach (var file in group)
+            {
+                if (!item.AttachmentPaths.Contains(file.OutputPath, StringComparer.OrdinalIgnoreCase))
+                {
+                    item.AttachmentPaths.Add(file.OutputPath);
+                }
+
+                item.GeneratedAttachmentPaths.Add(file.OutputPath);
+            }
+
+            item.LastError = string.Empty;
+            UpdateReadiness(item);
+        }
+    }
+
     private void AttachFiles_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.CommandParameter is not BrokerSendItem item)
@@ -536,6 +1037,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        AddManualFiles(this, item);
+    }
+
+    private void AddManualFiles(Window owner, BrokerSendItem item)
+    {
         var dialog = new OpenFileDialog
         {
             Title = $"Adjuntar archivos para {item.BrokerName}",
@@ -543,7 +1049,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Multiselect = true,
             CheckFileExists = true
         };
-        if (dialog.ShowDialog(this) != true)
+        if (dialog.ShowDialog(owner) != true)
         {
             return;
         }
@@ -568,6 +1074,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : $"Se agregaron {added} archivo(s) a {item.BrokerName}.";
     }
 
+    private void ViewGeneratedFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.CommandParameter is not BrokerSendItem item)
+        {
+            return;
+        }
+
+        new GeneratedFilesWindow(
+            item,
+            _generatedFileViewerService,
+            _associatedWorkbookEditService,
+            AddManualFiles,
+            UnlinkAssociatedFile,
+            PersistAssociatedReplacement)
+        {
+            Owner = this
+        }.ShowDialog();
+    }
+
     private void RemoveAttachment_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button button || button.Tag is not BrokerSendItem item || button.DataContext is not string path)
@@ -575,10 +1100,124 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        item.AttachmentPaths.Remove(path);
-        item.LastError = string.Empty;
-        UpdateReadiness(item);
-        SaveCurrentSessionWithMessageOnError();
+        _ = UnlinkAssociatedFile(item, path);
+    }
+
+    private AssociatedFileUnlinkResult UnlinkAssociatedFile(BrokerSendItem item, string path)
+    {
+        var generatedFile = AssociatedFileAssociationService.IsGenerated(item, path)
+            ? _activePaymentGeneration?.Files.FirstOrDefault(file =>
+                file.BrokerId == item.BrokerId &&
+                PathsEqual(file.OutputPath, path))
+            : null;
+        var generatedFileIndex = generatedFile is null || _activePaymentGeneration is null
+            ? -1
+            : _activePaymentGeneration.Files.IndexOf(generatedFile);
+        var generationHistoryUpdated = false;
+        var result = _associatedFileAssociationService.Unlink(
+            item,
+            path,
+            () =>
+            {
+                if (generatedFile is not null && _activePaymentGeneration is not null)
+                {
+                    _activePaymentGeneration.Files.Remove(generatedFile);
+                    try
+                    {
+                        _generationHistoryService.Upsert(
+                            _paymentGenerationHistory,
+                            _activePaymentGeneration);
+                        generationHistoryUpdated = true;
+                    }
+                    catch
+                    {
+                        _activePaymentGeneration.Files.Insert(generatedFileIndex, generatedFile);
+                        throw;
+                    }
+                }
+
+                try
+                {
+                    item.LastError = string.Empty;
+                    UpdateReadiness(item);
+                    SaveCurrentSession();
+                }
+                catch
+                {
+                    if (generationHistoryUpdated &&
+                        generatedFile is not null &&
+                        _activePaymentGeneration is not null)
+                    {
+                        _activePaymentGeneration.Files.Insert(generatedFileIndex, generatedFile);
+                        _generationHistoryService.Upsert(
+                            _paymentGenerationHistory,
+                            _activePaymentGeneration);
+                    }
+
+                    throw;
+                }
+            });
+        if (result.Succeeded && result.WasGenerated && _activePaymentGeneration is not null)
+        {
+            GenerationStatusText =
+                $"{_activePaymentGeneration.Period}: {_activePaymentGeneration.Files.Count} archivo(s) listos.";
+        }
+
+        OnPropertyChanged(nameof(AreAllBrokersSelected));
+        OnPropertyChanged(nameof(CanSendSelected));
+        return result;
+    }
+
+    private void PersistAssociatedReplacement(BrokerSendItem item, string path, string sha256)
+    {
+        if (!AssociatedFileAssociationService.IsAssociated(item, path))
+        {
+            throw new InvalidOperationException(
+                "El archivo dejó de estar asociado antes de completar el reemplazo.");
+        }
+
+        GeneratedPaymentFile? generatedFile = null;
+        string? previousHash = null;
+        var generationHistoryUpdated = false;
+        try
+        {
+            if (AssociatedFileAssociationService.IsGenerated(item, path))
+            {
+                generatedFile = _activePaymentGeneration?.Files.FirstOrDefault(file =>
+                    file.BrokerId == item.BrokerId &&
+                    PathsEqual(file.OutputPath, path));
+                if (generatedFile is null || _activePaymentGeneration is null)
+                {
+                    throw new InvalidOperationException(
+                        "No se encontró el registro de la generación activa para actualizar su contenido.");
+                }
+
+                previousHash = generatedFile.Sha256;
+                generatedFile.Sha256 = sha256;
+                _generationHistoryService.Upsert(
+                    _paymentGenerationHistory,
+                    _activePaymentGeneration);
+                generationHistoryUpdated = true;
+            }
+
+            item.LastError = string.Empty;
+            UpdateReadiness(item);
+        }
+        catch
+        {
+            if (generatedFile is not null && previousHash is not null)
+            {
+                generatedFile.Sha256 = previousHash;
+                if (generationHistoryUpdated && _activePaymentGeneration is not null)
+                {
+                    _generationHistoryService.Upsert(
+                        _paymentGenerationHistory,
+                        _activePaymentGeneration);
+                }
+            }
+
+            throw;
+        }
     }
 
     private async void SendSelected_Click(object sender, RoutedEventArgs e)
@@ -685,6 +1324,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         foreach (var item in BrokerItems)
         {
             item.AttachmentPaths.Clear();
+            item.GeneratedAttachmentPaths.Clear();
             item.Status = item.RequiresReview ? SendStatus.ReviewRequired : SendStatus.Pending;
             if (item.RequiresReview)
             {
@@ -693,6 +1333,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             item.LastError = string.Empty;
             item.IsSending = false;
         }
+
+        _activePaymentGeneration = null;
+        OnPropertyChanged(nameof(HasActivePaymentGeneration));
+        GeneratedOutputDirectory = string.Empty;
+        GenerationStatusText = "Todavía no se han generado archivos para esta sesión.";
 
         if (resetChoice == MessageBoxResult.Yes)
         {
@@ -833,6 +1478,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             _sessionService.SaveRecentSends(_recentRecords);
+            UpdateActiveGenerationAfterSend(requests, results);
             SaveCurrentSession();
             var failedCount = results.Count - successCount;
             OperationText = $"Proceso finalizado. Enviados: {successCount}. Con error: {failedCount}.";
@@ -895,7 +1541,63 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ArchivedAttachmentPaths = archivedPaths,
             WasSuccessful = result.WasSuccessful,
             ErrorMessage = recordError,
-            ResendOfRecordId = request.ResendOfRecordId
+            ResendOfRecordId = request.ResendOfRecordId,
+            PaymentGenerationId = request.PaymentGenerationId
+        };
+    }
+
+    private void UpdateActiveGenerationAfterSend(
+        IReadOnlyList<EmailSendRequest> requests,
+        IReadOnlyList<EmailSendResult> results)
+    {
+        if (_activePaymentGeneration is null ||
+            requests.All(value => value.PaymentGenerationId != _activePaymentGeneration.Id))
+        {
+            return;
+        }
+
+        foreach (var result in results)
+        {
+            var request = requests.First(value => value.RequestId == result.RequestId);
+            if (request.PaymentGenerationId != _activePaymentGeneration.Id)
+            {
+                continue;
+            }
+
+            if (result.WasSuccessful)
+            {
+                if (!_activePaymentGeneration.SentBrokerIds.Contains(request.BrokerId))
+                {
+                    _activePaymentGeneration.SentBrokerIds.Add(request.BrokerId);
+                }
+
+                _activePaymentGeneration.FailedBrokerIds.Remove(request.BrokerId);
+            }
+            else if (!_activePaymentGeneration.SentBrokerIds.Contains(request.BrokerId) &&
+                     !_activePaymentGeneration.FailedBrokerIds.Contains(request.BrokerId))
+            {
+                _activePaymentGeneration.FailedBrokerIds.Add(request.BrokerId);
+            }
+        }
+
+        var requiredBrokerIds = _activePaymentGeneration.Files
+            .Select(value => value.BrokerId)
+            .Distinct()
+            .ToHashSet();
+        _activePaymentGeneration.Status = requiredBrokerIds.All(_activePaymentGeneration.SentBrokerIds.Contains)
+            ? PaymentGenerationStatus.Sent
+            : _activePaymentGeneration.SentBrokerIds.Count > 0
+                ? PaymentGenerationStatus.PartialSend
+                : _activePaymentGeneration.FailedBrokerIds.Count > 0
+                    ? PaymentGenerationStatus.Failed
+                    : PaymentGenerationStatus.ReadyToSend;
+        _generationHistoryService.Upsert(_paymentGenerationHistory, _activePaymentGeneration);
+        GenerationStatusText = _activePaymentGeneration.Status switch
+        {
+            PaymentGenerationStatus.Sent => $"{_activePaymentGeneration.Period}: envío completo.",
+            PaymentGenerationStatus.PartialSend => $"{_activePaymentGeneration.Period}: envío parcial.",
+            PaymentGenerationStatus.Failed => $"{_activePaymentGeneration.Period}: envío fallido.",
+            _ => $"{_activePaymentGeneration.Period}: archivos listos para envío."
         };
     }
 
@@ -907,6 +1609,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             errors.Add("No se encontró la configuración del corredor.");
             return new EmailSendRequest { BrokerId = item.BrokerId, BrokerName = item.BrokerName };
+        }
+
+        if (!broker.IsActive)
+        {
+            errors.Add("El corredor está inactivo y no puede recibir envíos.");
         }
 
         var recipients = _validationService.ResolveRecipients(broker, CommonCcText);
@@ -926,8 +1633,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             SignatureImagePath = _configuration.SignatureImagePath,
             RequiresReview = item.RequiresReview,
             ReviewNote = item.ReviewNote,
-            ReviewConfirmed = reviewConfirmed
+            ReviewConfirmed = reviewConfirmed,
+            PaymentGenerationId = item.GeneratedAttachmentPaths.Count > 0
+                ? _activePaymentGeneration?.Id
+                : null
         };
+        errors.AddRange(_generationHistoryService.ValidateGeneratedAttachments(
+            _activePaymentGeneration,
+            item.BrokerId,
+            item.GeneratedAttachmentPaths));
         errors.AddRange(_validationService.ValidateRequest(request));
         errors = errors.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         return request;
@@ -1061,6 +1775,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectedBrokerItem = BrokerItems.FirstOrDefault(item => item.BrokerId == selectedBrokerId) ?? BrokerItems.FirstOrDefault();
         _brokerItemsView.Refresh();
         OnPropertyChanged(nameof(AreAllBrokersSelected));
+        OnPropertyChanged(nameof(CanSendSelected));
         OnPropertyChanged(nameof(InactiveBrokersButtonText));
         OnPropertyChanged(nameof(BrokerSummaryText));
     }
@@ -1073,6 +1788,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(AreAllBrokersSelected));
+        OnPropertyChanged(nameof(CanSendSelected));
         if (_loaded && !_isBusy && !_isBulkSelectionUpdate)
         {
             SaveCurrentSessionWithMessageOnError(false);
@@ -1102,6 +1818,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(AreAllBrokersSelected));
+        OnPropertyChanged(nameof(CanSendSelected));
         if (_loaded)
         {
             SaveCurrentSessionWithMessageOnError(false);
@@ -1154,6 +1871,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Subject = Subject,
         Message = Message,
         CommonCcText = CommonCcText,
+        GeneralWorkbookPath = GeneralWorkbookPath,
+        ActivePaymentGenerationId = _activePaymentGeneration?.Id,
+        GeneratedOutputDirectory = GeneratedOutputDirectory,
+        GeneratedPeriod = _activePaymentGeneration?.Period ?? string.Empty,
         BrokerItems = BrokerItems.ToList()
     });
 
@@ -1181,6 +1902,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _isBusy = busy;
         OnPropertyChanged(nameof(IsUiEnabled));
+        OnPropertyChanged(nameof(CanSendSelected));
     }
 
     private bool FilterBrokerItem(object value)
@@ -1196,6 +1918,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                item.Assistants.Any(assistant =>
                    assistant.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
                    assistant.Email.Contains(query, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(left),
+                Path.GetFullPath(right),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private void LoadSignaturePreview()

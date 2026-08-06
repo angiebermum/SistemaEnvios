@@ -636,9 +636,10 @@ public sealed class SpecialRebateSheetService
         var worksheet = GetWorksheet(workbookPart, "Monto de factura");
         var labelColumnIndex = FindCurrencyLabelColumn(worksheet, "COLONES");
         var amountColumnIndex = labelColumnIndex + 1U;
-        var finalDeductions = calculation.Deductions
+        var payableDeductions = calculation.Deductions
             .Where(value => value.ApplicationType == DeductionApplicationType.PayableAmount)
-            .Sum(value => value.AppliedAmount);
+            .ToList();
+        var finalDeductions = payableDeductions.Sum(value => value.AppliedAmount);
         var amounts = CalculateAndresAswCrcInvoiceAmounts(
             calculation.GrossCommissionOriginal,
             totalRebateCrc,
@@ -725,16 +726,9 @@ public sealed class SpecialRebateSheetService
             labelColumnIndex,
             amountColumnIndex,
             "Retención 2%",
-            $"IF({requiresInvoice},{adjustedGrossReference}*2%,\"\")",
-            amounts.WithholdingCrc);
-        SetLabeledFormula(
-            worksheet,
-            labelColumnIndex,
-            amountColumnIndex,
-            "Deducciones",
-            $"IF({requiresInvoice}," +
-            $"{finalDeductions.ToString(CultureInfo.InvariantCulture)},\"\")",
-            amounts.DeductionsCrc);
+            $"IF({requiresInvoice},-({adjustedGrossReference}*2%),\"\")",
+            amounts.WithholdingCrc.HasValue ? -amounts.WithholdingCrc.Value : null);
+        ClearCell(GetOrCreateCell(worksheet, deductionsReference));
         if (!amounts.RequiresInvoice)
         {
             ClearRowsBetween(
@@ -745,13 +739,20 @@ public sealed class SpecialRebateSheetService
                 "Monto depositado");
         }
 
+        var deductionsRow = ParseRowIndex(deductionsReference);
+        var depositedRow = ParseRowIndex(depositedReference);
+        var individualDeductionsExpression = payableDeductions.Count == 0
+            ? string.Empty
+            : $"+SUM({ColumnName(amountColumnIndex)}{deductionsRow + 1U}:" +
+              $"{ColumnName(amountColumnIndex)}{depositedRow - 1U})";
+
         SetLabeledFormula(
             worksheet,
             labelColumnIndex,
             amountColumnIndex,
             "Monto depositado",
-            $"IF({requiresInvoice},MAX({invoiceReference}-{withholdingReference}-" +
-            $"{deductionsReference},0),\"\")",
+            $"IF({requiresInvoice},MAX({invoiceReference}+{withholdingReference}" +
+            $"{individualDeductionsExpression},0),\"\")",
             amounts.DepositedAmountCrc);
         ValidateFormulaReference(grossReference, "Monto bruto comisión");
         ValidateFormulaReference(depositedReference, "Monto depositado");

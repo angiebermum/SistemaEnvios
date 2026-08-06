@@ -278,9 +278,13 @@ public sealed class SpecialRebateSheetTests
             generated, "Monto de factura", "C6"));
         Assert.Equal(expectedInvoice.InvoiceAmountCrc, ReadOptionalDecimal(
             generated, "Monto de factura", "C7"));
-        Assert.Equal(expectedInvoice.WithholdingCrc, ReadOptionalDecimal(
-            generated, "Monto de factura", "C8"));
-        Assert.Equal(expectedInvoice.DeductionsCrc, ReadOptionalDecimal(
+        Assert.Equal(
+            expectedInvoice.WithholdingCrc.HasValue
+                ? -expectedInvoice.WithholdingCrc.Value
+                : null,
+            ReadOptionalDecimal(
+                generated, "Monto de factura", "C8"));
+        Assert.Null(ReadOptionalDecimal(
             generated, "Monto de factura", "C9"));
         Assert.Equal(expectedInvoice.DepositedAmountCrc, ReadOptionalDecimal(
             generated, "Monto de factura", "C10"));
@@ -295,6 +299,46 @@ public sealed class SpecialRebateSheetTests
             ReadFormulas(generated, "REBAJO"),
             value => value.Contains("'Monto de factura'!C3", StringComparison.Ordinal));
         Assert.Empty(andres.Deductions);
+        AssertWorkbookOpensWithoutFormulaErrors(generated);
+    }
+
+    [Fact]
+    public void AndresAswKeepsDeductionHeaderEmptyAndAddsIndividualNegativeDeduction()
+    {
+        using var scope = new TestDirectory();
+        var source = scope.File("general.xlsx");
+        CreateStandardWorkbook(source, ["ASW"], 2_500_000m);
+        var andres = Broker(
+            "Andrés Steimberg - Agent for EssentialGroupLA",
+            "andres-steimberg-seguru",
+            "ASW");
+        andres.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ahorro",
+            Amount = 15_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "ASW"
+        });
+
+        var generated = Assert.Single(Generate(scope, source, [andres]).Files).OutputPath;
+        var totalRebate = ReadDecimal(generated, "REBAJO", "D8");
+        var expected = SpecialRebateSheetService.CalculateAndresAswCrcInvoiceAmounts(
+            2_500_000m,
+            totalRebate,
+            15_000m);
+
+        Assert.Equal(
+            expected.WithholdingCrc.HasValue ? -expected.WithholdingCrc.Value : null,
+            ReadOptionalDecimal(generated, "Monto de factura", "C8"));
+        Assert.Null(ReadOptionalDecimal(generated, "Monto de factura", "C9"));
+        Assert.Equal(-15_000m, ReadDecimal(generated, "Monto de factura", "C10"));
+        Assert.Equal(
+            expected.DepositedAmountCrc,
+            ReadOptionalDecimal(generated, "Monto de factura", "C11"));
+        Assert.Equal(
+            "IF(C3>'REBAJO'!D8,MAX(C7+C8+SUM(C10:C10),0),\"\")",
+            ReadFormula(generated, "Monto de factura", "C11"));
         AssertWorkbookOpensWithoutFormulaErrors(generated);
     }
 
@@ -497,6 +541,21 @@ public sealed class SpecialRebateSheetTests
             out var value)
             ? value
             : null;
+    }
+
+    private static string? ReadFormula(
+        string path,
+        string worksheetName,
+        string reference)
+    {
+        using var document = SpreadsheetDocument.Open(path, false);
+        return GetWorksheetPart(document, worksheetName).Worksheet!
+            .Descendants<Cell>()
+            .Single(value => string.Equals(
+                value.CellReference?.Value,
+                reference,
+                StringComparison.OrdinalIgnoreCase))
+            .CellFormula?.Text;
     }
 
     private static IReadOnlyList<string> ReadTexts(string path, string worksheetName)

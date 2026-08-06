@@ -472,6 +472,9 @@ public sealed class PaymentWorkbookGenerationService
         var strongAmountStyle = calculation.Currency == DeductionCurrency.CRC
             ? styles.CrcStrongAmount
             : styles.UsdStrongAmount;
+        var negativeAmountStyle = calculation.Currency == DeductionCurrency.CRC
+            ? styles.CrcNegativeAmount
+            : styles.UsdNegativeAmount;
         var showFinancialAmounts = calculation.HasCommission &&
                                    !calculation.MinimumApplied &&
                                    calculation.IsValid &&
@@ -586,44 +589,46 @@ public sealed class PaymentWorkbookGenerationService
             labelColumn,
             amountColumn,
             "Retención 2%",
-            $"{adjustedGrossReference}*2%",
-            showFinancialAmounts ? calculation.Withholding : 0m,
+            $"-({adjustedGrossReference}*2%)",
+            showFinancialAmounts ? -calculation.Withholding : 0m,
             styles.Label,
-            amountStyle);
+            showFinancialAmounts && calculation.Withholding > 0m
+                ? negativeAmountStyle
+                : amountStyle);
 
         var finalDeductions = calculation.Deductions
             .Where(value => value.ApplicationType == DeductionApplicationType.PayableAmount)
             .OrderBy(value => value.DisplayOrder)
             .ToList();
         var finalDeductionsRow = rowIndex++;
-        var finalDeductionsReference = $"{amountColumn}{finalDeductionsRow}";
         var firstFinalDeductionRow = rowIndex;
-        var finalDeductionsFormula = finalDeductions.Count == 0
-            ? "0"
-            : $"-SUM({amountColumn}{firstFinalDeductionRow}:" +
-              $"{amountColumn}{firstFinalDeductionRow + (uint)finalDeductions.Count - 1U})";
-        WriteFormulaAmountRow(
+        WriteEmptyAmountRow(
             sheetData,
             finalDeductionsRow,
             labelColumn,
             amountColumn,
             "Deducciones",
-            finalDeductionsFormula,
-            showFinancialAmounts ? calculation.FinalDeductions : 0m,
             styles.StrongLabel,
             amountStyle);
         foreach (var deduction in finalDeductions)
         {
+            var displayedAmount = showFinancialAmounts ? -deduction.AppliedAmount : 0m;
             WriteAmountRow(
                 sheetData,
                 rowIndex++,
                 labelColumn,
                 amountColumn,
                 $"   {deduction.Description}",
-                showFinancialAmounts ? -deduction.AppliedAmount : 0m,
+                displayedAmount,
                 styles.Label,
-                amountStyle);
+                displayedAmount < 0m ? negativeAmountStyle : amountStyle);
         }
+
+        var depositedFormula = finalDeductions.Count == 0
+            ? $"{invoiceReference}+{withholdingReference}"
+            : $"{invoiceReference}+{withholdingReference}+" +
+              $"SUM({amountColumn}{firstFinalDeductionRow}:" +
+              $"{amountColumn}{firstFinalDeductionRow + (uint)finalDeductions.Count - 1U})";
 
         WriteFormulaAmountRow(
             sheetData,
@@ -631,7 +636,7 @@ public sealed class PaymentWorkbookGenerationService
             labelColumn,
             amountColumn,
             "Monto depositado",
-            $"{invoiceReference}-{withholdingReference}-{finalDeductionsReference}",
+            depositedFormula,
             showFinancialAmounts ? calculation.DepositedAmount : 0m,
             styles.TotalLabel,
             calculation.Currency == DeductionCurrency.CRC ? styles.CrcTotalAmount : styles.UsdTotalAmount);
@@ -787,6 +792,10 @@ public sealed class PaymentWorkbookGenerationService
             new Color { Rgb = "FF1F2937" },
             new FontSize { Val = 11D },
             new FontName { Val = "Calibri" }));
+        var redFont = Append(stylesheet.Fonts, new Font(
+            new Color { Rgb = "FFFF0000" },
+            new FontSize { Val = 11D },
+            new FontName { Val = "Calibri" }));
         var noteFont = Append(stylesheet.Fonts, new Font(
             new Italic(),
             new Color { Rgb = "FF6B7280" },
@@ -845,6 +854,10 @@ public sealed class PaymentWorkbookGenerationService
             HorizontalAlignmentValues.Right));
         var usdAmount = Append(stylesheet.CellFormats, Format(normalFont, 0U, thinBorder, usdFormatId, true,
             HorizontalAlignmentValues.Right));
+        var crcNegativeAmount = Append(stylesheet.CellFormats, Format(
+            redFont, 0U, thinBorder, crcFormatId, true, HorizontalAlignmentValues.Right));
+        var usdNegativeAmount = Append(stylesheet.CellFormats, Format(
+            redFont, 0U, thinBorder, usdFormatId, true, HorizontalAlignmentValues.Right));
         var crcStrong = Append(stylesheet.CellFormats, Format(boldFont, 0U, thinBorder, crcFormatId, true,
             HorizontalAlignmentValues.Right));
         var usdStrong = Append(stylesheet.CellFormats, Format(boldFont, 0U, thinBorder, usdFormatId, true,
@@ -870,7 +883,8 @@ public sealed class PaymentWorkbookGenerationService
         stylesheet.Save();
         return new PaymentSheetStyles(
             title, label, strongLabel, totalLabel, crcAmount, usdAmount,
-            crcStrong, usdStrong, crcTotal, usdTotal, invoiceLabel, crcInvoice, usdInvoice, note, minimumNote);
+            crcNegativeAmount, usdNegativeAmount, crcStrong, usdStrong, crcTotal, usdTotal,
+            invoiceLabel, crcInvoice, usdInvoice, note, minimumNote);
     }
 
     private static CellFormat Format(
@@ -1019,6 +1033,8 @@ public sealed class PaymentWorkbookGenerationService
         uint TotalLabel,
         uint CrcAmount,
         uint UsdAmount,
+        uint CrcNegativeAmount,
+        uint UsdNegativeAmount,
         uint CrcStrongAmount,
         uint UsdStrongAmount,
         uint CrcTotalAmount,

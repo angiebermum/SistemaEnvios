@@ -3,9 +3,9 @@
     <OutputType>Package</OutputType>
     <InstallerPlatform>x64</InstallerPlatform>
     <Cultures>es-ES</Cultures>
-    <OutputName>ECS Envío de Correos - Instalador 1.0.6</OutputName>
+    <OutputName>ECS Envío de Correos - Instalador 1.0.7</OutputName>
     <ApplicationPublishDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\artifacts\publish\win-x64'))</ApplicationPublishDirectory>
-    <DefineConstants>PublishDir=$(ApplicationPublishDirectory);ProductVersion=1.0.6</DefineConstants>
+    <DefineConstants>PublishDir=$(ApplicationPublishDirectory);ProductVersion=1.0.7</DefineConstants>
     <DefaultCompressionLevel>high</DefaultCompressionLevel>
   </PropertyGroup>
 

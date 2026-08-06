@@ -188,7 +188,11 @@ public sealed class SpecialRebateSheetTests
         Assert.Equal(
             ReadWorksheetXml(normalPath, "Monto de factura"),
             ReadWorksheetXml(FileFor(batch, "OTRA"), "Monto de factura"));
-        Assert.Empty(ReadFormulas(aswPath, "Monto de factura"));
+        Assert.Contains("'Detalle'!B7", ReadFormulas(aswPath, "Monto de factura"));
+        Assert.Contains("'Detalle'!B10", ReadFormulas(aswPath, "Monto de factura"));
+        Assert.Contains(
+            ReadFormulas(aswPath, "Monto de factura"),
+            value => value.Contains("'REBAJO'!D8", StringComparison.Ordinal));
         foreach (var reference in new[] { "E2", "F2", "E3", "F3", "E4", "F4", "E5", "F5",
                      "E6", "F6", "E7", "F7", "E8", "F8", "E9", "F9", "E10", "F10" })
         {
@@ -276,10 +280,14 @@ public sealed class SpecialRebateSheetTests
             generated, "Monto de factura", "C7"));
         Assert.Equal(expectedInvoice.WithholdingCrc, ReadOptionalDecimal(
             generated, "Monto de factura", "C8"));
-        Assert.Null(ReadOptionalDecimal(generated, "Monto de factura", "C9"));
+        Assert.Equal(expectedInvoice.DeductionsCrc, ReadOptionalDecimal(
+            generated, "Monto de factura", "C9"));
         Assert.Equal(expectedInvoice.DepositedAmountCrc, ReadOptionalDecimal(
             generated, "Monto de factura", "C10"));
-        Assert.Empty(ReadFormulas(generated, "Monto de factura"));
+        Assert.Contains("'Detalle'!B7", ReadFormulas(generated, "Monto de factura"));
+        Assert.Contains(
+            ReadFormulas(generated, "Monto de factura"),
+            value => value.Contains("'REBAJO'!D8", StringComparison.Ordinal));
         Assert.All(
             new[] { "D8", "D9", "D10", "D11", "D12", "D13" },
             reference => Assert.True(ReadDecimal(generated, "REBAJO", reference) >= 0m));
@@ -395,7 +403,17 @@ public sealed class SpecialRebateSheetTests
                 new Row(
                     TextCell("A4", "USD"),
                     NumberCell("B4", 100m))
-                { RowIndex = 4U }));
+                { RowIndex = 4U },
+                new Row(TextCell("A6", "COLONES")) { RowIndex = 6U },
+                new Row(
+                    TextCell("A7", "Monto bruto comisión"),
+                    NumberCell("B7", crcCommission))
+                { RowIndex = 7U },
+                new Row(TextCell("A9", "DÓLARES")) { RowIndex = 9U },
+                new Row(
+                    TextCell("A10", "Monto bruto comisión"),
+                    NumberCell("B10", 100m))
+                { RowIndex = 10U }));
             worksheetPart.Worksheet.Save();
             workbookPart.Workbook.Sheets!.Append(new Sheet
             {
@@ -472,7 +490,6 @@ public sealed class SpecialRebateSheetTests
                     value.CellReference?.Value,
                     reference,
                     StringComparison.OrdinalIgnoreCase));
-        Assert.Null(cell.CellFormula);
         return decimal.TryParse(
             cell.CellValue?.Text,
             NumberStyles.Number,

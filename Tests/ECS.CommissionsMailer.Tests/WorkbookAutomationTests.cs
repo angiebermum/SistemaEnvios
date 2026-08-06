@@ -25,8 +25,8 @@ public sealed class WorkbookAutomationTests
         Assert.True(sheet.Usd.HasCommission);
         Assert.Equal(100_000m, sheet.Crc.GrossCommission);
         Assert.Equal(100m, sheet.Usd.GrossCommission);
-        Assert.Contains("B3", sheet.Crc.SourceCells);
-        Assert.Contains("B4", sheet.Usd.SourceCells);
+        Assert.Equal(["B9"], sheet.Crc.SourceCells);
+        Assert.Equal(["B12"], sheet.Usd.SourceCells);
     }
 
     [Fact]
@@ -220,6 +220,106 @@ public sealed class WorkbookAutomationTests
     }
 
     [Fact]
+    public void PaymentSheetLinksBothDetailTotalsAndUsesDynamicFormulas()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+
+        var batch = Generate(scope, source, [Broker("Corredor sintético", "AR")]);
+        var generated = Assert.Single(batch.Files).OutputPath;
+
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var cells = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .ToDictionary(value => value.CellReference!.Value!, StringComparer.Ordinal);
+
+        Assert.Equal("'Detalle'!B9", cells["C3"].CellFormula!.Text);
+        Assert.Equal("0", cells["C4"].CellFormula!.Text);
+        Assert.Equal("C3-C4", cells["C5"].CellFormula!.Text);
+        Assert.Equal("C5*13%", cells["C6"].CellFormula!.Text);
+        Assert.Equal("C5+C6", cells["C7"].CellFormula!.Text);
+        Assert.Equal("C5*2%", cells["C8"].CellFormula!.Text);
+        Assert.Equal("0", cells["C9"].CellFormula!.Text);
+        Assert.Equal("C7-C8-C9", cells["C10"].CellFormula!.Text);
+
+        Assert.Equal("'Detalle'!B12", cells["F3"].CellFormula!.Text);
+        Assert.Equal("F3-F4", cells["F5"].CellFormula!.Text);
+        Assert.Equal("F5*13%", cells["F6"].CellFormula!.Text);
+        Assert.Equal("F5+F6", cells["F7"].CellFormula!.Text);
+        Assert.Equal("F5*2%", cells["F8"].CellFormula!.Text);
+        Assert.Equal("F7-F8-F9", cells["F10"].CellFormula!.Text);
+
+        var calculation = document.WorkbookPart!.Workbook!.CalculationProperties;
+        Assert.NotNull(calculation);
+        Assert.Equal(CalculateModeValues.Auto, calculation!.CalculationMode!.Value);
+        Assert.True(calculation.CalculationOnSave!.Value);
+        Assert.True(calculation.ForceFullCalculation!.Value);
+        Assert.True(calculation.FullCalculationOnLoad!.Value);
+        Assert.Null(document.WorkbookPart.CalculationChainPart);
+        Assert.DoesNotContain(
+            cells.Values.SelectMany(value => new[]
+            {
+                value.CellFormula?.Text ?? string.Empty,
+                value.CellValue?.Text ?? string.Empty
+            }),
+            value => value.Contains("#REF!", StringComparison.OrdinalIgnoreCase) ||
+                     value.Contains("#VALUE!", StringComparison.OrdinalIgnoreCase) ||
+                     value.Contains("#DIV/0!", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ManualDetailTotalChangeKeepsInvoiceDependencyAndForcesRecalculation()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+        var generated = Assert.Single(
+            Generate(scope, source, [Broker("Corredor sintético", "AR")]).Files).OutputPath;
+
+        using (var document = SpreadsheetDocument.Open(generated, true))
+        {
+            var detailWorksheet = GetWorksheetPart(document, "Detalle").Worksheet!;
+            var detailTotal = detailWorksheet
+                .Descendants<Cell>()
+                .Single(value => value.CellReference?.Value == "B9");
+            detailTotal.CellFormula = null;
+            detailTotal.DataType = CellValues.Number;
+            detailTotal.CellValue = new CellValue("200000");
+            detailWorksheet.Save();
+        }
+
+        using var reopened = SpreadsheetDocument.Open(generated, false);
+        var gross = GetWorksheetPart(reopened, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .Single(value => value.CellReference?.Value == "C3");
+        Assert.Equal("'Detalle'!B9", gross.CellFormula!.Text);
+        Assert.Equal(CalculateModeValues.Auto,
+            reopened.WorkbookPart!.Workbook!.CalculationProperties!.CalculationMode!.Value);
+        Assert.True(reopened.WorkbookPart.Workbook.CalculationProperties.FullCalculationOnLoad!.Value);
+    }
+
+    [Fact]
+    public void MissingDetailGrossTotalStopsOnlyThatWorkbookWithClearError()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general-sin-total.xlsx");
+        CreateStandardWorkbook(
+            source,
+            ["AR"],
+            includeUsd: true,
+            includeGrossTotals: false);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Generate(scope, source, [Broker("Corredor sintético", "AR")]));
+
+        Assert.Contains("Monto de factura", exception.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Monto bruto comisión", exception.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Detalle", exception.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(Path.Combine(scope.Path, "salida")));
+    }
+
+    [Fact]
     public void DeductionHeadersAreRenamedAndDoNotRepeatDeductionAmounts()
     {
         using var scope = new TestDirectory();
@@ -253,14 +353,24 @@ public sealed class WorkbookAutomationTests
         var grossDeduction = cells.Single(value => value.Text.Trim() == "Ajuste");
         var finalDeduction = cells.Single(value => value.Text.Trim() == "Ahorro");
 
-        Assert.Null(byReference[$"C{grossHeader.Row}"].NumericValue);
-        Assert.Equal(string.Empty, byReference[$"C{grossHeader.Row}"].Text);
+        Assert.Equal(10_000m, byReference[$"C{grossHeader.Row}"].NumericValue);
         Assert.Equal(-10_000m, byReference[$"C{grossDeduction.Row}"].NumericValue);
-        Assert.Null(byReference[$"C{finalHeader.Row}"].NumericValue);
-        Assert.Equal(string.Empty, byReference[$"C{finalHeader.Row}"].Text);
+        Assert.Equal(15_000m, byReference[$"C{finalHeader.Row}"].NumericValue);
         Assert.Equal(-15_000m, byReference[$"C{finalDeduction.Row}"].NumericValue);
         Assert.DoesNotContain(cells, value => value.Text == "Rebajos al monto bruto");
         Assert.DoesNotContain(cells, value => value.Text == "Rebajos al monto a pagar");
+
+        using var document = SpreadsheetDocument.Open(Assert.Single(batch.Files).OutputPath, false);
+        var formulaCells = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .ToDictionary(value => value.CellReference!.Value!, StringComparer.Ordinal);
+        Assert.Equal("-SUM(C5:C5)", formulaCells["C4"].CellFormula!.Text);
+        Assert.Equal("C3-C4", formulaCells["C6"].CellFormula!.Text);
+        Assert.Equal("C6*13%", formulaCells["C7"].CellFormula!.Text);
+        Assert.Equal("C6+C7", formulaCells["C8"].CellFormula!.Text);
+        Assert.Equal("C6*2%", formulaCells["C9"].CellFormula!.Text);
+        Assert.Equal("-SUM(C11:C11)", formulaCells["C10"].CellFormula!.Text);
+        Assert.Equal("C8-C9-C10", formulaCells["C12"].CellFormula!.Text);
     }
 
     [Fact]
@@ -445,7 +555,8 @@ public sealed class WorkbookAutomationTests
         IReadOnlyList<string> names,
         bool includeUsd,
         decimal crcCommission = 100_000m,
-        decimal usdCommission = 100m)
+        decimal usdCommission = 100m,
+        bool includeGrossTotals = true)
     {
         using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
         var workbookPart = document.AddWorkbookPart();
@@ -481,6 +592,25 @@ public sealed class WorkbookAutomationTests
             }
 
             sheetData.Append(new Row(TextCell("A6", "Fila oculta preservada")) { RowIndex = 6U, Hidden = true });
+            if (includeGrossTotals)
+            {
+                sheetData.Append(
+                    new Row(TextCell("A8", "COLONES")) { RowIndex = 8U },
+                    new Row(
+                        TextCell("A9", "Monto bruto comisión"),
+                        FormulaCell("B9", "SUM(B3:B3)", crcCommission, 2U))
+                    { RowIndex = 9U });
+                if (includeUsd)
+                {
+                    sheetData.Append(
+                        new Row(TextCell("A11", "DÓLARES")) { RowIndex = 11U },
+                        new Row(
+                            TextCell("A12", "Monto bruto comisión"),
+                            FormulaCell("B12", "SUM(B4:B4)", usdCommission, 3U))
+                        { RowIndex = 12U });
+                }
+            }
+
             worksheetPart.Worksheet = new Worksheet(
                 new Columns(
                     new Column { Min = 1U, Max = 1U, Width = 18D, CustomWidth = true },

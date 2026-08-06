@@ -82,6 +82,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _generationHistoryService = new GenerationHistoryService(paths, logger);
         _generatedFileViewerService = new GeneratedFileViewerService(
             new GeneratedFileProcessLauncher(),
+            paths,
             logger);
         _associatedFileAssociationService = new AssociatedFileAssociationService(logger);
         _associatedWorkbookEditService = new AssociatedWorkbookEditService(paths, logger);
@@ -430,6 +431,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MessageBox.Show($"No fue posible guardar la sesión actual.\n\n{ex.Message}",
                 "Error al guardar", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+
+        _generatedFileViewerService.CleanupTemporaryViewCopies();
     }
 
     private void AddBroker_Click(object sender, RoutedEventArgs e)

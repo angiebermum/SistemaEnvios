@@ -18,6 +18,7 @@ public sealed class AppDataPaths
         SignatureDirectory = Path.Combine(AssetsDirectory, "Firma");
         BackupsDirectory = Path.Combine(RootDirectory, "Backups");
         TemporaryEditsDirectory = Path.Combine(RootDirectory, "TempEdits");
+        TemporaryViewsDirectory = Path.Combine(RootDirectory, "TempView");
         EnsureDirectories();
     }
 
@@ -33,6 +34,7 @@ public sealed class AppDataPaths
     public string SignatureDirectory { get; }
     public string BackupsDirectory { get; }
     public string TemporaryEditsDirectory { get; }
+    public string TemporaryViewsDirectory { get; }
 
     public void EnsureDirectories()
     {

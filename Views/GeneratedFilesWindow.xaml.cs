@@ -72,7 +72,7 @@ public partial class GeneratedFilesWindow : Window, INotifyPropertyChanged
             case GeneratedFileOpenStatus.UnsupportedExtension:
                 AppDialog.Show(
                     "No fue posible abrir el archivo.\n\n" +
-                    "Solo se pueden visualizar archivos de Excel asociados.",
+                    "Solo se pueden visualizar archivos .xlsx asociados.",
                     "Archivo no compatible", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             case GeneratedFileOpenStatus.NotAssociated:
@@ -80,6 +80,12 @@ public partial class GeneratedFilesWindow : Window, INotifyPropertyChanged
                     "No fue posible abrir el archivo.\n\n" +
                     "El archivo ya no está asociado a este corredor.",
                     "Archivo no asociado", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            case GeneratedFileOpenStatus.TemporaryCopyFailed:
+                AppDialog.Show(
+                    "No se pudo preparar una copia temporal del archivo para visualizarlo.\n\n" +
+                    "El archivo original no fue modificado.",
+                    "No se pudo preparar la vista", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             default:
                 AppDialog.Show(

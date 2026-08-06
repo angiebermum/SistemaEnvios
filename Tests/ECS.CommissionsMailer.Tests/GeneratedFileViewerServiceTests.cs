@@ -127,7 +127,7 @@ public sealed class GeneratedFileViewerServiceTests
     }
 
     [Fact]
-    public void ValidAssociatedPathRequestsShellExecutionOfExactAttachment()
+    public void ValidGeneratedPathRequestsShellExecutionOfTemporaryCopy()
     {
         using var scope = new TestDirectory();
         var path = scope.File("payment.xlsx");
@@ -142,8 +142,13 @@ public sealed class GeneratedFileViewerServiceTests
 
         Assert.True(result.Succeeded);
         var request = Assert.Single(launcher.Requests);
-        Assert.Equal(broker.AttachmentPaths.Single(), request.FileName);
-        Assert.Equal(file.OutputPath, request.FileName);
+        Assert.NotEqual(broker.AttachmentPaths.Single(), request.FileName);
+        Assert.NotEqual(file.OutputPath, request.FileName);
+        Assert.Equal(result.OpenedPath, request.FileName);
+        Assert.Equal(
+            Path.Combine(scope.File("app-data"), "TempView"),
+            Path.GetDirectoryName(request.FileName));
+        Assert.Equal(File.ReadAllBytes(path), File.ReadAllBytes(request.FileName));
         Assert.True(request.UseShellExecute);
     }
 
@@ -231,11 +236,13 @@ public sealed class GeneratedFileViewerServiceTests
         var result = service.Open(file, broker);
 
         Assert.Equal(GeneratedFileOpenStatus.OpenFailed, result.Status);
-        Assert.Single(launcher.Requests);
+        var temporaryPath = Assert.Single(launcher.Requests).FileName;
+        Assert.NotEqual(path, temporaryPath);
+        Assert.False(File.Exists(temporaryPath));
     }
 
     [Fact]
-    public void AssociatedManualXlsKeepsExistingViewBehavior()
+    public void AssociatedManualXlsIsRejectedWithoutOpeningOriginal()
     {
         using var scope = new TestDirectory();
         var path = scope.File("manual.xls");
@@ -251,10 +258,236 @@ public sealed class GeneratedFileViewerServiceTests
 
         var result = service.OpenAssociated(path, broker);
 
-        Assert.True(result.Succeeded);
-        Assert.Equal(path, Assert.Single(launcher.Requests).FileName);
+        Assert.Equal(GeneratedFileOpenStatus.UnsupportedExtension, result.Status);
+        Assert.Empty(launcher.Requests);
         Assert.Equal([path], broker.AttachmentPaths);
         Assert.Empty(broker.GeneratedAttachmentPaths);
+    }
+
+    [Fact]
+    public void ViewingAssociatedWorkbookPreservesOriginalHashTimestampAndAssociation()
+    {
+        using var scope = new TestDirectory();
+        var path = scope.File("associated.xlsx");
+        File.WriteAllBytes(path, [0x50, 0x4B, 0x03, 0x04, 0x10, 0x20]);
+        var originalTimestamp = new DateTime(2026, 8, 6, 9, 35, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(path, originalTimestamp);
+        var originalHash = new GeneratedFileHashService().ComputeSha256(path);
+        var originalLength = new FileInfo(path).Length;
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([path])
+        };
+        var launcher = new RecordingProcessLauncher();
+        var service = CreateService(scope, launcher);
+
+        var result = service.OpenAssociated(path, broker);
+
+        Assert.True(result.Succeeded);
+        var temporaryPath = Assert.Single(launcher.Requests).FileName;
+        Assert.Equal(result.OpenedPath, temporaryPath);
+        Assert.NotEqual(path, temporaryPath);
+        Assert.True(File.Exists(temporaryPath));
+
+        File.WriteAllText(temporaryPath, "Excel modificó únicamente la copia");
+
+        Assert.Equal(originalHash, new GeneratedFileHashService().ComputeSha256(path));
+        Assert.Equal(originalTimestamp, File.GetLastWriteTimeUtc(path));
+        Assert.Equal(originalLength, new FileInfo(path).Length);
+        Assert.Equal([path], broker.AttachmentPaths);
+        Assert.DoesNotContain(temporaryPath, broker.AttachmentPaths);
+        Assert.Empty(broker.GeneratedAttachmentPaths);
+    }
+
+    [Fact]
+    public void EditingViewCopyDoesNotTriggerGeneratedOriginalHashWarning()
+    {
+        using var scope = new TestDirectory();
+        var path = scope.File("generated.xlsx");
+        File.WriteAllText(path, "original generado");
+        var brokerId = Guid.NewGuid();
+        var generatedFile = CreateGeneratedFile(brokerId, "Corredor", "ASW", path);
+        generatedFile.Sha256 = new GeneratedFileHashService().ComputeSha256(path);
+        var broker = CreateBrokerSendItem(brokerId, "Corredor", path);
+        var launcher = new RecordingProcessLauncher();
+        var service = CreateService(scope, launcher);
+
+        var result = service.OpenAssociated(path, broker);
+        File.WriteAllText(result.OpenedPath!, "cambio interno realizado por Excel");
+        var paths = new AppDataPaths(scope.File("app-data"));
+        var history = new GenerationHistoryService(paths, new FileLogger(paths));
+        var errors = history.ValidateGeneratedAttachments(
+            new PaymentGenerationBatch { Files = [generatedFile] },
+            brokerId,
+            broker.GeneratedAttachmentPaths);
+
+        Assert.True(result.Succeeded);
+        Assert.Empty(errors);
+        Assert.Equal("original generado", File.ReadAllText(path));
+        Assert.Equal([path], broker.AttachmentPaths);
+        Assert.Equal([path], broker.GeneratedAttachmentPaths);
+    }
+
+    [Fact]
+    public void ViewingSameWorkbookSeveralTimesCreatesUniqueTemporaryNames()
+    {
+        using var scope = new TestDirectory();
+        var path = scope.File("same.xlsx");
+        File.WriteAllText(path, "original");
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([path])
+        };
+        var launcher = new RecordingProcessLauncher();
+        var service = CreateService(scope, launcher);
+
+        var first = service.OpenAssociated(path, broker);
+        var second = service.OpenAssociated(path, broker);
+
+        Assert.True(first.Succeeded);
+        Assert.True(second.Succeeded);
+        Assert.NotEqual(first.OpenedPath, second.OpenedPath);
+        Assert.Equal(2, launcher.Requests.Select(value => value.FileName).Distinct().Count());
+        Assert.All(launcher.Requests, request => Assert.NotEqual(path, request.FileName));
+    }
+
+    [Fact]
+    public void TemporaryDirectoryCreationFailurePreservesOriginalAndAssociation()
+    {
+        using var scope = new TestDirectory();
+        var originalPath = scope.File("original.xlsx");
+        File.WriteAllText(originalPath, "original intacto");
+        var originalHash = new GeneratedFileHashService().ComputeSha256(originalPath);
+        var paths = new AppDataPaths(scope.File("app-data"));
+        File.WriteAllText(paths.TemporaryViewsDirectory, "impide crear el directorio");
+        var launcher = new RecordingProcessLauncher();
+        var service = new GeneratedFileViewerService(launcher, paths, new FileLogger(paths));
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([originalPath])
+        };
+
+        var result = service.OpenAssociated(originalPath, broker);
+
+        Assert.Equal(GeneratedFileOpenStatus.TemporaryCopyFailed, result.Status);
+        Assert.Empty(launcher.Requests);
+        Assert.Equal(originalHash, new GeneratedFileHashService().ComputeSha256(originalPath));
+        Assert.Equal([originalPath], broker.AttachmentPaths);
+    }
+
+    [Fact]
+    public void SourceCopyFailurePreservesOriginalAndAssociation()
+    {
+        using var scope = new TestDirectory();
+        var originalPath = scope.File("locked-original.xlsx");
+        File.WriteAllText(originalPath, "original bloqueado");
+        var originalHash = new GeneratedFileHashService().ComputeSha256(originalPath);
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([originalPath])
+        };
+        var launcher = new RecordingProcessLauncher();
+        var service = CreateService(scope, launcher);
+
+        GeneratedFileOpenResult result;
+        using (new FileStream(originalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            result = service.OpenAssociated(originalPath, broker);
+        }
+
+        Assert.Equal(GeneratedFileOpenStatus.TemporaryCopyFailed, result.Status);
+        Assert.Empty(launcher.Requests);
+        Assert.Equal(originalHash, new GeneratedFileHashService().ComputeSha256(originalPath));
+        Assert.Equal([originalPath], broker.AttachmentPaths);
+    }
+
+    [Fact]
+    public void LockedTemporaryCopyRemainsPendingUntilLaterCleanup()
+    {
+        using var scope = new TestDirectory();
+        var originalPath = scope.File("locked-view.xlsx");
+        File.WriteAllText(originalPath, "original");
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([originalPath])
+        };
+        var launcher = new RecordingProcessLauncher();
+        var service = CreateService(scope, launcher);
+        var result = service.OpenAssociated(originalPath, broker);
+        var temporaryPath = result.OpenedPath!;
+
+        using (new FileStream(temporaryPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            service.CleanupTemporaryViewCopies();
+            Assert.True(File.Exists(temporaryPath));
+        }
+
+        service.CleanupTemporaryViewCopies();
+
+        Assert.False(File.Exists(temporaryPath));
+        Assert.Equal("original", File.ReadAllText(originalPath));
+        Assert.Equal([originalPath], broker.AttachmentPaths);
+    }
+
+    [Fact]
+    public void StaleTemporaryCopyIsCleanedWhenViewerServiceStarts()
+    {
+        using var scope = new TestDirectory();
+        var originalPath = scope.File("stale-view.xlsx");
+        File.WriteAllText(originalPath, "original");
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([originalPath])
+        };
+        var launcher = new RecordingProcessLauncher();
+        var firstService = CreateService(scope, launcher);
+        var temporaryPath = firstService.OpenAssociated(originalPath, broker).OpenedPath!;
+        File.SetLastWriteTimeUtc(temporaryPath, DateTime.UtcNow.AddDays(-2));
+
+        _ = CreateService(scope, new RecordingProcessLauncher());
+
+        Assert.False(File.Exists(temporaryPath));
+        Assert.True(File.Exists(originalPath));
+        Assert.Equal([originalPath], broker.AttachmentPaths);
+    }
+
+    [Fact]
+    public void CleanupNeverDeletesAssociatedOriginalEvenWhenItIsInsideTempView()
+    {
+        using var scope = new TestDirectory();
+        var paths = new AppDataPaths(scope.File("app-data"));
+        Directory.CreateDirectory(paths.TemporaryViewsDirectory);
+        var originalPath = Path.Combine(paths.TemporaryViewsDirectory, "real-associated.xlsx");
+        File.WriteAllText(originalPath, "archivo real asociado");
+        var broker = new BrokerSendItem
+        {
+            BrokerId = Guid.NewGuid(),
+            BrokerName = "Corredor",
+            AttachmentPaths = new ObservableCollection<string>([originalPath])
+        };
+        var launcher = new RecordingProcessLauncher();
+        var service = new GeneratedFileViewerService(launcher, paths, new FileLogger(paths));
+        var result = service.OpenAssociated(originalPath, broker);
+
+        service.CleanupTemporaryViewCopies();
+
+        Assert.True(result.Succeeded);
+        Assert.True(File.Exists(originalPath));
+        Assert.Equal("archivo real asociado", File.ReadAllText(originalPath));
+        Assert.False(File.Exists(result.OpenedPath));
+        Assert.Equal([originalPath], broker.AttachmentPaths);
     }
 
     [Fact]
@@ -280,8 +513,11 @@ public sealed class GeneratedFileViewerServiceTests
 
     private static GeneratedFileViewerService CreateService(
         TestDirectory scope,
-        IGeneratedFileProcessLauncher launcher) =>
-        new(launcher, new FileLogger(new AppDataPaths(scope.File("app-data"))));
+        IGeneratedFileProcessLauncher launcher)
+    {
+        var paths = new AppDataPaths(scope.File("app-data"));
+        return new GeneratedFileViewerService(launcher, paths, new FileLogger(paths));
+    }
 
     private static BrokerSendItem CreateBrokerSendItem(
         Guid brokerId,

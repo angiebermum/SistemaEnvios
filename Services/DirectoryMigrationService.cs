@@ -8,16 +8,23 @@ internal sealed record DirectoryMigrationResult(string? BackupDirectory, string?
 
 internal sealed class DirectoryMigrationService
 {
-    private const string SeedRelativePath = "Data/correos-iniciales.v3.json";
+    internal const string SeedRelativePath = "Data/correos-iniciales.v3.json";
     private readonly AppDataPaths _paths;
     private readonly FileLogger _logger;
     private readonly AtomicJsonFile _json;
+    private readonly string _applicationDirectory;
 
     public DirectoryMigrationService(AppDataPaths paths, FileLogger logger)
+        : this(paths, logger, AppContext.BaseDirectory)
+    {
+    }
+
+    internal DirectoryMigrationService(AppDataPaths paths, FileLogger logger, string applicationDirectory)
     {
         _paths = paths;
         _logger = logger;
         _json = new AtomicJsonFile(logger);
+        _applicationDirectory = Path.GetFullPath(applicationDirectory);
     }
 
     public DirectoryMigrationResult ApplyIfNeeded(AppConfiguration configuration)
@@ -142,7 +149,7 @@ internal sealed class DirectoryMigrationService
 
     private EmailDirectorySeed LoadSeed()
     {
-        var path = Path.Combine(AppContext.BaseDirectory, SeedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        var path = GetSeedPath(_applicationDirectory);
         if (!File.Exists(path))
         {
             throw new FileNotFoundException("No se encontró el directorio inicial de correos.", path);
@@ -218,7 +225,7 @@ internal sealed class DirectoryMigrationService
         }
 
         var sourcePath = Path.Combine(
-            AppContext.BaseDirectory,
+            _applicationDirectory,
             seed.SignatureFile.Replace('/', Path.DirectorySeparatorChar));
         _ = SignatureImageService.ValidateFile(sourcePath);
         var actualHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(sourcePath))).ToLowerInvariant();
@@ -229,6 +236,10 @@ internal sealed class DirectoryMigrationService
 
         configuration.SignatureImagePath = new SignatureImageService(_paths).Import(sourcePath);
     }
+
+    internal static string GetSeedPath(string applicationDirectory) => Path.Combine(
+        Path.GetFullPath(applicationDirectory),
+        SeedRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
     private static List<Guid> SplitIncorrectlyMergedBrokers(AppConfiguration configuration)
     {

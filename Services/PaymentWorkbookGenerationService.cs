@@ -511,20 +511,31 @@ public sealed class PaymentWorkbookGenerationService
         var grossAdjustmentRow = rowIndex++;
         var grossAdjustmentReference = $"{amountColumn}{grossAdjustmentRow}";
         var firstGrossDeductionRow = rowIndex;
-        var grossAdjustmentFormula = grossDeductions.Count == 0
-            ? "0"
-            : $"-SUM({amountColumn}{firstGrossDeductionRow}:" +
-              $"{amountColumn}{firstGrossDeductionRow + (uint)grossDeductions.Count - 1U})";
-        WriteFormulaAmountRow(
-            sheetData,
-            grossAdjustmentRow,
-            labelColumn,
-            amountColumn,
-            "Ajustes al monto bruto",
-            grossAdjustmentFormula,
-            showFinancialAmounts ? calculation.GrossDeductions : 0m,
-            styles.StrongLabel,
-            amountStyle);
+        if (grossDeductions.Count == 0)
+        {
+            WriteFormulaAmountRow(
+                sheetData,
+                grossAdjustmentRow,
+                labelColumn,
+                amountColumn,
+                "Ajustes al monto bruto",
+                "0",
+                0m,
+                styles.StrongLabel,
+                amountStyle);
+        }
+        else
+        {
+            WriteEmptyAmountRow(
+                sheetData,
+                grossAdjustmentRow,
+                labelColumn,
+                amountColumn,
+                "Ajustes al monto bruto",
+                styles.StrongLabel,
+                amountStyle);
+        }
+
         foreach (var deduction in grossDeductions)
         {
             WriteAmountRow(
@@ -540,11 +551,15 @@ public sealed class PaymentWorkbookGenerationService
 
         var adjustedGrossRow = rowIndex++;
         var adjustedGrossReference = $"{amountColumn}{adjustedGrossRow}";
-        var adjustedGrossFormula = showFinancialAmounts || !calculation.HasCommission
+        var adjustedGrossBaseFormula = grossDeductions.Count == 0
             ? $"{grossReference}-{grossAdjustmentReference}"
-            : $"IF(OR({grossReference}<0,{grossReference}-{grossAdjustmentReference}<" +
+            : $"{grossReference}+SUM({amountColumn}{firstGrossDeductionRow}:" +
+              $"{amountColumn}{firstGrossDeductionRow + (uint)grossDeductions.Count - 1U})";
+        var adjustedGrossFormula = showFinancialAmounts || !calculation.HasCommission
+            ? adjustedGrossBaseFormula
+            : $"IF(OR({grossReference}<0,{adjustedGrossBaseFormula}<" +
               $"{calculation.MinimumAmount.ToString(CultureInfo.InvariantCulture)}),0," +
-              $"{grossReference}-{grossAdjustmentReference})";
+              $"{adjustedGrossBaseFormula})";
         WriteFormulaAmountRow(
             sheetData,
             adjustedGrossRow,

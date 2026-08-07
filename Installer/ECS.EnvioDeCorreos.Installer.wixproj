@@ -15,10 +15,8 @@
 
   <Target Name="PublishApplication" BeforeTargets="BeforeBuild">
     <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\ECS.CommissionsMailer.csproj&quot; --configuration Release --runtime win-x64 --self-contained true --property:PublishDir=&quot;$(ApplicationPublishDirectory)&quot; --property:PublishTrimmed=false --property:PublishSingleFile=false" />
-    <ItemGroup>
-      <InstallerPrivateData Include="$(ApplicationPublishDirectory)\Data\correos-iniciales.v3.json;$(ApplicationPublishDirectory)\Data\firma-inicial.*" />
-    </ItemGroup>
-    <Delete Files="@(InstallerPrivateData)" />
     <Error Condition="!Exists('$(ApplicationPublishDirectory)\ECS Envío de Correos.exe')" Text="No se encontró la publicación autocontenida de ECS Envío de Correos." />
+    <Error Condition="!Exists('$(ApplicationPublishDirectory)\Data\correos-iniciales.v3.json')" Text="No se encontró el directorio inicial de correos en la publicación." />
+    <Error Condition="!Exists('$(ApplicationPublishDirectory)\Data\firma-inicial.png')" Text="No se encontró la firma requerida por el directorio inicial de correos en la publicación." />
   </Target>
 </Project>

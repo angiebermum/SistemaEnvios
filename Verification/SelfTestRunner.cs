@@ -26,6 +26,8 @@ internal static class SelfTestRunner
 
         try
         {
+            Check(File.Exists(DirectoryMigrationService.GetSeedPath(AppContext.BaseDirectory)),
+                "Instalación: el directorio inicial de correos está disponible junto al ejecutable");
             RunCoreTests(testRoot, Check);
             RunMigrationTests(migrationRoot, Check);
             RunPaymentAutomationTests(Check);

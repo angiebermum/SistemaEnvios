@@ -3,9 +3,9 @@
     <OutputType>Package</OutputType>
     <InstallerPlatform>x64</InstallerPlatform>
     <Cultures>es-ES</Cultures>
-    <OutputName>ECS Envío de Correos - Instalador 1.0.6</OutputName>
+    <OutputName>ECS Envío de Correos - Instalador 1.0.9</OutputName>
     <ApplicationPublishDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\artifacts\publish\win-x64'))</ApplicationPublishDirectory>
-    <DefineConstants>PublishDir=$(ApplicationPublishDirectory);ProductVersion=1.0.6</DefineConstants>
+    <DefineConstants>PublishDir=$(ApplicationPublishDirectory);ProductVersion=1.0.9</DefineConstants>
     <DefaultCompressionLevel>high</DefaultCompressionLevel>
   </PropertyGroup>
 
@@ -16,5 +16,7 @@
   <Target Name="PublishApplication" BeforeTargets="BeforeBuild">
     <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\ECS.CommissionsMailer.csproj&quot; --configuration Release --runtime win-x64 --self-contained true --property:PublishDir=&quot;$(ApplicationPublishDirectory)&quot; --property:PublishTrimmed=false --property:PublishSingleFile=false" />
     <Error Condition="!Exists('$(ApplicationPublishDirectory)\ECS Envío de Correos.exe')" Text="No se encontró la publicación autocontenida de ECS Envío de Correos." />
+    <Error Condition="!Exists('$(ApplicationPublishDirectory)\Data\correos-iniciales.v3.json')" Text="No se encontró el directorio inicial de correos en la publicación." />
+    <Error Condition="!Exists('$(ApplicationPublishDirectory)\Data\firma-inicial.png')" Text="No se encontró la firma requerida por el directorio inicial de correos en la publicación." />
   </Target>
 </Project>

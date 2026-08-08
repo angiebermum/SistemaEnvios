@@ -25,8 +25,8 @@ public sealed class WorkbookAutomationTests
         Assert.True(sheet.Usd.HasCommission);
         Assert.Equal(100_000m, sheet.Crc.GrossCommission);
         Assert.Equal(100m, sheet.Usd.GrossCommission);
-        Assert.Contains("B3", sheet.Crc.SourceCells);
-        Assert.Contains("B4", sheet.Usd.SourceCells);
+        Assert.Equal(["B9"], sheet.Crc.SourceCells);
+        Assert.Equal(["B12"], sheet.Usd.SourceCells);
     }
 
     [Fact]
@@ -220,7 +220,119 @@ public sealed class WorkbookAutomationTests
     }
 
     [Fact]
-    public void DeductionHeadersAreRenamedAndDoNotRepeatDeductionAmounts()
+    public void PaymentSheetLinksBothDetailTotalsAndUsesDynamicFormulas()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+
+        var batch = Generate(scope, source, [Broker("Corredor sintético", "AR")]);
+        var generated = Assert.Single(batch.Files).OutputPath;
+
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var cells = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .ToDictionary(value => value.CellReference!.Value!, StringComparer.Ordinal);
+
+        Assert.Equal("'Detalle'!B9", cells["C3"].CellFormula!.Text);
+        Assert.Equal("0", cells["C4"].CellFormula!.Text);
+        Assert.Equal(0m, Decimal(cells["C4"].CellValue!.Text));
+        Assert.Equal("C3-C4", cells["C5"].CellFormula!.Text);
+        Assert.Equal("C5*13%", cells["C6"].CellFormula!.Text);
+        Assert.Equal("C5+C6", cells["C7"].CellFormula!.Text);
+        Assert.Equal("-(C5*2%)", cells["C8"].CellFormula!.Text);
+        Assert.Equal(-2_000m, Decimal(cells["C8"].CellValue!.Text));
+        AssertRedFont(document.WorkbookPart!, cells["C8"]);
+        Assert.Null(cells["C9"].CellFormula);
+        Assert.Null(cells["C9"].CellValue);
+        Assert.Equal(string.Empty, cells["C9"].InlineString!.InnerText);
+        Assert.Equal("C7+C8", cells["C10"].CellFormula!.Text);
+
+        Assert.Equal("'Detalle'!B12", cells["F3"].CellFormula!.Text);
+        Assert.Equal("0", cells["F4"].CellFormula!.Text);
+        Assert.Equal(0m, Decimal(cells["F4"].CellValue!.Text));
+        Assert.Equal("F3-F4", cells["F5"].CellFormula!.Text);
+        Assert.Equal("F5*13%", cells["F6"].CellFormula!.Text);
+        Assert.Equal("F5+F6", cells["F7"].CellFormula!.Text);
+        Assert.Equal("-(F5*2%)", cells["F8"].CellFormula!.Text);
+        Assert.Equal(-2m, Decimal(cells["F8"].CellValue!.Text));
+        AssertRedFont(document.WorkbookPart!, cells["F8"]);
+        Assert.Null(cells["F9"].CellFormula);
+        Assert.Null(cells["F9"].CellValue);
+        Assert.Equal(string.Empty, cells["F9"].InlineString!.InnerText);
+        Assert.Equal("F7+F8", cells["F10"].CellFormula!.Text);
+
+        var calculation = document.WorkbookPart!.Workbook!.CalculationProperties;
+        Assert.NotNull(calculation);
+        Assert.Equal(CalculateModeValues.Auto, calculation!.CalculationMode!.Value);
+        Assert.True(calculation.CalculationOnSave!.Value);
+        Assert.True(calculation.ForceFullCalculation!.Value);
+        Assert.True(calculation.FullCalculationOnLoad!.Value);
+        Assert.Null(document.WorkbookPart.CalculationChainPart);
+        Assert.DoesNotContain(
+            cells.Values.SelectMany(value => new[]
+            {
+                value.CellFormula?.Text ?? string.Empty,
+                value.CellValue?.Text ?? string.Empty
+            }),
+            value => value.Contains("#REF!", StringComparison.OrdinalIgnoreCase) ||
+                     value.Contains("#VALUE!", StringComparison.OrdinalIgnoreCase) ||
+                     value.Contains("#DIV/0!", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ManualDetailTotalChangeKeepsInvoiceDependencyAndForcesRecalculation()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+        var generated = Assert.Single(
+            Generate(scope, source, [Broker("Corredor sintético", "AR")]).Files).OutputPath;
+
+        using (var document = SpreadsheetDocument.Open(generated, true))
+        {
+            var detailWorksheet = GetWorksheetPart(document, "Detalle").Worksheet!;
+            var detailTotal = detailWorksheet
+                .Descendants<Cell>()
+                .Single(value => value.CellReference?.Value == "B9");
+            detailTotal.CellFormula = null;
+            detailTotal.DataType = CellValues.Number;
+            detailTotal.CellValue = new CellValue("200000");
+            detailWorksheet.Save();
+        }
+
+        using var reopened = SpreadsheetDocument.Open(generated, false);
+        var gross = GetWorksheetPart(reopened, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .Single(value => value.CellReference?.Value == "C3");
+        Assert.Equal("'Detalle'!B9", gross.CellFormula!.Text);
+        Assert.Equal(CalculateModeValues.Auto,
+            reopened.WorkbookPart!.Workbook!.CalculationProperties!.CalculationMode!.Value);
+        Assert.True(reopened.WorkbookPart.Workbook.CalculationProperties.FullCalculationOnLoad!.Value);
+    }
+
+    [Fact]
+    public void MissingDetailGrossTotalStopsOnlyThatWorkbookWithClearError()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general-sin-total.xlsx");
+        CreateStandardWorkbook(
+            source,
+            ["AR"],
+            includeUsd: true,
+            includeGrossTotals: false);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Generate(scope, source, [Broker("Corredor sintético", "AR")]));
+
+        Assert.Contains("Monto de factura", exception.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Monto bruto comisión", exception.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Detalle", exception.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(Path.Combine(scope.Path, "salida")));
+    }
+
+    [Fact]
+    public void AdjustmentAndDeductionHeadersDoNotRepeatItemizedAmounts()
     {
         using var scope = new TestDirectory();
         var source = Path.Combine(scope.Path, "general.xlsx");
@@ -261,6 +373,239 @@ public sealed class WorkbookAutomationTests
         Assert.Equal(-15_000m, byReference[$"C{finalDeduction.Row}"].NumericValue);
         Assert.DoesNotContain(cells, value => value.Text == "Rebajos al monto bruto");
         Assert.DoesNotContain(cells, value => value.Text == "Rebajos al monto a pagar");
+
+        using var document = SpreadsheetDocument.Open(Assert.Single(batch.Files).OutputPath, false);
+        var formulaCells = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .ToDictionary(value => value.CellReference!.Value!, StringComparer.Ordinal);
+        Assert.Null(formulaCells["C4"].CellFormula);
+        Assert.Null(formulaCells["C4"].CellValue);
+        Assert.Equal("C3+SUM(C5:C5)", formulaCells["C6"].CellFormula!.Text);
+        Assert.Equal("C6*13%", formulaCells["C7"].CellFormula!.Text);
+        Assert.Equal("C6+C7", formulaCells["C8"].CellFormula!.Text);
+        Assert.Equal("-(C6*2%)", formulaCells["C9"].CellFormula!.Text);
+        AssertRedFont(document.WorkbookPart!, formulaCells["C9"]);
+        Assert.Null(formulaCells["C10"].CellFormula);
+        Assert.Null(formulaCells["C10"].CellValue);
+        AssertRedFont(document.WorkbookPart!, formulaCells["C11"]);
+        Assert.Equal("C8+C9+SUM(C11:C11)", formulaCells["C12"].CellFormula!.Text);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void ItemizedGrossAdjustmentsAreDisplayedAndAppliedExactlyOnce(int adjustmentCount)
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: false, crcCommission: 500_000m);
+        var broker = Broker("Corredor sintético", "AR");
+        for (var index = 1; index <= adjustmentCount; index++)
+        {
+            broker.Deductions.Add(new BrokerDeduction
+            {
+                Description = $"Ajuste {index}",
+                Amount = index * 10_000m,
+                Currency = DeductionCurrency.CRC,
+                ApplicationType = DeductionApplicationType.GrossCommission,
+                TargetWorksheetName = "AR",
+                DisplayOrder = index
+            });
+        }
+
+        var generated = Assert.Single(Generate(scope, source, [broker]).Files).OutputPath;
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var cells = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .ToDictionary(value => value.CellReference!.Value!, StringComparer.Ordinal);
+        var lastAdjustmentRow = 4 + adjustmentCount;
+        var adjustedGrossRow = lastAdjustmentRow + 1;
+        var expectedTotal = Enumerable.Range(1, adjustmentCount).Sum() * 10_000m;
+
+        Assert.Equal(string.Empty, cells["C4"].InlineString!.InnerText);
+        Assert.Null(cells["C4"].CellFormula);
+        Assert.Null(cells["C4"].CellValue);
+        for (var index = 1; index <= adjustmentCount; index++)
+        {
+            var adjustmentCell = cells[$"C{4 + index}"];
+            Assert.Equal(-index * 10_000m, Decimal(adjustmentCell.CellValue!.Text));
+            Assert.Single(cells.Values, value =>
+                value.InlineString?.InnerText.Trim() == $"Ajuste {index}");
+        }
+
+        Assert.Equal(
+            $"C3+SUM(C5:C{lastAdjustmentRow})",
+            cells[$"C{adjustedGrossRow}"].CellFormula!.Text);
+        Assert.Equal(
+            500_000m - expectedTotal,
+            Decimal(cells[$"C{adjustedGrossRow}"].CellValue!.Text));
+    }
+
+    [Fact]
+    public void GrossAdjustmentsStaySeparatedByCurrencyAndFromPayableDeductions()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(
+            source,
+            ["AR"],
+            includeUsd: true,
+            crcCommission: 500_000m,
+            usdCommission: 500m);
+        var broker = Broker("Corredor sintético", "AR");
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ajuste CRC",
+            Amount = 100_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.GrossCommission,
+            TargetWorksheetName = "AR",
+            DisplayOrder = 1
+        });
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ajuste USD",
+            Amount = 120m,
+            Currency = DeductionCurrency.USD,
+            ApplicationType = DeductionApplicationType.GrossCommission,
+            TargetWorksheetName = "AR",
+            DisplayOrder = 2
+        });
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Deducción CRC",
+            Amount = 20_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "AR",
+            DisplayOrder = 3
+        });
+
+        var generated = Assert.Single(Generate(scope, source, [broker]).Files).OutputPath;
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var cells = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .ToDictionary(value => value.CellReference!.Value!, StringComparer.Ordinal);
+
+        Assert.Null(cells["C4"].CellValue);
+        Assert.Equal(-100_000m, Decimal(cells["C5"].CellValue!.Text));
+        Assert.Equal("C3+SUM(C5:C5)", cells["C6"].CellFormula!.Text);
+        Assert.Equal(400_000m, Decimal(cells["C6"].CellValue!.Text));
+        Assert.Null(cells["C10"].CellValue);
+        Assert.Equal(-20_000m, Decimal(cells["C11"].CellValue!.Text));
+        Assert.Equal("C8+C9+SUM(C11:C11)", cells["C12"].CellFormula!.Text);
+
+        Assert.Null(cells["F4"].CellValue);
+        Assert.Equal(-120m, Decimal(cells["F5"].CellValue!.Text));
+        Assert.Equal("F3+SUM(F5:F5)", cells["F6"].CellFormula!.Text);
+        Assert.Equal(380m, Decimal(cells["F6"].CellValue!.Text));
+        Assert.Null(cells["F10"].CellValue);
+
+        Assert.Single(cells.Values, value => value.InlineString?.InnerText.Trim() == "Ajuste CRC");
+        Assert.Single(cells.Values, value => value.InlineString?.InnerText.Trim() == "Ajuste USD");
+        Assert.Single(cells.Values, value => value.InlineString?.InnerText.Trim() == "Deducción CRC");
+    }
+
+    [Fact]
+    public void DepositedAmountAddsOneNegativeDeductionExactlyOnce()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(
+            source,
+            ["AR"],
+            includeUsd: false,
+            crcCommission: 36_471m);
+        var broker = Broker("Corredor sintético", "AR");
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ahorro",
+            Amount = 15_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "AR"
+        });
+
+        var generated = Assert.Single(Generate(scope, source, [broker]).Files).OutputPath;
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var cells = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .ToDictionary(value => value.CellReference!.Value!, StringComparer.Ordinal);
+
+        Assert.Equal(41_212.23m, Decimal(cells["C7"].CellValue!.Text));
+        Assert.Equal(-729.42m, Decimal(cells["C8"].CellValue!.Text));
+        Assert.Equal(-15_000m, Decimal(cells["C10"].CellValue!.Text));
+        Assert.Equal(25_482.81m, Decimal(cells["C11"].CellValue!.Text));
+        Assert.Equal("C7+C8+SUM(C10:C10)", cells["C11"].CellFormula!.Text);
+        Assert.Null(cells["C9"].CellFormula);
+        Assert.Null(cells["C9"].CellValue);
+        AssertRedFont(document.WorkbookPart!, cells["C8"]);
+        AssertRedFont(document.WorkbookPart!, cells["C10"]);
+    }
+
+    [Fact]
+    public void PayableDeductionsStaySeparatedByCurrencyWithoutDuplicatedTotal()
+    {
+        using var scope = new TestDirectory();
+        var source = Path.Combine(scope.Path, "general.xlsx");
+        CreateStandardWorkbook(source, ["AR"], includeUsd: true);
+        var broker = Broker("Corredor sintético", "AR");
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Ahorro",
+            Amount = 10_000m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "AR",
+            DisplayOrder = 1
+        });
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Rebajo póliza",
+            Amount = 8_500m,
+            Currency = DeductionCurrency.CRC,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "AR",
+            DisplayOrder = 2
+        });
+        broker.Deductions.Add(new BrokerDeduction
+        {
+            Description = "Adelanto USD",
+            Amount = 10m,
+            Currency = DeductionCurrency.USD,
+            ApplicationType = DeductionApplicationType.PayableAmount,
+            TargetWorksheetName = "AR",
+            DisplayOrder = 3
+        });
+
+        var generated = Assert.Single(Generate(scope, source, [broker]).Files).OutputPath;
+        using var document = SpreadsheetDocument.Open(generated, false);
+        var cells = GetWorksheetPart(document, "Monto de factura").Worksheet!
+            .Descendants<Cell>()
+            .ToDictionary(value => value.CellReference!.Value!, StringComparer.Ordinal);
+
+        Assert.Equal(string.Empty, cells["C9"].InlineString!.InnerText);
+        Assert.Null(cells["C9"].CellFormula);
+        Assert.Null(cells["C9"].CellValue);
+        Assert.Equal(-10_000m, Decimal(cells["C10"].CellValue!.Text));
+        Assert.Equal(-8_500m, Decimal(cells["C11"].CellValue!.Text));
+        Assert.Equal("C7+C8+SUM(C10:C11)", cells["C12"].CellFormula!.Text);
+        Assert.Equal(92_500m, Decimal(cells["C12"].CellValue!.Text));
+        AssertRedFont(document.WorkbookPart!, cells["C10"]);
+        AssertRedFont(document.WorkbookPart!, cells["C11"]);
+
+        Assert.Equal(string.Empty, cells["F9"].InlineString!.InnerText);
+        Assert.Null(cells["F9"].CellFormula);
+        Assert.Null(cells["F9"].CellValue);
+        Assert.Equal(-10m, Decimal(cells["F10"].CellValue!.Text));
+        Assert.Equal("F7+F8+SUM(F10:F10)", cells["F11"].CellFormula!.Text);
+        Assert.Equal(101m, Decimal(cells["F11"].CellValue!.Text));
+        AssertRedFont(document.WorkbookPart!, cells["F10"]);
+
+        Assert.Single(cells.Values, value => value.InlineString?.InnerText.Trim() == "Ahorro");
+        Assert.Single(cells.Values, value => value.InlineString?.InnerText.Trim() == "Rebajo póliza");
+        Assert.Single(cells.Values, value => value.InlineString?.InnerText.Trim() == "Adelanto USD");
     }
 
     [Fact]
@@ -445,7 +790,8 @@ public sealed class WorkbookAutomationTests
         IReadOnlyList<string> names,
         bool includeUsd,
         decimal crcCommission = 100_000m,
-        decimal usdCommission = 100m)
+        decimal usdCommission = 100m,
+        bool includeGrossTotals = true)
     {
         using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
         var workbookPart = document.AddWorkbookPart();
@@ -481,6 +827,25 @@ public sealed class WorkbookAutomationTests
             }
 
             sheetData.Append(new Row(TextCell("A6", "Fila oculta preservada")) { RowIndex = 6U, Hidden = true });
+            if (includeGrossTotals)
+            {
+                sheetData.Append(
+                    new Row(TextCell("A8", "COLONES")) { RowIndex = 8U },
+                    new Row(
+                        TextCell("A9", "Monto bruto comisión"),
+                        FormulaCell("B9", "SUM(B3:B3)", crcCommission, 2U))
+                    { RowIndex = 9U });
+                if (includeUsd)
+                {
+                    sheetData.Append(
+                        new Row(TextCell("A11", "DÓLARES")) { RowIndex = 11U },
+                        new Row(
+                            TextCell("A12", "Monto bruto comisión"),
+                            FormulaCell("B12", "SUM(B4:B4)", usdCommission, 3U))
+                        { RowIndex = 12U });
+                }
+            }
+
             worksheetPart.Worksheet = new Worksheet(
                 new Columns(
                     new Column { Min = 1U, Max = 1U, Width = 18D, CustomWidth = true },
@@ -689,6 +1054,21 @@ public sealed class WorkbookAutomationTests
 
         Assert.NotNull(font.Bold);
     }
+
+    private static void AssertRedFont(WorkbookPart workbookPart, Cell cell)
+    {
+        var style = workbookPart.WorkbookStylesPart!.Stylesheet!.CellFormats!
+            .Elements<CellFormat>()
+            .ElementAt((int)(cell.StyleIndex?.Value ?? 0U));
+        var font = workbookPart.WorkbookStylesPart.Stylesheet.Fonts!
+            .Elements<Font>()
+            .ElementAt((int)(style.FontId?.Value ?? 0U));
+
+        Assert.Equal("FFFF0000", font.Color?.Rgb?.Value);
+    }
+
+    private static decimal Decimal(string value) =>
+        decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
 
     private static WorksheetPart GetWorksheetPart(SpreadsheetDocument document, string name)
     {

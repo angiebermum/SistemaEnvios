@@ -161,6 +161,10 @@ public sealed class PaymentWorkbookGenerationService
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
                                                or DocumentFormat.OpenXml.Packaging.OpenXmlPackageException)
                 {
+                    _logger.Error(
+                        $"No se pudo generar la pestaña 'Monto de factura' para " +
+                        $"'{item.Analysis.WorksheetName}'.",
+                        ex);
                     throw new InvalidDataException(
                         $"No se pudo copiar o validar la pestaña '{item.Analysis.WorksheetName}': {ex.Message}",
                         ex);
@@ -306,6 +310,8 @@ public sealed class PaymentWorkbookGenerationService
         }
 
         workbook.CalculationProperties ??= new CalculationProperties();
+        workbook.CalculationProperties.CalculationMode = CalculateModeValues.Auto;
+        workbook.CalculationProperties.CalculationOnSave = true;
         workbook.CalculationProperties.ForceFullCalculation = true;
         workbook.CalculationProperties.FullCalculationOnLoad = true;
         if (workbook.BookViews?.Elements<WorkbookView>().FirstOrDefault() is { } view)
@@ -313,8 +319,13 @@ public sealed class PaymentWorkbookGenerationService
             view.ActiveTab = 0U;
         }
 
+        var detailTotals = ResolveDetailGrossCommissionReferences(
+            workbookPart,
+            selectedWorksheetPart,
+            sourceWorksheetName,
+            calculation);
         var summaryPart = workbookPart.AddNewPart<WorksheetPart>();
-        summaryPart.Worksheet = BuildPaymentWorksheet(workbookPart, calculation);
+        summaryPart.Worksheet = BuildPaymentWorksheet(workbookPart, calculation, detailTotals);
         var nextSheetId = workbook.Sheets!.Elements<Sheet>()
             .Select(value => value.SheetId?.Value ?? 0U)
             .DefaultIfEmpty(0U)
@@ -337,9 +348,61 @@ public sealed class PaymentWorkbookGenerationService
         workbook.Save();
     }
 
+    private static DetailGrossCommissionReferences ResolveDetailGrossCommissionReferences(
+        WorkbookPart workbookPart,
+        WorksheetPart detailWorksheetPart,
+        string sourceWorksheetName,
+        PaymentCalculationResult calculation)
+    {
+        var detail = OpenXmlWorksheetReader.Read(workbookPart, detailWorksheetPart, "Detalle");
+        var detected = CommissionWorksheetAnalyzerSupport.AnalyzeSummaryLayout(
+            detail,
+            CommissionWorksheetAnalyzerSupport.CreateResult("Detalle", "Totales de Detalle"));
+        if (!detected.IsValid && (detected.Crc.HasCommission || detected.Usd.HasCommission))
+        {
+            throw new InvalidDataException(
+                $"No se pudo generar la pestaña 'Monto de factura' para '{sourceWorksheetName}'." +
+                Environment.NewLine +
+                string.Join(Environment.NewLine, detected.Errors));
+        }
+
+        return new DetailGrossCommissionReferences(
+            ResolveDetailGrossCommissionReference(
+                sourceWorksheetName,
+                calculation.Crc,
+                detected.Crc),
+            ResolveDetailGrossCommissionReference(
+                sourceWorksheetName,
+                calculation.Usd,
+                detected.Usd));
+    }
+
+    private static string? ResolveDetailGrossCommissionReference(
+        string sourceWorksheetName,
+        PaymentCurrencyCalculation calculation,
+        CommissionCurrencySummary detected)
+    {
+        if (!calculation.HasCommission)
+        {
+            return null;
+        }
+
+        if (!detected.HasCommission || detected.SourceCells.Count != 1)
+        {
+            throw new InvalidDataException(
+                $"No se pudo generar la pestaña 'Monto de factura' para '{sourceWorksheetName}'." +
+                Environment.NewLine +
+                $"No se encontró con seguridad el total 'Monto bruto comisión' correspondiente a " +
+                $"{calculation.Currency} en la pestaña 'Detalle'.");
+        }
+
+        return detected.SourceCells[0];
+    }
+
     private static Worksheet BuildPaymentWorksheet(
         WorkbookPart workbookPart,
-        PaymentCalculationResult calculation)
+        PaymentCalculationResult calculation,
+        DetailGrossCommissionReferences detailTotals)
     {
         var styles = EnsurePaymentStyles(workbookPart);
         var worksheet = new Worksheet();
@@ -357,9 +420,25 @@ public sealed class PaymentWorkbookGenerationService
         uint crcRowIndex = 2;
         uint usdRowIndex = 2;
         WriteCurrencyBlock(
-            sheetData, mergeCells, ref crcRowIndex, "B", "C", "COLONES", calculation.Crc, styles);
+            sheetData,
+            mergeCells,
+            ref crcRowIndex,
+            "B",
+            "C",
+            "COLONES",
+            calculation.Crc,
+            detailTotals.Crc,
+            styles);
         WriteCurrencyBlock(
-            sheetData, mergeCells, ref usdRowIndex, "E", "F", "DÓLARES", calculation.Usd, styles);
+            sheetData,
+            mergeCells,
+            ref usdRowIndex,
+            "E",
+            "F",
+            "DÓLARES",
+            calculation.Usd,
+            detailTotals.Usd,
+            styles);
         worksheet.Append(new PageMargins
         {
             Left = 0.4D,
@@ -386,12 +465,16 @@ public sealed class PaymentWorkbookGenerationService
         string amountColumn,
         string title,
         PaymentCurrencyCalculation calculation,
+        string? detailGrossCommissionReference,
         PaymentSheetStyles styles)
     {
         var amountStyle = calculation.Currency == DeductionCurrency.CRC ? styles.CrcAmount : styles.UsdAmount;
         var strongAmountStyle = calculation.Currency == DeductionCurrency.CRC
             ? styles.CrcStrongAmount
             : styles.UsdStrongAmount;
+        var negativeAmountStyle = calculation.Currency == DeductionCurrency.CRC
+            ? styles.CrcNegativeAmount
+            : styles.UsdNegativeAmount;
         var showFinancialAmounts = calculation.HasCommission &&
                                    !calculation.MinimumApplied &&
                                    calculation.IsValid &&
@@ -406,13 +489,18 @@ public sealed class PaymentWorkbookGenerationService
         });
         rowIndex++;
 
-        WriteAmountRow(
+        var grossRow = rowIndex++;
+        var grossReference = $"{amountColumn}{grossRow}";
+        WriteFormulaAmountRow(
             sheetData,
-            rowIndex++,
+            grossRow,
             labelColumn,
             amountColumn,
             "Monto bruto comisión",
-            showFinancialAmounts ? calculation.GrossCommissionOriginal : 0m,
+            detailGrossCommissionReference is null
+                ? "0"
+                : $"'Detalle'!{detailGrossCommissionReference}",
+            detailGrossCommissionReference is null ? 0m : calculation.GrossCommissionOriginal,
             styles.StrongLabel,
             strongAmountStyle);
 
@@ -420,14 +508,34 @@ public sealed class PaymentWorkbookGenerationService
             .Where(value => value.ApplicationType == DeductionApplicationType.GrossCommission)
             .OrderBy(value => value.DisplayOrder)
             .ToList();
-        WriteEmptyAmountRow(
-            sheetData,
-            rowIndex++,
-            labelColumn,
-            amountColumn,
-            "Ajustes al monto bruto",
-            styles.StrongLabel,
-            amountStyle);
+        var grossAdjustmentRow = rowIndex++;
+        var grossAdjustmentReference = $"{amountColumn}{grossAdjustmentRow}";
+        var firstGrossDeductionRow = rowIndex;
+        if (grossDeductions.Count == 0)
+        {
+            WriteFormulaAmountRow(
+                sheetData,
+                grossAdjustmentRow,
+                labelColumn,
+                amountColumn,
+                "Ajustes al monto bruto",
+                "0",
+                0m,
+                styles.StrongLabel,
+                amountStyle);
+        }
+        else
+        {
+            WriteEmptyAmountRow(
+                sheetData,
+                grossAdjustmentRow,
+                labelColumn,
+                amountColumn,
+                "Ajustes al monto bruto",
+                styles.StrongLabel,
+                amountStyle);
+        }
+
         foreach (var deduction in grossDeductions)
         {
             WriteAmountRow(
@@ -441,52 +549,77 @@ public sealed class PaymentWorkbookGenerationService
                 amountStyle);
         }
 
-        WriteAmountRow(
+        var adjustedGrossRow = rowIndex++;
+        var adjustedGrossReference = $"{amountColumn}{adjustedGrossRow}";
+        var adjustedGrossBaseFormula = grossDeductions.Count == 0
+            ? $"{grossReference}-{grossAdjustmentReference}"
+            : $"{grossReference}+SUM({amountColumn}{firstGrossDeductionRow}:" +
+              $"{amountColumn}{firstGrossDeductionRow + (uint)grossDeductions.Count - 1U})";
+        var adjustedGrossFormula = showFinancialAmounts || !calculation.HasCommission
+            ? adjustedGrossBaseFormula
+            : $"IF(OR({grossReference}<0,{adjustedGrossBaseFormula}<" +
+              $"{calculation.MinimumAmount.ToString(CultureInfo.InvariantCulture)}),0," +
+              $"{adjustedGrossBaseFormula})";
+        WriteFormulaAmountRow(
             sheetData,
-            rowIndex++,
+            adjustedGrossRow,
             labelColumn,
             amountColumn,
             "Monto bruto ajustado",
+            adjustedGrossFormula,
             showFinancialAmounts ? calculation.AdjustedGrossCommission : 0m,
             styles.StrongLabel,
             strongAmountStyle);
-        WriteAmountRow(
+        var vatRow = rowIndex++;
+        var vatReference = $"{amountColumn}{vatRow}";
+        WriteFormulaAmountRow(
             sheetData,
-            rowIndex++,
+            vatRow,
             labelColumn,
             amountColumn,
             "IVA 13%",
+            $"{adjustedGrossReference}*13%",
             showFinancialAmounts ? calculation.Vat : 0m,
             styles.Label,
             amountStyle);
-        WriteAmountRow(
+        var invoiceRow = rowIndex++;
+        var invoiceReference = $"{amountColumn}{invoiceRow}";
+        WriteFormulaAmountRow(
             sheetData,
-            rowIndex++,
+            invoiceRow,
             labelColumn,
             amountColumn,
             "Monto factura",
+            $"{adjustedGrossReference}+{vatReference}",
             showFinancialAmounts ? calculation.InvoiceAmount : 0m,
             styles.InvoiceLabel,
             calculation.Currency == DeductionCurrency.CRC
                 ? styles.CrcInvoiceAmount
                 : styles.UsdInvoiceAmount);
-        WriteAmountRow(
+        var withholdingRow = rowIndex++;
+        var withholdingReference = $"{amountColumn}{withholdingRow}";
+        WriteFormulaAmountRow(
             sheetData,
-            rowIndex++,
+            withholdingRow,
             labelColumn,
             amountColumn,
             "Retención 2%",
+            $"-({adjustedGrossReference}*2%)",
             showFinancialAmounts ? -calculation.Withholding : 0m,
             styles.Label,
-            amountStyle);
+            showFinancialAmounts && calculation.Withholding > 0m
+                ? negativeAmountStyle
+                : amountStyle);
 
         var finalDeductions = calculation.Deductions
             .Where(value => value.ApplicationType == DeductionApplicationType.PayableAmount)
             .OrderBy(value => value.DisplayOrder)
             .ToList();
+        var finalDeductionsRow = rowIndex++;
+        var firstFinalDeductionRow = rowIndex;
         WriteEmptyAmountRow(
             sheetData,
-            rowIndex++,
+            finalDeductionsRow,
             labelColumn,
             amountColumn,
             "Deducciones",
@@ -494,23 +627,31 @@ public sealed class PaymentWorkbookGenerationService
             amountStyle);
         foreach (var deduction in finalDeductions)
         {
+            var displayedAmount = showFinancialAmounts ? -deduction.AppliedAmount : 0m;
             WriteAmountRow(
                 sheetData,
                 rowIndex++,
                 labelColumn,
                 amountColumn,
                 $"   {deduction.Description}",
-                showFinancialAmounts ? -deduction.AppliedAmount : 0m,
+                displayedAmount,
                 styles.Label,
-                amountStyle);
+                displayedAmount < 0m ? negativeAmountStyle : amountStyle);
         }
 
-        WriteAmountRow(
+        var depositedFormula = finalDeductions.Count == 0
+            ? $"{invoiceReference}+{withholdingReference}"
+            : $"{invoiceReference}+{withholdingReference}+" +
+              $"SUM({amountColumn}{firstFinalDeductionRow}:" +
+              $"{amountColumn}{firstFinalDeductionRow + (uint)finalDeductions.Count - 1U})";
+
+        WriteFormulaAmountRow(
             sheetData,
             rowIndex++,
             labelColumn,
             amountColumn,
             "Monto depositado",
+            depositedFormula,
             showFinancialAmounts ? calculation.DepositedAmount : 0m,
             styles.TotalLabel,
             calculation.Currency == DeductionCurrency.CRC ? styles.CrcTotalAmount : styles.UsdTotalAmount);
@@ -544,6 +685,32 @@ public sealed class PaymentWorkbookGenerationService
         var row = GetOrCreateRow(sheetData, rowIndex, 19D);
         row.Append(TextCell($"{labelColumn}{rowIndex}", label, labelStyle));
         row.Append(NumberCell($"{amountColumn}{rowIndex}", amount, amountStyle));
+    }
+
+    private static void WriteFormulaAmountRow(
+        SheetData sheetData,
+        uint rowIndex,
+        string labelColumn,
+        string amountColumn,
+        string label,
+        string formula,
+        decimal cachedAmount,
+        uint labelStyle,
+        uint amountStyle)
+    {
+        if (string.IsNullOrWhiteSpace(formula) || formula.Contains("#REF!", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"No se pudo escribir una fórmula válida para '{label}' en Monto de factura.");
+        }
+
+        var row = GetOrCreateRow(sheetData, rowIndex, 19D);
+        row.Append(TextCell($"{labelColumn}{rowIndex}", label, labelStyle));
+        row.Append(FormulaCell(
+            $"{amountColumn}{rowIndex}",
+            formula,
+            cachedAmount,
+            amountStyle));
     }
 
     private static void WriteEmptyAmountRow(
@@ -594,6 +761,19 @@ public sealed class PaymentWorkbookGenerationService
         StyleIndex = style
     };
 
+    private static Cell FormulaCell(
+        string reference,
+        string formula,
+        decimal cachedValue,
+        uint style) => new()
+    {
+        CellReference = reference,
+        DataType = CellValues.Number,
+        CellFormula = new CellFormula(formula),
+        CellValue = new CellValue(cachedValue.ToString("0.00", CultureInfo.InvariantCulture)),
+        StyleIndex = style
+    };
+
     private static PaymentSheetStyles EnsurePaymentStyles(WorkbookPart workbookPart)
     {
         var stylesPart = workbookPart.WorkbookStylesPart ?? workbookPart.AddNewPart<WorkbookStylesPart>();
@@ -625,6 +805,10 @@ public sealed class PaymentWorkbookGenerationService
             new FontName { Val = "Calibri" }));
         var normalFont = Append(stylesheet.Fonts, new Font(
             new Color { Rgb = "FF1F2937" },
+            new FontSize { Val = 11D },
+            new FontName { Val = "Calibri" }));
+        var redFont = Append(stylesheet.Fonts, new Font(
+            new Color { Rgb = "FFFF0000" },
             new FontSize { Val = 11D },
             new FontName { Val = "Calibri" }));
         var noteFont = Append(stylesheet.Fonts, new Font(
@@ -685,6 +869,10 @@ public sealed class PaymentWorkbookGenerationService
             HorizontalAlignmentValues.Right));
         var usdAmount = Append(stylesheet.CellFormats, Format(normalFont, 0U, thinBorder, usdFormatId, true,
             HorizontalAlignmentValues.Right));
+        var crcNegativeAmount = Append(stylesheet.CellFormats, Format(
+            redFont, 0U, thinBorder, crcFormatId, true, HorizontalAlignmentValues.Right));
+        var usdNegativeAmount = Append(stylesheet.CellFormats, Format(
+            redFont, 0U, thinBorder, usdFormatId, true, HorizontalAlignmentValues.Right));
         var crcStrong = Append(stylesheet.CellFormats, Format(boldFont, 0U, thinBorder, crcFormatId, true,
             HorizontalAlignmentValues.Right));
         var usdStrong = Append(stylesheet.CellFormats, Format(boldFont, 0U, thinBorder, usdFormatId, true,
@@ -710,7 +898,8 @@ public sealed class PaymentWorkbookGenerationService
         stylesheet.Save();
         return new PaymentSheetStyles(
             title, label, strongLabel, totalLabel, crcAmount, usdAmount,
-            crcStrong, usdStrong, crcTotal, usdTotal, invoiceLabel, crcInvoice, usdInvoice, note, minimumNote);
+            crcNegativeAmount, usdNegativeAmount, crcStrong, usdStrong, crcTotal, usdTotal,
+            invoiceLabel, crcInvoice, usdInvoice, note, minimumNote);
     }
 
     private static CellFormat Format(
@@ -859,6 +1048,8 @@ public sealed class PaymentWorkbookGenerationService
         uint TotalLabel,
         uint CrcAmount,
         uint UsdAmount,
+        uint CrcNegativeAmount,
+        uint UsdNegativeAmount,
         uint CrcStrongAmount,
         uint UsdStrongAmount,
         uint CrcTotalAmount,
@@ -868,4 +1059,6 @@ public sealed class PaymentWorkbookGenerationService
         uint UsdInvoiceAmount,
         uint Note,
         uint MinimumNote);
+
+    private sealed record DetailGrossCommissionReferences(string? Crc, string? Usd);
 }

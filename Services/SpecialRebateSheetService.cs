@@ -636,25 +636,63 @@ public sealed class SpecialRebateSheetService
         var worksheet = GetWorksheet(workbookPart, "Monto de factura");
         var labelColumnIndex = FindCurrencyLabelColumn(worksheet, "COLONES");
         var amountColumnIndex = labelColumnIndex + 1U;
-        var finalDeductions = calculation.Deductions
+        var payableDeductions = calculation.Deductions
             .Where(value => value.ApplicationType == DeductionApplicationType.PayableAmount)
-            .Sum(value => value.AppliedAmount);
+            .ToList();
+        var finalDeductions = payableDeductions.Sum(value => value.AppliedAmount);
         var amounts = CalculateAndresAswCrcInvoiceAmounts(
             calculation.GrossCommissionOriginal,
             totalRebateCrc,
             finalDeductions);
-
-        SetLabeledAmount(
+        var grossReference = FindLabeledAmountReference(
             worksheet,
             labelColumnIndex,
             amountColumnIndex,
-            "Monto bruto comisión",
-            amounts.GrossAmountCrc);
-        SetLabeledAmount(
+            "Monto bruto comisión");
+        var adjustmentReference = FindLabeledAmountReference(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Ajustes al monto bruto");
+        var adjustedGrossReference = FindLabeledAmountReference(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Monto bruto ajustado");
+        var vatReference = FindLabeledAmountReference(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "IVA 13%");
+        var invoiceReference = FindLabeledAmountReference(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Monto factura");
+        var withholdingReference = FindLabeledAmountReference(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Retención 2%");
+        var deductionsReference = FindLabeledAmountReference(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Deducciones");
+        var depositedReference = FindLabeledAmountReference(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            "Monto depositado");
+        const string rebateReference = "'REBAJO'!D8";
+        var requiresInvoice = $"{grossReference}>{rebateReference}";
+
+        SetLabeledFormula(
             worksheet,
             labelColumnIndex,
             amountColumnIndex,
             "Ajustes al monto bruto",
+            $"IF({requiresInvoice},{rebateReference},\"\")",
             amounts.GrossAdjustmentCrc);
         ClearRowsBetween(
             worksheet,
@@ -662,36 +700,35 @@ public sealed class SpecialRebateSheetService
             amountColumnIndex,
             "Ajustes al monto bruto",
             "Monto bruto ajustado");
-        SetLabeledAmount(
+        SetLabeledFormula(
             worksheet,
             labelColumnIndex,
             amountColumnIndex,
             "Monto bruto ajustado",
+            $"IF({requiresInvoice},{grossReference}-{adjustmentReference},{grossReference})",
             amounts.AdjustedGrossAmountCrc);
-        SetLabeledAmount(
+        SetLabeledFormula(
             worksheet,
             labelColumnIndex,
             amountColumnIndex,
             "IVA 13%",
+            $"IF({requiresInvoice},{adjustedGrossReference}*13%,\"\")",
             amounts.VatCrc);
-        SetLabeledAmount(
+        SetLabeledFormula(
             worksheet,
             labelColumnIndex,
             amountColumnIndex,
             "Monto factura",
+            $"IF({requiresInvoice},{adjustedGrossReference}+{vatReference},\"\")",
             amounts.InvoiceAmountCrc);
-        SetLabeledAmount(
+        SetLabeledFormula(
             worksheet,
             labelColumnIndex,
             amountColumnIndex,
             "Retención 2%",
-            amounts.WithholdingCrc);
-        SetLabeledAmount(
-            worksheet,
-            labelColumnIndex,
-            amountColumnIndex,
-            "Deducciones",
-            null);
+            $"IF({requiresInvoice},-({adjustedGrossReference}*2%),\"\")",
+            amounts.WithholdingCrc.HasValue ? -amounts.WithholdingCrc.Value : null);
+        ClearCell(GetOrCreateCell(worksheet, deductionsReference));
         if (!amounts.RequiresInvoice)
         {
             ClearRowsBetween(
@@ -702,12 +739,23 @@ public sealed class SpecialRebateSheetService
                 "Monto depositado");
         }
 
-        SetLabeledAmount(
+        var deductionsRow = ParseRowIndex(deductionsReference);
+        var depositedRow = ParseRowIndex(depositedReference);
+        var individualDeductionsExpression = payableDeductions.Count == 0
+            ? string.Empty
+            : $"+SUM({ColumnName(amountColumnIndex)}{deductionsRow + 1U}:" +
+              $"{ColumnName(amountColumnIndex)}{depositedRow - 1U})";
+
+        SetLabeledFormula(
             worksheet,
             labelColumnIndex,
             amountColumnIndex,
             "Monto depositado",
+            $"IF({requiresInvoice},MAX({invoiceReference}+{withholdingReference}" +
+            $"{individualDeductionsExpression},0),\"\")",
             amounts.DepositedAmountCrc);
+        ValidateFormulaReference(grossReference, "Monto bruto comisión");
+        ValidateFormulaReference(depositedReference, "Monto depositado");
         worksheet.Save();
     }
 
@@ -748,28 +796,61 @@ public sealed class SpecialRebateSheetService
                 $"El bloque '{currencyTitle}' no tiene una referencia de celda válida."));
     }
 
-    private static void SetLabeledAmount(
+    private static string FindLabeledAmountReference(
         Worksheet worksheet,
         uint labelColumnIndex,
         uint amountColumnIndex,
-        string label,
-        decimal? amount)
+        string label)
     {
         var labelCell = FindLabelCell(worksheet, labelColumnIndex, label);
         var rowIndex = ParseRowIndex(
             labelCell.CellReference?.Value
             ?? throw new InvalidDataException(
                 $"El concepto '{label}' no tiene una referencia de celda válida."));
-        var amountCell = GetOrCreateCell(
-            worksheet,
-            $"{ColumnName(amountColumnIndex)}{rowIndex}");
-        if (amount.HasValue)
+        return $"{ColumnName(amountColumnIndex)}{rowIndex}";
+    }
+
+    private static void SetLabeledFormula(
+        Worksheet worksheet,
+        uint labelColumnIndex,
+        uint amountColumnIndex,
+        string label,
+        string formula,
+        decimal? cachedAmount)
+    {
+        if (string.IsNullOrWhiteSpace(formula) || formula.Contains("#REF!", StringComparison.OrdinalIgnoreCase))
         {
-            SetNumber(amountCell, amount.Value);
+            throw new InvalidDataException(
+                $"No se pudo escribir una fórmula válida para '{label}' en Monto de factura.");
         }
-        else
+
+        var reference = FindLabeledAmountReference(
+            worksheet,
+            labelColumnIndex,
+            amountColumnIndex,
+            label);
+        SetFormula(GetOrCreateCell(worksheet, reference), formula, cachedAmount);
+    }
+
+    private static void SetFormula(Cell cell, string formula, decimal? cachedAmount)
+    {
+        cell.InlineString = null;
+        cell.DataType = null;
+        cell.CellFormula = new CellFormula(formula);
+        cell.CellValue = cachedAmount.HasValue
+            ? new CellValue(cachedAmount.Value.ToString(
+                "0.############################",
+                CultureInfo.InvariantCulture))
+            : null;
+    }
+
+    private static void ValidateFormulaReference(string reference, string label)
+    {
+        if (string.IsNullOrWhiteSpace(reference) ||
+            reference.Any(character => !char.IsLetterOrDigit(character)))
         {
-            ClearCell(amountCell);
+            throw new InvalidDataException(
+                $"La referencia de '{label}' en Monto de factura no es válida.");
         }
     }
 

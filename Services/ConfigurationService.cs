@@ -9,10 +9,15 @@ public sealed class ConfigurationService
     private readonly DirectoryMigrationService _migration;
 
     public ConfigurationService(AppDataPaths paths, FileLogger logger)
+        : this(paths, logger, AppContext.BaseDirectory)
+    {
+    }
+
+    internal ConfigurationService(AppDataPaths paths, FileLogger logger, string applicationDirectory)
     {
         _paths = paths;
         _json = new AtomicJsonFile(logger);
-        _migration = new DirectoryMigrationService(paths, logger);
+        _migration = new DirectoryMigrationService(paths, logger, applicationDirectory);
     }
 
     public string? LastWarning { get; private set; }

@@ -256,6 +256,12 @@ public sealed class BrokerPercentageNormalizationTests
         if (invalidPercentage is not null)
         {
             sheetData.Append(CreateDetailRow(detailRow, "CRC", TextCell($"F{detailRow}", invalidPercentage, 2U)));
+            sheetData.Append(
+                new Row(TextCell($"A{detailRow + 1U}", "COLONES")) { RowIndex = detailRow + 1U },
+                new Row(
+                    TextCell($"A{detailRow + 2U}", "Monto bruto comisión"),
+                    NumberCell($"C{detailRow + 2U}", 1_000m, 2U))
+                { RowIndex = detailRow + 2U });
         }
         else
         {

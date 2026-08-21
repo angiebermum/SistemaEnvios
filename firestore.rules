@@ -1,0 +1,95 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function currentAppUser() {
+      return get(/databases/$(database)/documents/appUsers/$(request.auth.uid)).data;
+    }
+
+    function hasAppProfile() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/appUsers/$(request.auth.uid));
+    }
+
+    function isActive() {
+      return hasAppProfile() && currentAppUser().isActive == true;
+    }
+
+    function canUseCommissions() {
+      return isActive() && currentAppUser().canUseCommissions == true;
+    }
+
+    function isAdmin() {
+      return canUseCommissions() && currentAppUser().role == 'admin';
+    }
+
+    function validAppUserShape() {
+      return request.resource.data.keys().hasAll([
+          'uid', 'email', 'displayName', 'role', 'isActive',
+          'canUseCommissions', 'createdAtUtc', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'role', 'isActive',
+          'canUseCommissions', 'createdAtUtc', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.uid is string &&
+        request.resource.data.email is string &&
+        request.resource.data.displayName is string &&
+        request.resource.data.role in ['admin', 'operator'] &&
+        request.resource.data.isActive is bool &&
+        request.resource.data.canUseCommissions is bool &&
+        request.resource.data.createdAtUtc is timestamp &&
+        request.resource.data.updatedAtUtc is timestamp;
+    }
+
+    // Technical metadata is administrative only. Server/Admin SDK access based on
+    // IAM bypasses these client rules and remains available to bootstrap/migration.
+    match /system/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /appUsers/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isAdmin() && validAppUserShape() &&
+        request.resource.data.uid == uid;
+      allow delete: if false;
+      allow update: if isAdmin() && validAppUserShape() &&
+        request.resource.data.uid == uid &&
+        request.resource.data.createdAtUtc == resource.data.createdAtUtc;
+    }
+
+    match /settings/{document} {
+      allow read, write: if canUseCommissions();
+    }
+
+    match /brokers/{document} {
+      allow read, write: if canUseCommissions();
+    }
+
+    match /sessions/{sessionId} {
+      allow read, write: if canUseCommissions();
+      match /brokerItems/{brokerId} {
+        allow read, write: if canUseCommissions();
+      }
+    }
+
+    match /recentSends/{document} {
+      allow read, write: if canUseCommissions();
+    }
+
+    match /paymentGenerations/{generationId} {
+      allow read, write: if canUseCommissions();
+      match /files/{fileId} {
+        allow read, write: if canUseCommissions();
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

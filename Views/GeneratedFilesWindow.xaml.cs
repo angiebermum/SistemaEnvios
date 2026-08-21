@@ -64,10 +64,10 @@ public partial class GeneratedFilesWindow : Window, INotifyPropertyChanged
             case GeneratedFileOpenStatus.NonAbsolutePath:
             case GeneratedFileOpenStatus.FileNotFound:
                 AppDialog.Show(
-                    "No se encontró el archivo asociado.\n\n" +
-                    "Es posible que haya sido movido, eliminado o renombrado. " +
-                    "La asociación se conservará hasta que decida eliminarla de la lista.",
-                    "Archivo no encontrado", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    "Este archivo no está disponible en este equipo.\n\n" +
+                    "Firestore conserva únicamente los metadatos y resultados; no contiene el Excel físico. " +
+                    "La asociación local se conservará hasta que decida eliminarla de la lista.",
+                    "Archivo no disponible", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             case GeneratedFileOpenStatus.UnsupportedExtension:
                 AppDialog.Show(

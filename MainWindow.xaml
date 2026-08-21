@@ -7,7 +7,7 @@
         WindowStartupLocation="CenterScreen"
         Style="{StaticResource AppWindowStyle}"
         Loaded="Window_Loaded" Closing="Window_Closing">
-    <Grid Margin="20">
+    <Grid Margin="20,14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -17,7 +17,7 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="18,14" Margin="0,0,0,12">
+        <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="16,8" Margin="0,0,0,8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -37,29 +37,49 @@
                 </Border>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock Text="ECS Envío de Correos" Style="{StaticResource PageTitleTextStyle}" />
-                    <TextBlock Text="Preparación y envío de comisiones" Style="{StaticResource PageSubtitleTextStyle}" Margin="0,2,0,0" />
+                    <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                        <TextBlock Text="Preparación y envío de comisiones" Style="{StaticResource PageSubtitleTextStyle}" />
+                        <TextBlock Text="{Binding ApplicationVersionText}" Style="{StaticResource CaptionTextStyle}"
+                                   Margin="12,1,0,0" />
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="2" VerticalAlignment="Center" MaxWidth="520">
+                    <StackPanel Visibility="{Binding FirebaseAccountVisibility}" Margin="0,0,0,2">
+                        <TextBlock Text="{Binding SignedInUserText}" FontWeight="SemiBold"
+                                   TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,1,0,0">
+                            <TextBlock Text="{Binding RuntimeModeText}" Style="{StaticResource CaptionTextStyle}"
+                                       VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <Button Content="Administrar accesos" Click="ManageAccess_Click"
+                                    Visibility="{Binding AdminAccessVisibility}" Style="{StaticResource CompactButtonStyle}"
+                                    Padding="5,1" MinHeight="22" />
+                            <Button Content="Cerrar sesión" Click="Logout_Click"
+                                    Style="{StaticResource CompactButtonStyle}" Padding="5,1" MinHeight="22" Margin="0" />
+                        </StackPanel>
+                    </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <Ellipse Width="10" Height="10" Fill="{Binding OutlookStatusBrush}" Margin="0,0,8,0" />
                         <TextBlock Text="Cuenta de envío:" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding OutlookAccountEmail}" FontWeight="SemiBold" Margin="6,0,0,0"
-                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding OutlookAccountEmail}" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding OutlookAccounts}"
+                                  SelectedItem="{Binding SelectedOutlookAccountEmail, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  IsEnabled="{Binding IsUiEnabled}" Width="230" Height="26" Margin="6,0,0,0"
+                                  ToolTip="Seleccione la cuenta local de Outlook que se utilizará para enviar." />
                     </StackPanel>
                     <TextBlock Text="{Binding OutlookStatusText}" Style="{StaticResource CaptionTextStyle}"
-                               TextWrapping="Wrap" TextAlignment="Right" HorizontalAlignment="Right" Margin="0,3,0,0" />
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding OutlookStatusText}"
+                               TextAlignment="Right" HorizontalAlignment="Stretch" Margin="0,1,0,0" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,1,0,0">
                         <TextBlock Text="{Binding OperationText}" Style="{StaticResource CaptionTextStyle}"
                                    VerticalAlignment="Center" MaxWidth="260" TextTrimming="CharacterEllipsis" />
                         <Button Content="Conectar cuenta" Click="ConnectOutlook_Click" IsEnabled="{Binding IsUiEnabled}"
-                                Style="{StaticResource CompactButtonStyle}" Margin="12,0,0,0"
+                                Style="{StaticResource CompactButtonStyle}" Padding="5,1" MinHeight="22" Margin="10,0,0,0"
                                 ToolTip="Conecta con Outlook clásico y actualiza la cuenta de envío." />
                     </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="14,9" Margin="0,0,0,8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" MinWidth="300" />
@@ -75,13 +95,13 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Text="Plantilla del correo" Style="{StaticResource SectionTitleTextStyle}" />
-                    <StackPanel Grid.Row="1" Margin="0,12,0,0">
+                    <StackPanel Grid.Row="1" Margin="0,8,0,0">
                         <TextBlock Text="Asunto" Style="{StaticResource FieldLabelTextStyle}" />
                         <TextBox Text="{Binding Subject, UpdateSourceTrigger=PropertyChanged}" LostFocus="EmailField_LostFocus" />
                     </StackPanel>
-                    <StackPanel Grid.Row="2" Margin="0,12,0,0">
+                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
                         <TextBlock Text="Copias generales" Style="{StaticResource FieldLabelTextStyle}" />
-                        <TextBox Height="80" Text="{Binding CommonCcText, UpdateSourceTrigger=PropertyChanged}"
+                        <TextBox Height="48" Text="{Binding CommonCcText, UpdateSourceTrigger=PropertyChanged}"
                                  AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
                                  VerticalScrollBarVisibility="Auto" LostFocus="EmailField_LostFocus" />
                         <TextBlock Text="Separe direcciones con punto y coma, coma o salto de línea."
@@ -91,7 +111,7 @@
 
                 <StackPanel Grid.Column="2">
                     <TextBlock Text="Mensaje" Style="{StaticResource FieldLabelTextStyle}" />
-                    <TextBox Height="174" Text="{Binding Message, UpdateSourceTrigger=PropertyChanged}"
+                    <TextBox Height="120" Text="{Binding Message, UpdateSourceTrigger=PropertyChanged}"
                              AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
                              VerticalScrollBarVisibility="Auto" LostFocus="EmailField_LostFocus" />
                     <TextBlock Text="El texto se codifica de forma segura y conserva los saltos de línea en Outlook."
@@ -100,7 +120,7 @@
 
                 <StackPanel Grid.Column="4">
                     <TextBlock Text="Firma del correo" Style="{StaticResource FieldLabelTextStyle}" />
-                    <Border Height="118" Background="{StaticResource SurfaceMutedBrush}" BorderBrush="{StaticResource BorderBrush}"
+                    <Border Height="82" Background="{StaticResource SurfaceMutedBrush}" BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1" CornerRadius="7" Padding="8">
                         <Grid>
                             <Image Source="{Binding SignaturePreview}" Stretch="Uniform" Visibility="{Binding SignaturePreviewVisibility}" />
@@ -111,9 +131,9 @@
                         </Grid>
                     </Border>
                     <TextBlock Text="{Binding SignatureFileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                               ToolTip="{Binding SignatureFileName}" Margin="0,7,0,0" />
-                    <TextBlock Text="{Binding SignatureStateText}" Style="{StaticResource CaptionTextStyle}" Margin="0,2,0,0" />
-                    <StackPanel Orientation="Horizontal" Margin="0,9,0,0" IsEnabled="{Binding IsUiEnabled}">
+                               ToolTip="{Binding SignatureFileName}" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding SignatureStateText}" Style="{StaticResource CaptionTextStyle}" Margin="0,1,0,0" />
+                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0" IsEnabled="{Binding IsUiEnabled}">
                         <Button Content="{Binding SignatureSelectButtonText}" Click="SelectSignature_Click" IsEnabled="{Binding IsUiEnabled}"
                                 Style="{StaticResource CompactButtonStyle}" />
                         <Button Content="Quitar" Click="RemoveSignature_Click" IsEnabled="{Binding HasConfiguredSignature}"
@@ -123,7 +143,7 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,12">
+        <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="14,10" Margin="0,0,0,8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -155,7 +175,7 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="3" Margin="0,0,0,10">
+        <Grid Grid.Row="3" Margin="0,0,0,6">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="270" />
                 <ColumnDefinition Width="*" />
@@ -173,8 +193,6 @@
                               Style="{StaticResource SwitchToggleButtonStyle}" Margin="0,0,12,0"
                               ToolTip="Activa o desactiva el corredor seleccionado" />
                 <Button Content="Eliminar" Click="DeleteBroker_Click" Style="{StaticResource DangerButtonStyle}" />
-                <Button Content="&#xE72C;" FontFamily="Segoe Fluent Icons" Width="38" Padding="8"
-                        Click="ReloadBrokers_Click" ToolTip="Recargar corredores" />
                 <Button Content="{Binding InactiveBrokersButtonText}" Click="ShowInactiveBrokers_Click"
                         Margin="0" ToolTip="Abrir la lista separada de corredores inactivos" />
             </WrapPanel>
@@ -310,6 +328,7 @@
                 <WrapPanel IsEnabled="{Binding IsUiEnabled}" VerticalAlignment="Center">
                     <Button Content="Nuevo envío" Click="NewBatch_Click" />
                     <Button Content="Guardar" Click="Save_Click" />
+                    <Button Content="Recargar datos" Click="ReloadData_Click" />
                     <Button Content="Ver envíos recientes" Click="RecentSends_Click" />
                 </WrapPanel>
                 <StackPanel Grid.Column="1" Margin="16,0" VerticalAlignment="Center">
@@ -319,7 +338,8 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" IsEnabled="{Binding IsUiEnabled}">
                     <Button Content="Enviar seleccionados" Click="SendSelected_Click"
                             IsEnabled="{Binding CanSendSelected}" />
-                    <Button Content="Enviar todos" Click="SendAll_Click" Style="{StaticResource PrimaryButtonStyle}" Margin="0" MinWidth="130" />
+                    <Button Content="Enviar todos" Click="SendAll_Click" IsEnabled="{Binding CanSendEmails}"
+                            Style="{StaticResource PrimaryButtonStyle}" Margin="0" MinWidth="130" />
                 </StackPanel>
             </Grid>
         </Border>

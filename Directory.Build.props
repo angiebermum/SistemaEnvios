@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Única fuente de versión para la aplicación y el instalador. -->
+    <EcsApplicationVersion>1.0.16</EcsApplicationVersion>
+  </PropertyGroup>
+</Project>

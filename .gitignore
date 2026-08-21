@@ -361,3 +361,29 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Firestore/Google Cloud credentials must remain external to this repository.
+**/service-account*.json
+**/service_account*.json
+**/*serviceaccount*.json
+**/*-firebase-adminsdk-*.json
+**/google-application-credentials*.json
+**/application_default_credentials.json
+
+# Firestore migration artifacts contain snapshots of productive local JSON.
+**/migration-backups/
+**/migration-reports/
+
+# Desktop Firebase runtime configuration and protected local session state.
+firebase-runtime.json
+firebase-refresh-token.dat
+local-workspace.json
+firestore-runtime-state.json
+firestore-shadow-reports/
+firestore-cutover-reports/
+
+# Firebase Security Rules test dependencies and emulator artifacts.
+Tests/FirestoreRules/node_modules/
+.firebase/
+firebase-debug.log
+firestore-debug.log

@@ -1,4 +1,3 @@
 @echo off
-setlocal
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Build-Installer.ps1"
+call "%~dp0..\actualizar-instalador.bat"
 exit /b %ERRORLEVEL%

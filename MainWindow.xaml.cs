@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -11,6 +12,10 @@ using System.Windows.Media.Imaging;
 using ECS.CommissionsMailer.Models;
 using ECS.CommissionsMailer.Services;
 using ECS.CommissionsMailer.Views;
+using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authentication;
+using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authorization;
+using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Configuration;
+using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Firestore;
 using Microsoft.Win32;
 using MessageBox = ECS.CommissionsMailer.Views.AppDialog;
 
@@ -20,8 +25,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 {
     private readonly AppDataPaths _paths;
     private readonly FileLogger _logger;
-    private readonly ConfigurationService _configurationService;
-    private readonly SessionService _sessionService;
+    private readonly IRuntimeDataService _runtimeData;
+    private readonly IFirebaseAuthenticationService? _firebaseAuthentication;
+    private readonly IAppUserRepository? _appUsers;
+    private readonly IReadOnlyList<string> _startupWarnings;
     private readonly EmailValidationService _validationService = new();
     private readonly SignatureImageService _signatureService;
     private readonly AttachmentArchiveService _archiveService;
@@ -51,7 +58,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _progressValue;
     private string _outlookStatusText = "Comprobando Outlook...";
     private Brush _outlookStatusBrush = Brushes.Goldenrod;
-    private string _outlookAccountEmail = "Cuenta no conectada";
+    private string? _selectedOutlookAccountEmail;
+    private bool _isRefreshingOutlookAccounts;
     private bool _loaded;
     private string _searchText = string.Empty;
     private BitmapSource? _signaturePreview;
@@ -65,21 +73,45 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _generatedOutputDirectory = string.Empty;
     private WorkbookAnalysisResult? _currentWorkbookAnalysis;
     private PaymentGenerationBatch? _activePaymentGeneration;
+    private bool _closeAfterAsyncSave;
+    private RuntimePendingChangesBaseline _persistedBaseline = null!;
 
     public MainWindow(AppDataPaths paths, FileLogger logger, bool isUiSmokeTest = false)
+        : this(paths, logger, new JsonOnlyRuntimeDataService(paths, logger), null, null, null, isUiSmokeTest)
+    {
+    }
+
+    public MainWindow(
+        AppDataPaths paths,
+        FileLogger logger,
+        IRuntimeDataService runtimeData,
+        RuntimeApplicationSnapshot? snapshot,
+        IFirebaseAuthenticationService? firebaseAuthentication,
+        IAppUserRepository? appUsers,
+        bool isUiSmokeTest = false)
     {
         InitializeComponent();
         _paths = paths;
         _logger = logger;
         _isUiSmokeTest = isUiSmokeTest;
-        _configurationService = new ConfigurationService(paths, logger);
-        _sessionService = new SessionService(paths, logger);
+        _runtimeData = runtimeData;
+        _firebaseAuthentication = firebaseAuthentication;
+        _appUsers = appUsers;
+        if (snapshot is null && runtimeData.Mode != RuntimeDataMode.JsonOnly)
+            throw new ArgumentException("Los modos Firebase deben entregar un snapshot cargado de forma async.", nameof(snapshot));
+        // The compatibility constructor reaches this only with JsonOnly; no network
+        // operation is synchronously blocked. Normal startup always supplies snapshot.
+        snapshot ??= runtimeData.LoadAsync().GetAwaiter().GetResult();
+        _startupWarnings = snapshot.Warnings;
         _signatureService = new SignatureImageService(paths);
         _archiveService = new AttachmentArchiveService(paths, logger);
-        _outlookService = new OutlookEmailService(logger);
+        _outlookService = new OutlookEmailService(paths, logger);
         var hashService = new GeneratedFileHashService();
         _workbookAnalysisService = new WorkbookAnalysisService(hashService: hashService);
-        _generationHistoryService = new GenerationHistoryService(paths, logger);
+        _generationHistoryService = new GenerationHistoryService(
+            paths,
+            logger,
+            persistenceEnabled: runtimeData.Mode != RuntimeDataMode.FirestorePrimary);
         _generatedFileViewerService = new GeneratedFileViewerService(
             new GeneratedFileProcessLauncher(),
             paths,
@@ -94,10 +126,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _generationHistoryService,
             logger);
 
-        _configuration = _configurationService.Load();
-        var session = _sessionService.LoadCurrent();
-        _recentRecords = new ObservableCollection<SentEmailRecord>(_sessionService.LoadRecentSends());
-        _paymentGenerationHistory = _generationHistoryService.Load();
+        _configuration = snapshot.Configuration;
+        var session = snapshot.CurrentSession;
+        _recentRecords = new ObservableCollection<SentEmailRecord>(snapshot.RecentSends);
+        _paymentGenerationHistory = snapshot.PaymentGenerations;
         _activePaymentGeneration = _generationHistoryService.FindActive(
             _paymentGenerationHistory,
             session?.ActivePaymentGenerationId);
@@ -128,14 +160,40 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : session.CommonCcText;
         ReloadBrokerRows(session?.BrokerItems);
         LoadSignaturePreview();
+        _persistedBaseline = CapturePendingChangesBaseline();
         DataContext = this;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+    public event EventHandler? LogoutRequested;
 
     public ObservableCollection<BrokerSendItem> BrokerItems { get; } = [];
     public ObservableCollection<Broker> InactiveBrokers { get; } = [];
+    public ObservableCollection<string> OutlookAccounts { get; } = [];
     public ICollectionView BrokerItemsView => _brokerItemsView;
+    public Visibility FirebaseAccountVisibility => _runtimeData.Mode == RuntimeDataMode.JsonOnly
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+    public Visibility AdminAccessVisibility => _runtimeData.CurrentUser?.Role == AppUserRole.Admin
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public string SignedInUserText => _runtimeData.CurrentUser is null
+        ? string.Empty
+        : $"{_runtimeData.CurrentUser.DisplayName} · {_runtimeData.CurrentUser.Email}";
+    public string RuntimeModeText => _runtimeData.Mode.ToString();
+    public string ApplicationVersionText
+    {
+        get
+        {
+            var informationalVersion = typeof(MainWindow).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion;
+            var version = string.IsNullOrWhiteSpace(informationalVersion)
+                ? typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "desconocida"
+                : informationalVersion.Split('+', 2)[0];
+            return $"Versión {version}";
+        }
+    }
 
     public string GeneralWorkbookPath
     {
@@ -252,7 +310,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public bool IsUiEnabled => !_isBusy;
-    public bool CanSendSelected => IsUiEnabled && BrokerItems.Any(item => item.IsSelected);
+    public bool HasSelectedOutlookAccount => !string.IsNullOrWhiteSpace(SelectedOutlookAccountEmail);
+    public bool CanSendEmails => IsUiEnabled && HasSelectedOutlookAccount;
+    public bool CanSendSelected => CanSendEmails && BrokerItems.Any(item => item.IsSelected);
     public bool IsSelectedBrokerActive => SelectedBrokerItem is not null &&
         _configuration.Brokers.FirstOrDefault(value => value.Id == SelectedBrokerItem.BrokerId)?.IsActive == true;
     public string InactiveBrokersButtonText => $"Ver inactivos ({InactiveBrokers.Count})";
@@ -310,10 +370,51 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         set => SetProperty(ref _outlookStatusBrush, value);
     }
 
-    public string OutlookAccountEmail
+    public string? SelectedOutlookAccountEmail
     {
-        get => _outlookAccountEmail;
-        set => SetProperty(ref _outlookAccountEmail, value);
+        get => _selectedOutlookAccountEmail;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            if (!SetProperty(ref _selectedOutlookAccountEmail, normalized))
+            {
+                return;
+            }
+
+            NotifyOutlookSelectionProperties();
+            if (_isRefreshingOutlookAccounts || normalized is null)
+            {
+                return;
+            }
+
+            try
+            {
+                var selectedAccount = _outlookService.SelectSendingAccount(normalized);
+                if (!string.Equals(selectedAccount, normalized, StringComparison.Ordinal))
+                {
+                    _selectedOutlookAccountEmail = selectedAccount;
+                    OnPropertyChanged();
+                }
+
+                OutlookStatusText = $"Cuenta de envío seleccionada: {selectedAccount}.";
+                OutlookStatusBrush = Brushes.SeaGreen;
+                OperationText = $"Outlook enviará desde {selectedAccount}.";
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("No fue posible guardar la cuenta de Outlook seleccionada.", ex);
+                _selectedOutlookAccountEmail = null;
+                OnPropertyChanged();
+                NotifyOutlookSelectionProperties();
+                OutlookStatusText = "No fue posible seleccionar la cuenta de envío.";
+                OutlookStatusBrush = Brushes.IndianRed;
+                MessageBox.Show(
+                    ex.Message,
+                    "Cuenta de Outlook",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -324,14 +425,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _loaded = true;
-        var warnings = new List<string>();
-        if (!string.IsNullOrWhiteSpace(_configurationService.LastWarning))
-        {
-            warnings.Add(_configurationService.LastWarning);
-        }
-
-        warnings.AddRange(_sessionService.Warnings);
-        warnings.AddRange(_generationHistoryService.Warnings);
+        var warnings = new List<string>(_startupWarnings);
         if (!string.IsNullOrWhiteSpace(_signatureLoadWarning))
         {
             warnings.Add(_signatureLoadWarning);
@@ -371,8 +465,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             var result = await RefreshOutlookConnectionAsync();
-            OperationText = result.Available
+            OperationText = result.EmailAddress is not null
                 ? "Cuenta de Outlook conectada."
+                : result.Available
+                    ? "Seleccione una cuenta de Outlook para enviar."
                 : "No fue posible conectar la cuenta de Outlook.";
             MessageBox.Show(
                 result.Message,
@@ -383,7 +479,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         catch (Exception ex)
         {
             _logger.Error("Error inesperado al conectar con Outlook.", ex);
-            OutlookAccountEmail = "Cuenta no conectada";
+            ApplyOutlookAccounts([], null);
             OutlookStatusBrush = Brushes.IndianRed;
             OperationText = "No fue posible conectar la cuenta de Outlook.";
             MessageBox.Show(
@@ -403,15 +499,93 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var connection = await _outlookService.CheckAvailabilityAsync();
         OutlookStatusText = connection.Message;
-        OutlookStatusBrush = connection.Available ? Brushes.SeaGreen : Brushes.IndianRed;
-        OutlookAccountEmail = connection.Available
-            ? connection.EmailAddress ?? "Correo no identificado"
-            : "Cuenta no conectada";
+        OutlookStatusBrush = !connection.Available
+            ? Brushes.IndianRed
+            : connection.EmailAddress is null
+                ? Brushes.Goldenrod
+                : Brushes.SeaGreen;
+        ApplyOutlookAccounts(connection.AccountEmailAddresses ?? [], connection.EmailAddress);
         return connection;
     }
 
-    private void Window_Closing(object? sender, CancelEventArgs e)
+    private void ApplyOutlookAccounts(IEnumerable<string> accounts, string? selectedAccount)
     {
+        _isRefreshingOutlookAccounts = true;
+        try
+        {
+            OutlookAccounts.Clear();
+            foreach (var account in accounts)
+            {
+                OutlookAccounts.Add(account);
+            }
+
+            SelectedOutlookAccountEmail = selectedAccount;
+        }
+        finally
+        {
+            _isRefreshingOutlookAccounts = false;
+            NotifyOutlookSelectionProperties();
+        }
+    }
+
+    private void NotifyOutlookSelectionProperties()
+    {
+        OnPropertyChanged(nameof(HasSelectedOutlookAccount));
+        OnPropertyChanged(nameof(CanSendEmails));
+        OnPropertyChanged(nameof(CanSendSelected));
+    }
+
+    private void ManageAccess_Click(object sender, RoutedEventArgs e)
+    {
+        if (_appUsers is null || _runtimeData.CurrentUser is not { Role: AppUserRole.Admin } user)
+        {
+            MessageBox.Show("Esta sección requiere el rol admin.",
+                "Administración de accesos", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        new UserAdministrationWindow(_appUsers, user) { Owner = this }.ShowDialog();
+    }
+
+    private async void Logout_Click(object sender, RoutedEventArgs e)
+    {
+        if (_firebaseAuthentication is null) return;
+        if (MessageBox.Show("¿Desea cerrar la sesión de Firebase en este equipo?",
+                "Cerrar sesión", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        SetBusy(true);
+        try
+        {
+            await SavePendingChangesAsync();
+            await _firebaseAuthentication.SignOutAsync();
+            _closeAfterAsyncSave = true;
+            LogoutRequested?.Invoke(this, EventArgs.Empty);
+            Close();
+        }
+        catch (FirestoreConcurrencyException ex)
+        {
+            ShowConcurrencyConflict(ex, "Cerrar sesión");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("No fue posible cerrar la sesión Firebase.", ex);
+            MessageBox.Show(ex.Message, "Cerrar sesión", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private async void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_closeAfterAsyncSave)
+        {
+            _generatedFileViewerService.CleanupTemporaryViewCopies();
+            return;
+        }
+
         if (_isBusy)
         {
             e.Cancel = true;
@@ -420,22 +594,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        e.Cancel = true;
         try
         {
-            SaveCurrentSession();
+            await SavePendingChangesAsync();
             _logger.Info("Cierre de ECS Envío de Correos.");
+        }
+        catch (FirestoreConcurrencyException ex)
+        {
+            ShowConcurrencyConflict(ex, "Cerrar ECS");
+            return;
         }
         catch (Exception ex)
         {
             _logger.Error("No se pudo guardar la sesión al cerrar.", ex);
             MessageBox.Show($"No fue posible guardar la sesión actual.\n\n{ex.Message}",
                 "Error al guardar", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
         }
 
         _generatedFileViewerService.CleanupTemporaryViewCopies();
+        _closeAfterAsyncSave = true;
+        Close();
     }
 
-    private void AddBroker_Click(object sender, RoutedEventArgs e)
+    private async void AddBroker_Click(object sender, RoutedEventArgs e)
     {
         var editor = new BrokerEditorWindow(
             null,
@@ -448,10 +631,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _configuration.Brokers.Add(editor.EditedBroker);
-        PersistBrokerChanges();
+        await PersistBrokerChangesAsync();
     }
 
-    private void EditBroker_Click(object sender, RoutedEventArgs e)
+    private async void EditBroker_Click(object sender, RoutedEventArgs e)
     {
         var item = GetSelectedItemOrWarn();
         if (item is null)
@@ -486,10 +669,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         broker.IsActive = edited.IsActive;
         broker.RequiresReview = edited.RequiresReview;
         broker.ReviewNote = edited.ReviewNote;
-        PersistBrokerChanges();
+        await PersistBrokerChangesAsync();
     }
 
-    private void DeleteBroker_Click(object sender, RoutedEventArgs e)
+    private async void DeleteBroker_Click(object sender, RoutedEventArgs e)
     {
         var item = GetSelectedItemOrWarn();
         if (item is null)
@@ -509,25 +692,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _configuration.Brokers.Remove(broker);
         }
 
-        PersistBrokerChanges();
+        await PersistBrokerChangesAsync();
     }
 
-    private void ReloadBrokers_Click(object sender, RoutedEventArgs e)
+    private async void ReloadData_Click(object sender, RoutedEventArgs e)
     {
+        if (HasPendingLocalChanges() &&
+            MessageBox.Show(
+                "Hay cambios locales pendientes que serían reemplazados al recargar.\n\n" +
+                "¿Desea descartarlos y volver a leer los datos?",
+                "Recargar datos",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        SetBusy(true);
+        OperationText = "Recargando datos...";
         try
         {
-            SaveCurrentSession();
-            _configuration = _configurationService.Load();
-            ReloadBrokerRows(BrokerItems.ToList());
-            OperationText = "Corredores recargados.";
+            var snapshot = await _runtimeData.LoadAsync();
+            ApplyRuntimeSnapshot(snapshot);
+            OperationText = "Datos actualizados.";
         }
         catch (Exception ex)
         {
-            ShowSaveError(ex);
+            _logger.Error("No fue posible recargar los datos.", ex);
+            MessageBox.Show(
+                $"No fue posible recargar los datos.\n\n{ex.Message}",
+                "Recargar datos",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            OperationText = "No fue posible recargar los datos.";
+        }
+        finally
+        {
+            SetBusy(false);
         }
     }
 
-    private void ToggleBrokerActive_Click(object sender, RoutedEventArgs e)
+    private async void ToggleBrokerActive_Click(object sender, RoutedEventArgs e)
     {
         var item = GetSelectedItemOrWarn();
         if (item is null)
@@ -557,10 +762,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         broker.IsActive = shouldBeActive;
-        PersistBrokerChanges();
+        await PersistBrokerChangesAsync();
     }
 
-    private void SelectSignature_Click(object sender, RoutedEventArgs e)
+    private async void SelectSignature_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
         {
@@ -580,12 +785,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             managedPath = _signatureService.Import(dialog.FileName);
             _configuration.SignatureImagePath = managedPath;
-            _configurationService.Save(_configuration);
+            await SaveConfigurationAsync();
             LoadSignaturePreview();
             TryDeleteManagedSignature(previousPath);
             OperationText = "Firma del correo actualizada.";
         }
-        catch (Exception ex) when (ex is SignatureImageException or IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
             _configuration.SignatureImagePath = previousPath;
             if (!string.IsNullOrWhiteSpace(managedPath))
@@ -598,7 +803,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void RemoveSignature_Click(object sender, RoutedEventArgs e)
+    private async void RemoveSignature_Click(object sender, RoutedEventArgs e)
     {
         var previousPath = _configuration.SignatureImagePath;
         if (string.IsNullOrWhiteSpace(previousPath))
@@ -615,9 +820,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _configuration.SignatureImagePath = null;
-            _configurationService.Save(_configuration);
+            await SaveConfigurationAsync();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
             _configuration.SignatureImagePath = previousPath;
             _logger.Error("No fue posible quitar la firma del correo.", ex);
@@ -636,10 +841,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             Owner = this
         };
-        window.ActivationRequested += broker =>
+        window.ActivationRequested += async broker =>
         {
             broker.IsActive = true;
-            PersistBrokerChanges();
+            await PersistBrokerChangesAsync();
         };
         window.ShowDialog();
     }
@@ -660,7 +865,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         GeneralWorkbookPath = Path.GetFullPath(dialog.FileName);
         await AnalyzeGeneralWorkbookAsync(showResult: true);
-        SaveCurrentSessionWithMessageOnError(false);
+        await SaveCurrentSessionWithMessageOnErrorAsync(false);
     }
 
     private async void GenerateFiles_Click(object sender, RoutedEventArgs e)
@@ -727,9 +932,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             try
             {
-                _configurationService.Save(_configuration);
+                await SaveConfigurationAsync();
                 ReloadBrokerRows(BrokerItems.ToList());
-                SaveCurrentSession();
+                await SaveCurrentSessionAsync();
             }
             catch (Exception ex)
             {
@@ -817,6 +1022,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     request,
                     _paymentGenerationHistory,
                     progress));
+            await SavePaymentGenerationsAsync();
             _activePaymentGeneration = batch;
             OnPropertyChanged(nameof(HasActivePaymentGeneration));
             GeneratedOutputDirectory = batch.OutputDirectory;
@@ -826,7 +1032,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ? $"{batch.Period}: {batch.Files.Count} archivo(s) listos; " +
                   $"{selection.SelectedBrokerCount} corredor(es) seleccionado(s) automáticamente."
                 : $"{batch.Period}: archivos listos, pero la selección automática no pudo completarse.";
-            SaveCurrentSession();
+            await SaveCurrentSessionAsync();
             OperationText = selection.Succeeded
                 ? $"Generación completada: {batch.Files.Count} archivo(s); " +
                   $"{selection.SelectedBrokerCount} corredor(es) seleccionado(s)."
@@ -863,10 +1069,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 MessageBoxButton.OK,
                 hasWarnings ? MessageBoxImage.Warning : MessageBoxImage.Information);
         }
+        catch (FirestoreRestException ex)
+        {
+            ClearBrokerSelection();
+            _logger.Error("Los archivos se generaron localmente pero no fue posible registrar la generación en Firestore.", ex);
+            OperationText = "La generación local no fue registrada en Firestore.";
+            GenerationStatusText = "No use ni envíe estos archivos hasta repetir la generación con conexión a Firestore.";
+            MessageBox.Show(
+                "Los archivos fueron creados en este equipo, pero Firestore no confirmó la persistencia compartida.\n\n" +
+                "No se asociaron al envío. Verifique la conexión y repita la generación; la operación usa IDs determinísticos.",
+                "Generación no registrada", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             ClearBrokerSelection();
-            SaveCurrentSessionWithMessageOnError(false);
+            await SaveCurrentSessionWithMessageOnErrorAsync(false);
             _logger.Error("No fue posible generar los detalles de pago.", ex);
             OperationText = "La generación falló; no se dejaron archivos parciales válidos.";
             GenerationStatusText = $"Error de generación: {ex.Message}";
@@ -1043,7 +1260,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         AddManualFiles(this, item);
     }
 
-    private void AddManualFiles(Window owner, BrokerSendItem item)
+    private async void AddManualFiles(Window owner, BrokerSendItem item)
     {
         var dialog = new OpenFileDialog
         {
@@ -1071,13 +1288,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         item.LastError = string.Empty;
         UpdateReadiness(item);
-        SaveCurrentSessionWithMessageOnError();
+        await SaveCurrentSessionWithMessageOnErrorAsync();
         OperationText = added == 0
             ? "Los archivos seleccionados ya estaban adjuntos."
             : $"Se agregaron {added} archivo(s) a {item.BrokerName}.";
     }
 
-    private void ViewGeneratedFiles_Click(object sender, RoutedEventArgs e)
+    private async void ViewGeneratedFiles_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.CommandParameter is not BrokerSendItem item)
         {
@@ -1094,9 +1311,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             Owner = this
         }.ShowDialog();
+        if (_runtimeData.Mode == RuntimeDataMode.FirestorePrimary)
+        {
+            await SavePaymentGenerationsAsync();
+            await SaveCurrentSessionWithMessageOnErrorAsync();
+        }
     }
 
-    private void RemoveAttachment_Click(object sender, RoutedEventArgs e)
+    private async void RemoveAttachment_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button button || button.Tag is not BrokerSendItem item || button.DataContext is not string path)
         {
@@ -1104,6 +1326,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _ = UnlinkAssociatedFile(item, path);
+        if (_runtimeData.Mode == RuntimeDataMode.FirestorePrimary)
+        {
+            await SavePaymentGenerationsAsync();
+            await SaveCurrentSessionWithMessageOnErrorAsync();
+        }
     }
 
     private AssociatedFileUnlinkResult UnlinkAssociatedFile(BrokerSendItem item, string path)
@@ -1143,7 +1370,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 {
                     item.LastError = string.Empty;
                     UpdateReadiness(item);
-                    SaveCurrentSession();
+                    SaveCurrentSessionForLocalMode();
                 }
                 catch
                 {
@@ -1235,6 +1462,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async Task SendSelectedBrokersAsync(string dialogTitle)
     {
+        if (!HasSelectedOutlookAccount)
+        {
+            MessageBox.Show(
+                "Seleccione una cuenta de Outlook antes de enviar.",
+                dialogTitle,
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
         var selectedItems = EmailBatchSelection.GetSelected(BrokerItems);
         if (selectedItems.Count == 0)
         {
@@ -1308,7 +1545,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         await SendRequestsAsync(validRequests, requestItems);
     }
 
-    private void NewBatch_Click(object sender, RoutedEventArgs e)
+    private async void NewBatch_Click(object sender, RoutedEventArgs e)
     {
         if (MessageBox.Show("¿Desea iniciar un nuevo envío?\n\nSe quitarán todos los archivos adjuntos y se restablecerán los estados.",
                 "Nuevo envío", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -1348,14 +1585,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Message = _configuration.DefaultMessage;
         }
 
-        SaveCurrentSessionWithMessageOnError();
+        await SaveCurrentSessionWithMessageOnErrorAsync();
         OperationText = "Nuevo envío preparado.";
         ProgressValue = 0;
     }
 
-    private void Save_Click(object sender, RoutedEventArgs e)
+    private async void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (!SaveConfigurationAndSession())
+        if (!await SaveConfigurationAndSessionAsync())
         {
             return;
         }
@@ -1365,7 +1602,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             "Guardar", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    private void EmailField_LostFocus(object sender, RoutedEventArgs e) => SaveCurrentSessionWithMessageOnError(false);
+    private async void EmailField_LostFocus(object sender, RoutedEventArgs e) =>
+        await SaveCurrentSessionWithMessageOnErrorAsync(false);
 
     private void RecentSends_Click(object sender, RoutedEventArgs e)
     {
@@ -1400,7 +1638,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OpenResendWindow(record);
     }
 
-    private void OpenResendWindow(SentEmailRecord? initialRecord)
+    private async void OpenResendWindow(SentEmailRecord? initialRecord)
     {
         var window = new ResendWindow(
             _recentRecords,
@@ -1410,7 +1648,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _validationService,
             _outlookService,
             _archiveService,
-            _sessionService,
+            _runtimeData,
             _logger)
         {
             Owner = this
@@ -1425,7 +1663,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 item.LastError = newRecord.ErrorMessage;
             }
 
-            SaveCurrentSessionWithMessageOnError(false);
+            await SaveCurrentSessionWithMessageOnErrorAsync(false);
         }
     }
 
@@ -1480,9 +1718,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 }
             }
 
-            _sessionService.SaveRecentSends(_recentRecords);
+            await SaveRecentSendsAsync();
             UpdateActiveGenerationAfterSend(requests, results);
-            SaveCurrentSession();
+            await SavePaymentGenerationsAsync();
+            await SaveCurrentSessionAsync();
             var failedCount = results.Count - successCount;
             OperationText = $"Proceso finalizado. Enviados: {successCount}. Con error: {failedCount}.";
             MessageBox.Show(OperationText,
@@ -1687,13 +1926,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return item;
     }
 
-    private void PersistBrokerChanges()
+    private async Task PersistBrokerChangesAsync()
     {
         try
         {
-            _configurationService.Save(_configuration);
+            await SaveConfigurationAsync();
             ReloadBrokerRows(BrokerItems.ToList());
-            SaveCurrentSession();
+            await SaveCurrentSessionAsync();
             OperationText = "Datos de corredores guardados.";
         }
         catch (Exception ex)
@@ -1783,7 +2022,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(BrokerSummaryText));
     }
 
-    private void BrokerItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    private async void BrokerItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(BrokerSendItem.IsSelected))
         {
@@ -1794,11 +2033,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanSendSelected));
         if (_loaded && !_isBusy && !_isBulkSelectionUpdate)
         {
-            SaveCurrentSessionWithMessageOnError(false);
+            await SaveCurrentSessionWithMessageOnErrorAsync(false);
         }
     }
 
-    private void ToggleAllBrokers_Click(object sender, RoutedEventArgs e)
+    private async void ToggleAllBrokers_Click(object sender, RoutedEventArgs e)
     {
         if (_isBusy || BrokerItems.Count == 0)
         {
@@ -1824,7 +2063,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanSendSelected));
         if (_loaded)
         {
-            SaveCurrentSessionWithMessageOnError(false);
+            await SaveCurrentSessionWithMessageOnErrorAsync(false);
         }
     }
 
@@ -1842,7 +2081,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : SendStatus.Pending;
     }
 
-    private bool SaveConfigurationAndSession()
+    private async Task<bool> SaveConfigurationAndSessionAsync()
     {
         if (!_validationService.TryParseAddresses(CommonCcText, false, out var ccAddresses, out var errors))
         {
@@ -1858,8 +2097,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _configuration.DefaultMessage = Message;
             _configuration.CommonCcAddresses = ccAddresses;
             CommonCcText = string.Join(Environment.NewLine, ccAddresses);
-            _configurationService.Save(_configuration);
-            SaveCurrentSession();
+            await SaveConfigurationAsync();
+            await SaveCurrentSessionAsync();
             return true;
         }
         catch (Exception ex)
@@ -1869,7 +2108,80 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void SaveCurrentSession() => _sessionService.SaveCurrent(new CurrentSession
+    private void ApplyRuntimeSnapshot(RuntimeApplicationSnapshot snapshot)
+    {
+        _configuration = snapshot.Configuration;
+        _recentRecords.Clear();
+        foreach (var record in snapshot.RecentSends)
+        {
+            _recentRecords.Add(record);
+        }
+
+        _paymentGenerationHistory.Clear();
+        _paymentGenerationHistory.AddRange(snapshot.PaymentGenerations);
+        var session = snapshot.CurrentSession;
+        _activePaymentGeneration = _generationHistoryService.FindActive(
+            _paymentGenerationHistory,
+            session?.ActivePaymentGenerationId);
+        GeneralWorkbookPath = session?.GeneralWorkbookPath ?? string.Empty;
+        GeneratedOutputDirectory = session?.GeneratedOutputDirectory ?? string.Empty;
+        _currentWorkbookAnalysis = null;
+        WorkbookAnalysisText = string.IsNullOrWhiteSpace(GeneralWorkbookPath)
+            ? "No hay un Excel general cargado."
+            : File.Exists(GeneralWorkbookPath)
+                ? $"Cargado: {Path.GetFileName(GeneralWorkbookPath)}. Se analizará antes de generar."
+                : "El Excel general guardado ya no existe.";
+        GenerationStatusText = _activePaymentGeneration is not null
+            ? $"{_activePaymentGeneration.Period}: {_activePaymentGeneration.Files.Count} archivo(s) listos."
+            : !string.IsNullOrWhiteSpace(session?.GeneratedPeriod)
+                ? $"{session.GeneratedPeriod}: la generación ya no está disponible."
+                : "Todavía no se han generado archivos para esta sesión.";
+        Subject = string.IsNullOrEmpty(session?.Subject) ? _configuration.DefaultSubject : session.Subject;
+        Message = string.IsNullOrEmpty(session?.Message) ? _configuration.DefaultMessage : session.Message;
+        CommonCcText = string.IsNullOrWhiteSpace(session?.CommonCcText)
+            ? string.Join(Environment.NewLine, _configuration.CommonCcAddresses)
+            : session.CommonCcText;
+        ReloadBrokerRows(session?.BrokerItems);
+        LoadSignaturePreview();
+        OnPropertyChanged(nameof(HasActivePaymentGeneration));
+        OnPropertyChanged(nameof(CanOpenGeneratedFolder));
+        _persistedBaseline = CapturePendingChangesBaseline();
+    }
+
+    private RuntimePendingChangesBaseline CapturePendingChangesBaseline() =>
+        RuntimePendingChangesBaseline.Capture(
+            _configuration,
+            CaptureCurrentSession(),
+            _recentRecords,
+            _paymentGenerationHistory);
+
+    private bool HasPendingLocalChanges() => _persistedBaseline.HasChanges(
+        _configuration,
+        CaptureCurrentSession(),
+        _recentRecords,
+        _paymentGenerationHistory);
+
+    private async Task SavePendingChangesAsync()
+    {
+        if (_persistedBaseline.HasConfigurationChanges(_configuration))
+        {
+            await SaveConfigurationAsync();
+        }
+        if (_persistedBaseline.HasSessionChanges(CaptureCurrentSession()))
+        {
+            await SaveCurrentSessionAsync();
+        }
+        if (_persistedBaseline.HasRecentSendsChanges(_recentRecords))
+        {
+            await SaveRecentSendsAsync();
+        }
+        if (_persistedBaseline.HasPaymentGenerationChanges(_paymentGenerationHistory))
+        {
+            await SavePaymentGenerationsAsync();
+        }
+    }
+
+    private CurrentSession CaptureCurrentSession() => new()
     {
         Subject = Subject,
         Message = Message,
@@ -1879,13 +2191,57 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         GeneratedOutputDirectory = GeneratedOutputDirectory,
         GeneratedPeriod = _activePaymentGeneration?.Period ?? string.Empty,
         BrokerItems = BrokerItems.ToList()
-    });
+    };
 
-    private void SaveCurrentSessionWithMessageOnError(bool showMessage = true)
+    private async Task SaveConfigurationAsync()
+    {
+        await _runtimeData.SaveConfigurationAsync(_configuration);
+        _persistedBaseline = _persistedBaseline.WithConfiguration(_configuration);
+    }
+
+    private async Task SaveCurrentSessionAsync()
+    {
+        var session = CaptureCurrentSession();
+        await _runtimeData.SaveCurrentSessionAsync(session);
+        _persistedBaseline = _persistedBaseline.WithSession(session);
+    }
+
+    private async Task SaveRecentSendsAsync()
+    {
+        await _runtimeData.SaveRecentSendsAsync(_recentRecords);
+        _persistedBaseline = _persistedBaseline.WithRecentSends(_recentRecords);
+    }
+
+    private async Task SavePaymentGenerationsAsync()
+    {
+        await _runtimeData.SavePaymentGenerationsAsync(_paymentGenerationHistory);
+        _persistedBaseline = _persistedBaseline.WithPaymentGenerations(_paymentGenerationHistory);
+    }
+
+    private void SaveCurrentSessionForLocalMode()
+    {
+        if (_runtimeData.Mode == RuntimeDataMode.FirestorePrimary)
+        {
+            return;
+        }
+
+        var session = CaptureCurrentSession();
+        _runtimeData.SaveCurrentSessionAsync(session).GetAwaiter().GetResult();
+        _persistedBaseline = _persistedBaseline.WithSession(session);
+    }
+
+    private async Task SaveCurrentSessionWithMessageOnErrorAsync(bool showMessage = true)
     {
         try
         {
-            SaveCurrentSession();
+            await SaveCurrentSessionAsync();
+        }
+        catch (FirestoreConcurrencyException ex)
+        {
+            if (showMessage)
+            {
+                ShowConcurrencyConflict(ex, "Conflicto al guardar");
+            }
         }
         catch (Exception ex)
         {
@@ -1897,6 +2253,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void ShowConcurrencyConflict(FirestoreConcurrencyException ex, string title)
+    {
+        _logger.Error("Firestore detectó un conflicto de concurrencia; no se sobrescribieron datos remotos.", ex);
+        OperationText = "Conflicto: otra computadora modificó los datos.";
+        MessageBox.Show(
+            "Otra computadora modificó estos datos después de que fueron cargados.\n\n" +
+            "Sus cambios locales no se sobrescribieron ni fueron descartados. " +
+            "Revise lo que tiene en pantalla y use 'Recargar datos' cuando decida reemplazarlo por la versión compartida.",
+            title,
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
     private void ShowSaveError(Exception ex) => MessageBox.Show(
         $"No fue posible guardar los cambios.\n\n{ex.Message}",
         "Error al guardar", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -1905,6 +2274,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _isBusy = busy;
         OnPropertyChanged(nameof(IsUiEnabled));
+        OnPropertyChanged(nameof(CanSendEmails));
         OnPropertyChanged(nameof(CanSendSelected));
     }
 

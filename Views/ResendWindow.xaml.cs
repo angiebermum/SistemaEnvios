@@ -16,7 +16,7 @@ public partial class ResendWindow : Window
     private readonly EmailValidationService _validationService;
     private readonly OutlookEmailService _outlookService;
     private readonly AttachmentArchiveService _archiveService;
-    private readonly SessionService _sessionService;
+    private readonly IRuntimeDataService _runtimeData;
     private readonly FileLogger _logger;
     private readonly ObservableCollection<string> _attachments = [];
     private bool _isBusy;
@@ -29,7 +29,7 @@ public partial class ResendWindow : Window
         EmailValidationService validationService,
         OutlookEmailService outlookService,
         AttachmentArchiveService archiveService,
-        SessionService sessionService,
+        IRuntimeDataService runtimeData,
         FileLogger logger)
     {
         InitializeComponent();
@@ -39,7 +39,7 @@ public partial class ResendWindow : Window
         _validationService = validationService;
         _outlookService = outlookService;
         _archiveService = archiveService;
-        _sessionService = sessionService;
+        _runtimeData = runtimeData;
         _logger = logger;
 
         RecordsComboBox.ItemsSource = _records;
@@ -110,7 +110,7 @@ public partial class ResendWindow : Window
         }
     }
 
-    private void ClearHistory_Click(object sender, RoutedEventArgs e)
+    private async void ClearHistory_Click(object sender, RoutedEventArgs e)
     {
         if (_isBusy || _records.Count == 0)
         {
@@ -127,7 +127,7 @@ public partial class ResendWindow : Window
 
         try
         {
-            _sessionService.SaveRecentSends([]);
+            await _runtimeData.SaveRecentSendsAsync([]);
             RecordsComboBox.SelectedItem = null;
             _records.Clear();
             _attachments.Clear();
@@ -135,7 +135,7 @@ public partial class ResendWindow : Window
                 "Historial eliminado", MessageBoxButton.OK, MessageBoxImage.Information);
             Close();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
             _logger.Error("No fue posible limpiar el historial de envíos recientes.", ex);
             MessageBox.Show($"No fue posible limpiar el historial.\n\n{ex.Message}",
@@ -245,7 +245,7 @@ public partial class ResendWindow : Window
                 PaymentGenerationId = originalRecord.PaymentGenerationId
             };
             _records.Insert(0, NewRecord);
-            _sessionService.SaveRecentSends(_records);
+            await _runtimeData.SaveRecentSendsAsync(_records);
 
             if (result.WasSuccessful)
             {

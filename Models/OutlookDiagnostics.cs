@@ -29,4 +29,5 @@ public sealed record OutlookDiagnosticResult(
 public sealed record OutlookConnectionInfo(
     bool Available,
     string Message,
-    string? EmailAddress = null);
+    string? EmailAddress = null,
+    IReadOnlyList<string>? AccountEmailAddresses = null);

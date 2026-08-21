@@ -1,15 +1,21 @@
 using System.Diagnostics;
+using System.Net.Http;
 using System.Windows;
 using ECS.CommissionsMailer.Models;
 using ECS.CommissionsMailer.Services;
 using ECS.CommissionsMailer.Verification;
+using ECS.CommissionsMailer.Views;
+using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authentication;
+using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authorization;
+using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Configuration;
+using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Firestore;
 using MessageBox = ECS.CommissionsMailer.Views.AppDialog;
 
 namespace ECS.CommissionsMailer;
 
 public partial class App : Application
 {
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
@@ -89,6 +95,7 @@ public partial class App : Application
         {
             var isUiSmokeTest = e.Args.Any(argument =>
                 string.Equals(argument, "--ui-smoke-test", StringComparison.OrdinalIgnoreCase));
+            var runCutoverPreflight = CutoverPreflightStartupPolicy.IsManualCommandRequested(e.Args);
             TextWriterTraceListener? bindingListener = null;
             if (isUiSmokeTest)
             {
@@ -101,18 +108,7 @@ public partial class App : Application
             var paths = new AppDataPaths();
             var logger = new FileLogger(paths);
             logger.Info("Inicio de ECS Envío de Correos.");
-            var mainWindow = new MainWindow(paths, logger, isUiSmokeTest);
-            MainWindow = mainWindow;
-            if (bindingListener is not null)
-            {
-                mainWindow.Closed += (_, _) =>
-                {
-                    bindingListener.Flush();
-                    PresentationTraceSources.DataBindingSource.Listeners.Remove(bindingListener);
-                    bindingListener.Dispose();
-                };
-            }
-            mainWindow.Show();
+            await ShowRuntimeWindowAsync(paths, logger, isUiSmokeTest, bindingListener, runCutoverPreflight);
         }
         catch (Exception ex)
         {
@@ -123,5 +119,167 @@ public partial class App : Application
                 MessageBoxImage.Error);
             Shutdown(1);
         }
+    }
+
+    private async Task ShowRuntimeWindowAsync(
+        AppDataPaths paths,
+        FileLogger logger,
+        bool isUiSmokeTest,
+        TextWriterTraceListener? bindingListener,
+        bool runCutoverPreflight = false)
+    {
+        var options = FirebaseClientOptions.Load(paths.FirebaseRuntimeConfigurationFile);
+        logger.Info($"RuntimeDataMode={options.RuntimeDataMode}.");
+        IRuntimeDataService runtimeData;
+        IFirebaseAuthenticationService? authentication = null;
+        IAppUserRepository? appUsers = null;
+
+        if (options.RuntimeDataMode == RuntimeDataMode.JsonOnly)
+        {
+            if (runCutoverPreflight)
+            {
+                throw new InvalidOperationException(
+                    "El Cutover Preflight requiere RuntimeDataMode=FirestoreShadowRead para autenticar y leer Firestore.");
+            }
+            runtimeData = new JsonOnlyRuntimeDataService(paths, logger);
+        }
+        else
+        {
+            options.ValidateForAuthenticatedMode();
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            var clientLog = new FirebaseClientLogAdapter(logger);
+            authentication = new FirebaseAuthenticationService(
+                httpClient,
+                options,
+                new ProtectedRefreshTokenStore(paths.ProtectedRefreshTokenFile),
+                clientLog);
+
+            FirebaseUserSession? session = null;
+            try
+            {
+                session = await authentication.RestoreSessionAsync();
+            }
+            catch (FirebaseAuthenticationException ex) when (
+                ex.Failure is FirebaseAuthenticationFailure.SessionExpired or FirebaseAuthenticationFailure.InvalidCredentials)
+            {
+                logger.Info("No se recuperó una sesión Firebase válida; se mostrará el login.");
+            }
+
+            if (session is null)
+            {
+                var login = new LoginWindow(authentication);
+                if (login.ShowDialog() != true)
+                {
+                    Shutdown();
+                    return;
+                }
+                session = login.Session!;
+            }
+
+            var firestoreClient = new FirestoreRestClient(httpClient, options, (IFirebaseTokenProvider)authentication, clientLog);
+            appUsers = new AppUserRepository(firestoreClient);
+            var profile = await appUsers.GetAsync(session.Uid);
+            try
+            {
+                AppUserAuthorization.DemandCommissionsAccess(profile?.Value);
+            }
+            catch
+            {
+                await authentication.SignOutAsync();
+                throw;
+            }
+            var json = new JsonOnlyRuntimeDataService(paths, logger);
+            var legacySnapshot = await json.LoadAsync();
+            var comparison = new FirestoreComparisonService(firestoreClient, paths, logger);
+            var runtimeState = options.RuntimeDataMode == RuntimeDataMode.FirestorePrimary
+                ? new FirestoreRuntimeStateStore(paths, logger).Load()
+                : null;
+            var preflightExecution = CutoverPreflightStartupPolicy.Determine(
+                runCutoverPreflight,
+                options,
+                runtimeState);
+
+            if (preflightExecution == CutoverPreflightExecution.Manual)
+            {
+                var report = await comparison.RunAsync(legacySnapshot, true);
+                MessageBox.Show(
+                    $"Cutover Preflight completado.\n\nLocal: {report.LocalCount}\nFirestore: {report.FirestoreCount}\n" +
+                    $"Idénticos funcionalmente: {report.Identical}\n" +
+                    $"Metadata no bloqueante: {report.NonBlockingMetadataDifferences}\n" +
+                    $"Faltan en Firestore: {report.MissingInFirestore}\n" +
+                    $"Faltan localmente: {report.MissingLocally}\nDiferentes: {report.Different}\n\n" +
+                    $"Resultado: {(report.CanCutOver ? "LIMPIO" : "BLOQUEADO")}\n\nReporte: {report.ReportPath}",
+                    "Cutover Preflight",
+                    MessageBoxButton.OK,
+                    report.CanCutOver ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                Shutdown(report.CanCutOver ? 0 : 5);
+                return;
+            }
+
+            if (options.RuntimeDataMode == RuntimeDataMode.FirestoreShadowRead)
+            {
+                runtimeData = new ShadowReadRuntimeDataService(json, comparison, profile!.Value);
+            }
+            else
+            {
+                if (preflightExecution == CutoverPreflightExecution.RequiredLegacyTransition)
+                {
+                    var preflight = await comparison.RunAsync(legacySnapshot, true);
+                    CutoverPreflightStartupPolicy.DemandLegacyPreflightPassed(
+                        preflightExecution,
+                        preflight.CanCutOver,
+                        preflight.ReportPath);
+                }
+
+                runtimeData = new FirestorePrimaryRuntimeDataService(
+                    firestoreClient, profile!.Value, legacySnapshot, paths, logger);
+            }
+        }
+
+        var snapshot = await runtimeData.LoadAsync();
+        var mainWindow = new MainWindow(
+            paths,
+            logger,
+            runtimeData,
+            snapshot,
+            authentication,
+            appUsers,
+            isUiSmokeTest);
+        MainWindow = mainWindow;
+        var restarting = false;
+        if (authentication is not null)
+        {
+            mainWindow.LogoutRequested += (_, _) =>
+            {
+                restarting = true;
+                _ = Dispatcher.BeginInvoke(async () =>
+                {
+                    try
+                    {
+                        await ShowRuntimeWindowAsync(paths, logger, isUiSmokeTest, null);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error("No fue posible volver al login después del logout.", ex);
+                        MessageBox.Show(ex.Message, "ECS Envío de Correos", MessageBoxButton.OK, MessageBoxImage.Error);
+                        Shutdown(1);
+                    }
+                });
+            };
+        }
+
+        mainWindow.Closed += (_, _) =>
+        {
+            if (bindingListener is not null)
+            {
+                bindingListener.Flush();
+                PresentationTraceSources.DataBindingSource.Listeners.Remove(bindingListener);
+                bindingListener.Dispose();
+            }
+            if (ShutdownMode == ShutdownMode.OnExplicitShutdown && !restarting)
+                Shutdown();
+        };
+        mainWindow.Show();
     }
 }

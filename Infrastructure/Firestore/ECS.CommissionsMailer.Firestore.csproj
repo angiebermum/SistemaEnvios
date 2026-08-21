@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Cloud.Firestore" Version="4.3.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Firestore.Common\ECS.CommissionsMailer.Firestore.Common.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Mapping\**\*.cs" />
+  </ItemGroup>
+</Project>

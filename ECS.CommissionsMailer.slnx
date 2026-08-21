@@ -1,5 +1,12 @@
 <Solution>
   <Project Path="ECS.CommissionsMailer.csproj" />
+  <Project Path="Infrastructure/FirebaseClient/ECS.CommissionsMailer.FirebaseClient.csproj" />
+  <Project Path="Infrastructure/Firestore.Common/ECS.CommissionsMailer.Firestore.Common.csproj" />
+  <Project Path="Infrastructure/Firestore/ECS.CommissionsMailer.Firestore.csproj" />
+  <Project Path="Infrastructure/Firestore.Mapping/ECS.CommissionsMailer.Firestore.Mapping.csproj" />
   <Project Path="Installer/ECS.EnvioDeCorreos.Installer.wixproj" />
   <Project Path="Tests/ECS.CommissionsMailer.Tests/ECS.CommissionsMailer.Tests.csproj" />
+  <Project Path="tools/ECSCommissionsMailer.FirestoreBootstrap/ECSCommissionsMailer.FirestoreBootstrap.csproj" />
+  <Project Path="tools/ECSCommissionsMailer.FirstAdminBootstrap/ECSCommissionsMailer.FirstAdminBootstrap.csproj" />
+  <Project Path="tools/ECSCommissionsMailer.FirestoreMigration/ECSCommissionsMailer.FirestoreMigration.csproj" />
 </Solution>

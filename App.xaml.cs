@@ -93,6 +93,15 @@ public partial class App : Application
 
         try
         {
+            if (e.Args.Any(argument =>
+                    string.Equals(argument, "--module-ui-smoke-test", StringComparison.OrdinalIgnoreCase)))
+            {
+                var result = ModuleWindowUiSmokeRunner.Run();
+                Environment.ExitCode = result ? 0 : 6;
+                Shutdown(Environment.ExitCode);
+                return;
+            }
+
             var isUiSmokeTest = e.Args.Any(argument =>
                 string.Equals(argument, "--ui-smoke-test", StringComparison.OrdinalIgnoreCase));
             var runCutoverPreflight = CutoverPreflightStartupPolicy.IsManualCommandRequested(e.Args);
@@ -180,15 +189,78 @@ public partial class App : Application
             var firestoreClient = new FirestoreRestClient(httpClient, options, (IFirebaseTokenProvider)authentication, clientLog);
             appUsers = new AppUserRepository(firestoreClient);
             var profile = await appUsers.GetAsync(session.Uid);
+            ModuleAccessResolution moduleResolution;
             try
             {
-                AppUserAuthorization.DemandCommissionsAccess(profile?.Value);
+                if (runCutoverPreflight)
+                {
+                    AppUserAuthorization.DemandCommissionsAccess(profile?.Value);
+                    moduleResolution = new ModuleAccessResolution(ApplicationModule.Commissions, RequiresSelection: false);
+                }
+                else
+                {
+                    moduleResolution = ModuleAccessResolver.Resolve(profile?.Value);
+                }
             }
             catch
             {
                 await authentication.SignOutAsync();
                 throw;
             }
+
+            var selectedModule = moduleResolution.DirectModule;
+            if (moduleResolution.RequiresSelection)
+            {
+                var selector = new ModuleSelectionWindow(profile!.Value);
+                _ = selector.ShowDialog();
+                if (selector.LogoutRequested)
+                {
+                    await authentication.SignOutAsync();
+                    await ShowRuntimeWindowAsync(paths, logger, isUiSmokeTest, bindingListener);
+                    return;
+                }
+
+                try
+                {
+                    selectedModule = ModuleAccessResolver.ValidateSelection(profile.Value, selector.SelectedModule);
+                }
+                catch
+                {
+                    await authentication.SignOutAsync();
+                    throw;
+                }
+
+                if (selectedModule is null)
+                {
+                    DisposeBindingListener(bindingListener);
+                    Shutdown();
+                    return;
+                }
+            }
+
+            try
+            {
+                ModuleAccessResolver.DemandModuleAccess(profile!.Value, selectedModule!.Value);
+            }
+            catch
+            {
+                await authentication.SignOutAsync();
+                throw;
+            }
+
+            if (!ModuleAccessResolver.UsesCommissionsRuntime(selectedModule.Value))
+            {
+                ShowExpirationsWindow(
+                    paths,
+                    logger,
+                    isUiSmokeTest,
+                    bindingListener,
+                    authentication,
+                    appUsers,
+                    profile.Value);
+                return;
+            }
+
             var json = new JsonOnlyRuntimeDataService(paths, logger);
             var legacySnapshot = await json.LoadAsync();
             var comparison = new FirestoreComparisonService(firestoreClient, paths, logger);
@@ -281,5 +353,53 @@ public partial class App : Application
                 Shutdown();
         };
         mainWindow.Show();
+    }
+
+    private void ShowExpirationsWindow(
+        AppDataPaths paths,
+        FileLogger logger,
+        bool isUiSmokeTest,
+        TextWriterTraceListener? bindingListener,
+        IFirebaseAuthenticationService authentication,
+        IAppUserRepository appUsers,
+        AppUser currentUser)
+    {
+        var expirationsWindow = new ExpirationsWindow(currentUser, appUsers);
+        MainWindow = expirationsWindow;
+        var restarting = false;
+        expirationsWindow.LogoutRequested += (_, _) =>
+        {
+            restarting = true;
+            _ = Dispatcher.BeginInvoke(async () =>
+            {
+                try
+                {
+                    await authentication.SignOutAsync();
+                    await ShowRuntimeWindowAsync(paths, logger, isUiSmokeTest, null);
+                }
+                catch (Exception ex)
+                {
+                    logger.Error("No fue posible volver al login después del logout.", ex);
+                    MessageBox.Show(ex.Message, "ECS Envío de Correos", MessageBoxButton.OK, MessageBoxImage.Error);
+                    Shutdown(1);
+                }
+            });
+        };
+
+        expirationsWindow.Closed += (_, _) =>
+        {
+            DisposeBindingListener(bindingListener);
+            if (ShutdownMode == ShutdownMode.OnExplicitShutdown && !restarting)
+                Shutdown();
+        };
+        expirationsWindow.Show();
+    }
+
+    private static void DisposeBindingListener(TextWriterTraceListener? bindingListener)
+    {
+        if (bindingListener is null) return;
+        bindingListener.Flush();
+        PresentationTraceSources.DataBindingSource.Listeners.Remove(bindingListener);
+        bindingListener.Dispose();
     }
 }

@@ -1,0 +1,68 @@
+<Window x:Class="ECS.CommissionsMailer.Views.ExpirationsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ECS Envío de Correos — Vencimientos"
+        Icon="pack://application:,,,/Images/icon.ico"
+        Width="1000" Height="650" MinWidth="800" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        Style="{StaticResource AppWindowStyle}">
+    <Grid Margin="20,14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="16,8" Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border Width="108" Height="58" Background="{StaticResource SurfaceBrush}"
+                        CornerRadius="7" Padding="3" Margin="0,0,14,0" ClipToBounds="True">
+                    <Image Stretch="Uniform" SnapsToDevicePixels="True" RenderOptions.BitmapScalingMode="HighQuality">
+                        <Image.Source>
+                            <CroppedBitmap SourceRect="110 430 1060 420">
+                                <CroppedBitmap.Source>
+                                    <BitmapImage UriSource="pack://application:,,,/Images/icon.jpeg" CacheOption="OnLoad" />
+                                </CroppedBitmap.Source>
+                            </CroppedBitmap>
+                        </Image.Source>
+                    </Image>
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="ECS Envío de Correos" Style="{StaticResource PageTitleTextStyle}" />
+                    <TextBlock Text="Módulo de Vencimientos" Style="{StaticResource PageSubtitleTextStyle}"
+                               Margin="0,2,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" MaxWidth="420">
+                    <TextBlock Text="{Binding SignedInUserText}" FontWeight="SemiBold"
+                               TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
+                        <Button Content="Administrar accesos" Click="ManageAccess_Click"
+                                Visibility="{Binding AdminAccessVisibility}"
+                                Style="{StaticResource CompactButtonStyle}" Padding="5,1" MinHeight="22" />
+                        <Button Content="Cerrar sesión" Click="Logout_Click"
+                                Style="{StaticResource CompactButtonStyle}" Padding="5,1"
+                                MinHeight="22" Margin="0" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="32"
+                HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="620">
+                <TextBlock Text="Vencimientos" Style="{StaticResource PageTitleTextStyle}"
+                           TextAlignment="Center" HorizontalAlignment="Center" />
+                <TextBlock Text="El módulo de Vencimientos está habilitado.&#x0a;Las funciones de carga, generación y envío se incorporarán en las siguientes fases."
+                           Style="{StaticResource MutedTextStyle}" FontSize="15"
+                           TextAlignment="Center" Margin="0,16,0,0" />
+                <TextBlock Text="Acceso configurado correctamente."
+                           Style="{StaticResource CaptionTextStyle}" TextAlignment="Center"
+                           HorizontalAlignment="Center" Margin="0,18,0,0" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

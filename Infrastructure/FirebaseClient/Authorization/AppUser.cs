@@ -109,6 +109,13 @@ public static class AppUserAuthorization
             throw new AppUserAuthorizationException("Este perfil no tiene permiso para usar Vencimientos.");
     }
 
+    public static void DemandAnyModuleAccess(AppUser? user)
+    {
+        DemandActiveUser(user);
+        if (!user!.CanUseCommissions && !user.CanUseExpirations)
+            throw new AppUserAuthorizationException("Este perfil no tiene permiso para usar ningún módulo de ECS.");
+    }
+
     public static void DemandAdmin(AppUser? user)
     {
         DemandActiveUser(user);

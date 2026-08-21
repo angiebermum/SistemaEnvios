@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Windows;
 using ECS.CommissionsMailer.Models;
 using ECS.CommissionsMailer.Services;
+using ECS.CommissionsMailer.Services.Expirations;
 using ECS.CommissionsMailer.Verification;
 using ECS.CommissionsMailer.Views;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authentication;
@@ -250,6 +251,15 @@ public partial class App : Application
 
             if (!ModuleAccessResolver.UsesCommissionsRuntime(selectedModule.Value))
             {
+                var directoryRepository = new ExpirationsBrokerDirectoryRepository(firestoreClient);
+                var profileRepository = new ExpirationsBrokerProfileRepository(firestoreClient);
+                var associationRepository = new ExpirationsBrokerAssociationRepository(firestoreClient);
+                var catalogService = new ExpirationsBrokerCatalogService(
+                    directoryRepository,
+                    profileRepository);
+                var coordinator = new ExpirationsAnalysisCoordinator(
+                    catalogService,
+                    associationRepository);
                 ShowExpirationsWindow(
                     paths,
                     logger,
@@ -257,7 +267,8 @@ public partial class App : Application
                     bindingListener,
                     authentication,
                     appUsers,
-                    profile.Value);
+                    profile.Value,
+                    coordinator);
                 return;
             }
 
@@ -362,9 +373,10 @@ public partial class App : Application
         TextWriterTraceListener? bindingListener,
         IFirebaseAuthenticationService authentication,
         IAppUserRepository appUsers,
-        AppUser currentUser)
+        AppUser currentUser,
+        IExpirationsAnalysisCoordinator coordinator)
     {
-        var expirationsWindow = new ExpirationsWindow(currentUser, appUsers);
+        var expirationsWindow = new ExpirationsWindow(currentUser, appUsers, coordinator);
         MainWindow = expirationsWindow;
         var restarting = false;
         expirationsWindow.LogoutRequested += (_, _) =>

@@ -4,6 +4,8 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authorization;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Firestore;
+using ECS.CommissionsMailer.Models.Expirations;
+using ECS.CommissionsMailer.Services.Expirations;
 using ECS.CommissionsMailer.Views;
 
 namespace ECS.CommissionsMailer.Verification;
@@ -15,6 +17,9 @@ internal static class ModuleWindowUiSmokeRunner
         var bindingLogPath = Path.Combine(
             Path.GetTempPath(),
             "ECSCommissionsMailer-module-ui-binding-errors.log");
+        var resultPath = Path.Combine(
+            Path.GetTempPath(),
+            "ECSCommissionsMailer-module-ui-smoke-result.txt");
         File.WriteAllText(bindingLogPath, string.Empty);
         using var bindingListener = new TextWriterTraceListener(bindingLogPath);
         PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Warning;
@@ -38,30 +43,76 @@ internal static class ModuleWindowUiSmokeRunner
             var selectorPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-module-selection-ui-smoke.png");
-            var expirationsPath = Path.Combine(
+            var expirationsInitialPath = Path.Combine(
                 Path.GetTempPath(),
-                "ECSCommissionsMailer-expirations-ui-smoke.png");
-            var expirationsMinimumPath = Path.Combine(
+                "ECSCommissionsMailer-expirations-initial-ui-smoke.png");
+            var expirationsReadyPath = Path.Combine(
                 Path.GetTempPath(),
-                "ECSCommissionsMailer-expirations-ui-smoke-minimum.png");
+                "ECSCommissionsMailer-expirations-ready-ui-smoke.png");
+            var expirationsPendingPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-pending-ui-smoke.png");
+            var resolutionDialogPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-resolution-ui-smoke.png");
+            var selectionDialogPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-selection-ui-smoke.png");
 
             Render(new ModuleSelectionWindow(user), selectorPath);
             Render(
-                new ExpirationsWindow(user, new NonOperationalAppUserRepository()),
-                expirationsPath,
-                expirationsMinimumPath);
+                new ExpirationsWindow(
+                    user,
+                    new NonOperationalAppUserRepository(),
+                    new SmokeCoordinator(new ExpirationsAnalysisSessionSnapshot())),
+                expirationsInitialPath);
+            var readySnapshot = ReadySnapshot();
+            Render(
+                new ExpirationsWindow(
+                    user,
+                    new NonOperationalAppUserRepository(),
+                    new SmokeCoordinator(readySnapshot)),
+                expirationsReadyPath);
+            var pendingSnapshot = PendingSnapshot();
+            Render(
+                new ExpirationsWindow(
+                    user,
+                    new NonOperationalAppUserRepository(),
+                    new SmokeCoordinator(pendingSnapshot)),
+                expirationsPendingPath);
+            Render(
+                new ExpirationsBrokerResolutionWindow(
+                    pendingSnapshot.PendingIssues[0],
+                    pendingSnapshot.Catalog),
+                resolutionDialogPath);
+            Render(
+                new ExpirationsWorkbookSelectionWindow(Inspection()),
+                selectionDialogPath);
             bindingListener.Flush();
             var hasBindingErrors = new FileInfo(bindingLogPath).Length > 0;
             File.WriteAllText(
-                Path.Combine(Path.GetTempPath(), "ECSCommissionsMailer-module-ui-smoke-result.txt"),
+                resultPath,
                 string.Join(Environment.NewLine,
                     "VENTANAS_MODULO_INICIADAS=SI",
                     $"ERRORES_BINDING={(hasBindingErrors ? "SI" : "NO")}",
                     $"SELECTOR={selectorPath}",
-                    $"VENCIMIENTOS={expirationsPath}",
-                    $"VENCIMIENTOS_MINIMO={expirationsMinimumPath}",
+                    $"VENCIMIENTOS_INICIAL={expirationsInitialPath}",
+                    $"VENCIMIENTOS_LISTO={expirationsReadyPath}",
+                    $"VENCIMIENTOS_PENDIENTE={expirationsPendingPath}",
+                    $"DIALOGO_RESOLUCION={resolutionDialogPath}",
+                    $"DIALOGO_SELECCION={selectionDialogPath}",
                     $"LOG_BINDINGS={bindingLogPath}"));
             return !hasBindingErrors;
+        }
+        catch (Exception ex)
+        {
+            File.WriteAllText(
+                resultPath,
+                string.Join(Environment.NewLine,
+                    "VENTANAS_MODULO_INICIADAS=NO",
+                    "ERRORES_BINDING=NO",
+                    $"EXCEPCION={ex}"));
+            return false;
         }
         finally
         {
@@ -95,6 +146,146 @@ internal static class ModuleWindowUiSmokeRunner
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
             encoder.Save(stream);
+    }
+
+    private static ExpirationsAnalysisSessionSnapshot ReadySnapshot()
+    {
+        var brokerId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        return new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = ExpirationsProcess.PreviousMonth,
+            SourcePath = @"C:\Pruebas\vencimientos.xlsx",
+            Analysis = new ExpirationsWorkbookAnalysisResult
+            {
+                ReadStatus = ExpirationsWorkbookReadStatus.Success,
+                TotalRows = 12,
+                ResolvedRows = 12,
+                CanGenerate = true
+            },
+            Distribution =
+            [
+                new ExpirationsDistributionPreviewItem
+                {
+                    BrokerId = brokerId,
+                    BrokerName = "Corredor resuelto",
+                    PrimaryEmail = "corredor@example.test",
+                    RowCount = 12,
+                    DetectedValues = ["AS1", "AS5"]
+                }
+            ]
+        };
+    }
+
+    private static ExpirationsAnalysisSessionSnapshot PendingSnapshot()
+    {
+        var brokerId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        return new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = ExpirationsProcess.NextMonth,
+            SourcePath = @"C:\Pruebas\vencimientos-pendientes.xlsx",
+            Analysis = new ExpirationsWorkbookAnalysisResult
+            {
+                ReadStatus = ExpirationsWorkbookReadStatus.Success,
+                TotalRows = 10,
+                ResolvedRows = 9,
+                RowsWithBlockingIssues = 1,
+                UnresolvedComponents = 1,
+                CanGenerate = false
+            },
+            Catalog =
+            [
+                new ExpirationsBrokerCatalogItem
+                {
+                    BrokerId = brokerId,
+                    Name = "Corredor disponible",
+                    PrimaryEmailAddresses = ["disponible@example.test"],
+                    IsActive = true
+                }
+            ],
+            Distribution =
+            [
+                new ExpirationsDistributionPreviewItem
+                {
+                    BrokerId = brokerId,
+                    BrokerName = "Corredor disponible",
+                    PrimaryEmail = "disponible@example.test",
+                    RowCount = 9,
+                    DetectedValues = ["CD1"]
+                }
+            ],
+            PendingIssues =
+            [
+                new ExpirationsPendingIssue
+                {
+                    RowNumber = 10,
+                    ComponentIndex = 0,
+                    RawValue = "CODIGO NUEVO",
+                    NormalizedValue = "CODIGO NUEVO",
+                    Status = ExpirationsBrokerResolutionStatus.Unresolved,
+                    StatusText = "No reconocido"
+                }
+            ]
+        };
+    }
+
+    private static ExpirationsWorkbookInspection Inspection() => new()
+    {
+        SourcePath = @"C:\Pruebas\manual.xlsx",
+        Worksheets =
+        [
+            new ExpirationsWorksheetInspection
+            {
+                WorksheetName = "Hoja2",
+                HeaderRows =
+                [
+                    new ExpirationsHeaderRowInspection
+                    {
+                        RowNumber = 1,
+                        Columns =
+                        [
+                            new ExpirationsColumnInspection
+                            {
+                                ColumnIndex = 1,
+                                ColumnReference = "A",
+                                HeaderText = "Intermediario"
+                            },
+                            new ExpirationsColumnInspection
+                            {
+                                ColumnIndex = 2,
+                                ColumnReference = "B",
+                                HeaderText = "Número de Póliza"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    };
+
+    private sealed class SmokeCoordinator(ExpirationsAnalysisSessionSnapshot snapshot)
+        : IExpirationsAnalysisCoordinator
+    {
+        public ExpirationsAnalysisSessionSnapshot Snapshot { get; private set; } = snapshot;
+
+        public void SelectProcess(ExpirationsProcess? process) { }
+        public void SelectFile(string sourcePath) { }
+
+        public Task<ExpirationsAnalysisSessionSnapshot> AnalyzeAsync(
+            ExpirationsWorkbookReadOptions? options = null,
+            CancellationToken cancellationToken = default) => Task.FromResult(Snapshot);
+
+        public Task<ExpirationsWorkbookInspection> InspectWorkbookAsync(
+            CancellationToken cancellationToken = default) => Task.FromResult(Inspection());
+
+        public ExpirationsManualOverrideResult ApplyManualOverride(
+            uint rowNumber,
+            int componentIndex,
+            Guid brokerId) => new() { Snapshot = Snapshot };
+
+        public Task<ExpirationsAssociationConfirmationResult> ConfirmAssociationAsync(
+            ExpirationsAssociationConfirmation confirmation,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ExpirationsAssociationConfirmationResult { Snapshot = Snapshot });
     }
 
     private sealed class NonOperationalAppUserRepository : IAppUserRepository

@@ -1,0 +1,116 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Windows;
+using ECS.CommissionsMailer.Models.Expirations;
+
+namespace ECS.CommissionsMailer.Views;
+
+public partial class ExpirationsBrokerResolutionWindow : Window
+{
+    internal readonly ExpirationsBrokerResolutionDialogState State;
+
+    public ExpirationsBrokerResolutionWindow(
+        ExpirationsPendingIssue issue,
+        IEnumerable<ExpirationsBrokerCatalogItem> catalog)
+    {
+        State = new ExpirationsBrokerResolutionDialogState(issue, catalog);
+        InitializeComponent();
+        DataContext = State;
+    }
+
+    public Guid? SelectedBrokerId { get; private set; }
+    public ExpirationsAssociationKind SelectedKind { get; private set; }
+
+    private void Confirm_Click(object sender, RoutedEventArgs e)
+    {
+        if (State.SelectedBroker is null)
+            return;
+        SelectedBrokerId = State.SelectedBroker.BrokerId;
+        SelectedKind = State.SelectedKind.Value;
+        DialogResult = true;
+    }
+}
+
+internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyChanged
+{
+    private ExpirationsBrokerChoice? _selectedBroker;
+    private ExpirationsAssociationKindOption _selectedKind;
+
+    public ExpirationsBrokerResolutionDialogState(
+        ExpirationsPendingIssue issue,
+        IEnumerable<ExpirationsBrokerCatalogItem> catalog)
+    {
+        Issue = issue ?? throw new ArgumentNullException(nameof(issue));
+        ArgumentNullException.ThrowIfNull(catalog);
+        Brokers = catalog
+            .Where(item => item.IsActive)
+            .GroupBy(item => item.BrokerId)
+            .Select(group => group.First())
+            .Select(item => new ExpirationsBrokerChoice(
+                item.BrokerId,
+                item.Name,
+                item.PrimaryEmailAddresses.FirstOrDefault(email => !string.IsNullOrWhiteSpace(email)) ?? string.Empty))
+            .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(item => item.BrokerId)
+            .ToList();
+        KindOptions =
+        [
+            new ExpirationsAssociationKindOption(ExpirationsAssociationKind.Name, "Nombre"),
+            new ExpirationsAssociationKindOption(ExpirationsAssociationKind.Alias, "Alias / nombre alternativo"),
+            new ExpirationsAssociationKindOption(ExpirationsAssociationKind.Code, "Código")
+        ];
+        var suggestedKind = SuggestCode(issue.NormalizedValue)
+            ? ExpirationsAssociationKind.Code
+            : ExpirationsAssociationKind.Alias;
+        _selectedKind = KindOptions.Single(option => option.Value == suggestedKind);
+    }
+
+    public ExpirationsPendingIssue Issue { get; }
+    public IReadOnlyList<ExpirationsBrokerChoice> Brokers { get; }
+    public IReadOnlyList<ExpirationsAssociationKindOption> KindOptions { get; }
+    public Visibility AmbiguityWarningVisibility =>
+        Issue.Status == ExpirationsBrokerResolutionStatus.Ambiguous
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    public Visibility AssociationTypeVisibility =>
+        Issue.Status == ExpirationsBrokerResolutionStatus.Unresolved
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    public string ConfirmButtonText =>
+        Issue.Status == ExpirationsBrokerResolutionStatus.Ambiguous
+            ? "Aplicar a esta fila"
+            : "Confirmar asociación";
+    public bool CanConfirm => SelectedBroker is not null;
+
+    public ExpirationsBrokerChoice? SelectedBroker
+    {
+        get => _selectedBroker;
+        set
+        {
+            if (Equals(_selectedBroker, value)) return;
+            _selectedBroker = value;
+            Notify();
+            Notify(nameof(CanConfirm));
+        }
+    }
+
+    public ExpirationsAssociationKindOption SelectedKind
+    {
+        get => _selectedKind;
+        set
+        {
+            if (Equals(_selectedKind, value)) return;
+            _selectedKind = value;
+            Notify();
+        }
+    }
+
+    internal static bool SuggestCode(string normalizedValue) =>
+        normalizedValue.Length is > 0 and <= 12 &&
+        !normalizedValue.Contains(' ') &&
+        normalizedValue.All(char.IsLetterOrDigit);
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void Notify([CallerMemberName] string? propertyName = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}

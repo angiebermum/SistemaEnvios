@@ -1,0 +1,49 @@
+<Window x:Class="ECS.CommissionsMailer.Views.ExpirationsWorkbookSelectionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Seleccionar columna de corredor"
+        Width="780" SizeToContent="Height" MaxHeight="640" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource DialogWindowStyle}">
+    <Border Style="{StaticResource CardStyle}" Margin="16" Padding="24">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel>
+                <TextBlock Text="Identificar la columna Corredor" Style="{StaticResource PageTitleTextStyle}" />
+                <TextBlock Text="ECS no pudo identificar la hoja y columna de forma inequívoca. Revise las primeras filas y seleccione la ubicación correcta."
+                           Style="{StaticResource PageSubtitleTextStyle}" TextWrapping="Wrap" Margin="0,5,0,0" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="1" Margin="0,20,0,0">
+                <TextBlock Text="Hoja" Style="{StaticResource CaptionTextStyle}" />
+                <ComboBox ItemsSource="{Binding Worksheets}" SelectedItem="{Binding SelectedWorksheet, Mode=TwoWay}"
+                          DisplayMemberPath="WorksheetName" Margin="0,5,0,0" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="2" Margin="0,14,0,0">
+                <TextBlock Text="Fila de encabezados" Style="{StaticResource CaptionTextStyle}" />
+                <ComboBox ItemsSource="{Binding HeaderRows}" SelectedItem="{Binding SelectedHeaderRow, Mode=TwoWay}"
+                          DisplayMemberPath="DisplayText" Margin="0,5,0,0" MaxDropDownHeight="220" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="3" Margin="0,14,0,0">
+                <TextBlock Text="Columna que contiene el corredor" Style="{StaticResource CaptionTextStyle}" />
+                <ComboBox ItemsSource="{Binding Columns}" SelectedItem="{Binding SelectedColumn, Mode=TwoWay}"
+                          DisplayMemberPath="DisplayText" Margin="0,5,0,0" MaxDropDownHeight="220" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+                <Button Content="Cancelar" IsCancel="True" Style="{StaticResource CompactButtonStyle}" />
+                <Button Content="Usar selección" Click="Confirm_Click" IsDefault="True"
+                        Style="{StaticResource PrimaryButtonStyle}" Margin="0" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

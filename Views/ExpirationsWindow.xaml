@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="ECS Envío de Correos — Vencimientos"
         Icon="pack://application:,,,/Images/icon.ico"
-        Width="1000" Height="650" MinWidth="800" MinHeight="520"
+        Width="1240" Height="820" MinWidth="980" MinHeight="650"
         WindowStartupLocation="CenterScreen"
         Style="{StaticResource AppWindowStyle}">
     <Grid Margin="20,14">
@@ -51,18 +51,141 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="32"
-                HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="620">
-                <TextBlock Text="Vencimientos" Style="{StaticResource PageTitleTextStyle}"
-                           TextAlignment="Center" HorizontalAlignment="Center" />
-                <TextBlock Text="El módulo de Vencimientos está habilitado.&#x0a;Las funciones de carga, generación y envío se incorporarán en las siguientes fases."
-                           Style="{StaticResource MutedTextStyle}" FontSize="15"
-                           TextAlignment="Center" Margin="0,16,0,0" />
-                <TextBlock Text="Acceso configurado correctamente."
-                           Style="{StaticResource CaptionTextStyle}" TextAlignment="Center"
-                           HorizontalAlignment="Center" Margin="0,18,0,0" />
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Preparación de vencimientos" Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock Text="Seleccione el proceso y el reporte general que desea analizar."
+                                       Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <Grid Grid.Row="1" Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="420" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Proceso" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" />
+                            <ComboBox x:Name="ProcessComboBox" Grid.Column="1"
+                                      ItemsSource="{Binding ProcessOptions}"
+                                      SelectedItem="{Binding SelectedProcessOption, Mode=TwoWay}"
+                                      DisplayMemberPath="DisplayName"
+                                      IsEnabled="{Binding CanSelectFile}"
+                                      SelectionChanged="ProcessComboBox_SelectionChanged" />
+                        </Grid>
+
+                        <Grid Grid.Row="2" Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Archivo" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding SourcePath, Mode=OneWay}" IsReadOnly="True"
+                                     ToolTip="{Binding SourcePath}" VerticalContentAlignment="Center" />
+                            <Button Grid.Column="2" Content="Seleccionar" Click="SelectFile_Click"
+                                    IsEnabled="{Binding CanSelectFile}" Style="{StaticResource CompactButtonStyle}"
+                                    Margin="10,0,0,0" />
+                        </Grid>
+
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="150,14,0,0">
+                            <Button Content="Analizar archivo" Click="Analyze_Click"
+                                    IsEnabled="{Binding CanAnalyze}" Style="{StaticResource PrimaryButtonStyle}" />
+                            <TextBlock Text="Analizando archivo..." Style="{StaticResource CaptionTextStyle}"
+                                       VerticalAlignment="Center" Margin="8,0,0,0"
+                                       Visibility="{Binding BusyVisibility}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12"
+                        Visibility="{Binding ResultVisibility}">
+                    <StackPanel>
+                        <TextBlock Text="Resumen del análisis" Style="{StaticResource SectionTitleTextStyle}" />
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Total de registros" Style="{StaticResource CaptionTextStyle}" />
+                                <TextBlock Text="{Binding TotalRows}" FontSize="22" FontWeight="SemiBold" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Registros resueltos" Style="{StaticResource CaptionTextStyle}" />
+                                <TextBlock Text="{Binding ResolvedRows}" FontSize="22" FontWeight="SemiBold" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Pendientes" Style="{StaticResource CaptionTextStyle}" />
+                                <TextBlock Text="{Binding PendingRows}" FontSize="22" FontWeight="SemiBold" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="3">
+                                <TextBlock Text="Corredores destino" Style="{StaticResource CaptionTextStyle}" />
+                                <TextBlock Text="{Binding DestinationCount}" FontSize="22" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource InfoPanelStyle}" Margin="0,14,0,0">
+                            <StackPanel>
+                                <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding StatusDetailText}" Style="{StaticResource MutedTextStyle}"
+                                           TextWrapping="Wrap" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12"
+                        Visibility="{Binding AnalysisVisibility}">
+                    <StackPanel>
+                        <TextBlock Text="Distribución por corredor" Style="{StaticResource SectionTitleTextStyle}" />
+                        <DataGrid ItemsSource="{Binding PreviewItems}" IsReadOnly="True" AutoGenerateColumns="False"
+                                  Height="230" Margin="0,12,0,0">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Corredor" Binding="{Binding BrokerName}" Width="210" />
+                                <DataGridTextColumn Header="Correo principal" Binding="{Binding PrimaryEmail}" Width="260" />
+                                <DataGridTextColumn Header="Registros" Binding="{Binding RowCount}" Width="90" />
+                                <DataGridTextColumn Header="Nombres / alias / códigos detectados"
+                                                    Binding="{Binding DetectedValuesText}" Width="540" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}" Visibility="{Binding AnalysisVisibility}">
+                    <StackPanel>
+                        <TextBlock Text="Pendientes por resolver" Style="{StaticResource SectionTitleTextStyle}" />
+                        <TextBlock Text="El análisis está completo y listo para la generación."
+                                   Style="{StaticResource MutedTextStyle}" Margin="0,12,0,0"
+                                   Visibility="{Binding ReadyVisibility}" />
+                        <DataGrid ItemsSource="{Binding PendingItems}"
+                                  SelectedItem="{Binding SelectedPendingIssue, Mode=TwoWay}"
+                                  IsReadOnly="True" AutoGenerateColumns="False"
+                                  Height="230" Margin="0,12,0,0"
+                                  Visibility="{Binding PendingVisibility}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Fila" Binding="{Binding RowNumber}" Width="80" />
+                                <DataGridTextColumn Header="Valor encontrado" Binding="{Binding RawValue}" Width="420" />
+                                <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="180" />
+                                <DataGridTextColumn Header="Posibles corredores" Binding="{Binding CandidateBrokerNames}" Width="420" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <Button Content="Resolver seleccionado" Click="ResolveSelected_Click"
+                                IsEnabled="{Binding CanResolve}" Style="{StaticResource PrimaryButtonStyle}"
+                                HorizontalAlignment="Left" Margin="0,12,0,0"
+                                Visibility="{Binding PendingVisibility}" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
-        </Border>
+        </ScrollViewer>
     </Grid>
 </Window>

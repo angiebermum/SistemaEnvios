@@ -13,15 +13,18 @@ public partial class ExpirationsWindow : Window
 {
     private readonly IAppUserRepository _appUsers;
     private readonly IExpirationsAnalysisCoordinator _coordinator;
+    private readonly IExpirationsBrokerConfigurationService _configurationService;
     private readonly ExpirationsWindowState _state;
 
     public ExpirationsWindow(
         AppUser currentUser,
         IAppUserRepository appUsers,
-        IExpirationsAnalysisCoordinator coordinator)
+        IExpirationsAnalysisCoordinator coordinator,
+        IExpirationsBrokerConfigurationService configurationService)
     {
         ArgumentNullException.ThrowIfNull(appUsers);
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        _configurationService = configurationService ?? throw new ArgumentNullException(nameof(configurationService));
         _state = new ExpirationsWindowState(currentUser);
         _appUsers = appUsers;
         InitializeComponent();
@@ -146,6 +149,20 @@ public partial class ExpirationsWindow : Window
         });
     }
 
+    private async void ConfigureBrokers_Click(object sender, RoutedEventArgs e)
+    {
+        var management = new ExpirationsBrokerManagementWindow(_configurationService) { Owner = this };
+        _ = management.ShowDialog();
+        if (!management.HasSavedChanges)
+            return;
+
+        await RunBusyAsync(async () =>
+        {
+            var snapshot = await _coordinator.RefreshCatalogAndReanalyzeAsync();
+            _state.ApplySnapshot(snapshot);
+        });
+    }
+
     private async Task RunBusyAsync(Func<Task> operation)
     {
         _state.SetBusy(true);
@@ -226,6 +243,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public string SourcePath => _snapshot.SourcePath;
     public bool IsBusy => _isBusy;
     public bool CanSelectFile => !IsBusy;
+    public bool CanConfigureBrokers => !IsBusy;
     public bool CanAnalyze => !IsBusy && SelectedProcessOption is not null && SourcePath.Length > 0;
     public bool CanResolve => !IsBusy && SelectedPendingIssue?.CanResolve == true;
     public Visibility BusyVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;

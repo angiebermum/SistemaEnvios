@@ -61,11 +61,22 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <StackPanel>
-                            <TextBlock Text="Preparación de vencimientos" Style="{StaticResource SectionTitleTextStyle}" />
-                            <TextBlock Text="Seleccione el proceso y el reporte general que desea analizar."
-                                       Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0" />
-                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Preparación de vencimientos" Style="{StaticResource SectionTitleTextStyle}" />
+                                <TextBlock Text="Seleccione el proceso y el reporte general que desea analizar."
+                                           Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="Configurar corredores"
+                                    Click="ConfigureBrokers_Click"
+                                    IsEnabled="{Binding CanConfigureBrokers}"
+                                    Style="{StaticResource CompactButtonStyle}" Margin="12,0,0,0"
+                                    VerticalAlignment="Center" />
+                        </Grid>
 
                         <Grid Grid.Row="1" Margin="0,16,0,0">
                             <Grid.ColumnDefinitions>

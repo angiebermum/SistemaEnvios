@@ -11,6 +11,8 @@ public interface IExpirationsAnalysisCoordinator
     Task<ExpirationsAnalysisSessionSnapshot> AnalyzeAsync(
         ExpirationsWorkbookReadOptions? options = null,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsAnalysisSessionSnapshot> RefreshCatalogAndReanalyzeAsync(
+        CancellationToken cancellationToken = default);
     Task<ExpirationsWorkbookInspection> InspectWorkbookAsync(CancellationToken cancellationToken = default);
     ExpirationsManualOverrideResult ApplyManualOverride(
         uint rowNumber,
@@ -106,6 +108,21 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         _catalog = await catalogTask;
         _associationDocuments = await associationsTask;
         Snapshot = BuildSnapshot();
+        return Snapshot;
+    }
+
+    public async Task<ExpirationsAnalysisSessionSnapshot> RefreshCatalogAndReanalyzeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var catalogTask = _catalogService.LoadAsync(cancellationToken);
+        var associationsTask = _associations.ListAsync(cancellationToken);
+        await Task.WhenAll(catalogTask, associationsTask);
+        _catalog = await catalogTask;
+        _associationDocuments = await associationsTask;
+        _manualOverrides.RemoveAll(value => !IsActiveCatalogBroker(value.BrokerId));
+        Snapshot = _readResult?.IsSuccess == true
+            ? BuildSnapshot()
+            : EmptySnapshot(_readResult, _readResult?.Messages ?? []);
         return Snapshot;
     }
 

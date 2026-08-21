@@ -58,27 +58,45 @@ internal static class ModuleWindowUiSmokeRunner
             var selectionDialogPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-selection-ui-smoke.png");
+            var brokerManagementPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-broker-management-ui-smoke.png");
+            var defaultProfilePath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-default-profile-ui-smoke.png");
+            var configuredProfilePath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-configured-profile-ui-smoke.png");
+            var assistantEditorPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-assistant-editor-ui-smoke.png");
+            var missingEmailProfilePath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-missing-email-profile-ui-smoke.png");
 
             Render(new ModuleSelectionWindow(user), selectorPath);
             Render(
                 new ExpirationsWindow(
                     user,
                     new NonOperationalAppUserRepository(),
-                    new SmokeCoordinator(new ExpirationsAnalysisSessionSnapshot())),
+                    new SmokeCoordinator(new ExpirationsAnalysisSessionSnapshot()),
+                    new SmokeConfigurationService()),
                 expirationsInitialPath);
             var readySnapshot = ReadySnapshot();
             Render(
                 new ExpirationsWindow(
                     user,
                     new NonOperationalAppUserRepository(),
-                    new SmokeCoordinator(readySnapshot)),
+                    new SmokeCoordinator(readySnapshot),
+                    new SmokeConfigurationService()),
                 expirationsReadyPath);
             var pendingSnapshot = PendingSnapshot();
             Render(
                 new ExpirationsWindow(
                     user,
                     new NonOperationalAppUserRepository(),
-                    new SmokeCoordinator(pendingSnapshot)),
+                    new SmokeCoordinator(pendingSnapshot),
+                    new SmokeConfigurationService()),
                 expirationsPendingPath);
             Render(
                 new ExpirationsBrokerResolutionWindow(
@@ -88,6 +106,25 @@ internal static class ModuleWindowUiSmokeRunner
             Render(
                 new ExpirationsWorkbookSelectionWindow(Inspection()),
                 selectionDialogPath);
+            var configurationItems = ConfigurationItems();
+            var configurationService = new SmokeConfigurationService(configurationItems);
+            Render(
+                new ExpirationsBrokerManagementWindow(configurationService),
+                brokerManagementPath);
+            Render(
+                new ExpirationsBrokerProfileWindow(configurationService, configurationItems[0]),
+                defaultProfilePath);
+            Render(
+                new ExpirationsBrokerProfileWindow(configurationService, configurationItems[1]),
+                configuredProfilePath);
+            Render(
+                new ExpirationsAssistantEditorWindow(
+                    new ExpirationsAssistantValidationService(),
+                    configurationItems[1].Assistants[0]),
+                assistantEditorPath);
+            Render(
+                new ExpirationsBrokerProfileWindow(configurationService, configurationItems[2]),
+                missingEmailProfilePath);
             bindingListener.Flush();
             var hasBindingErrors = new FileInfo(bindingLogPath).Length > 0;
             File.WriteAllText(
@@ -101,6 +138,11 @@ internal static class ModuleWindowUiSmokeRunner
                     $"VENCIMIENTOS_PENDIENTE={expirationsPendingPath}",
                     $"DIALOGO_RESOLUCION={resolutionDialogPath}",
                     $"DIALOGO_SELECCION={selectionDialogPath}",
+                    $"CONFIGURACION_CORREDORES={brokerManagementPath}",
+                    $"PERFIL_SIN_DOCUMENTO={defaultProfilePath}",
+                    $"PERFIL_CONFIGURADO={configuredProfilePath}",
+                    $"EDITOR_ASISTENTE={assistantEditorPath}",
+                    $"PERFIL_SIN_CORREO={missingEmailProfilePath}",
                     $"LOG_BINDINGS={bindingLogPath}"));
             return !hasBindingErrors;
         }
@@ -262,6 +304,64 @@ internal static class ModuleWindowUiSmokeRunner
         ]
     };
 
+    private static IReadOnlyList<ExpirationsBrokerConfigurationItem> ConfigurationItems()
+    {
+        var activeAssistantId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var inactiveAssistantId = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        return
+        [
+            new ExpirationsBrokerConfigurationItem
+            {
+                BrokerId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                Name = "Arturo Quesada",
+                PrimaryEmailAddresses = ["arturo@example.test"],
+                IsActive = true,
+                Assistants = [],
+                HasExplicitProfile = false
+            },
+            new ExpirationsBrokerConfigurationItem
+            {
+                BrokerId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                Name = "Jerrika Hernández",
+                PrimaryEmailAddresses = ["jerrika@example.test", "office@example.test"],
+                IsActive = true,
+                Assistants =
+                [
+                    new ExpirationsAssistant
+                    {
+                        Id = activeAssistantId,
+                        Name = "Ana Luisa",
+                        Email = "ana@example.test",
+                        IsActive = true
+                    },
+                    new ExpirationsAssistant
+                    {
+                        Id = inactiveAssistantId,
+                        Name = "Asistente anterior",
+                        Email = "inactive@example.test",
+                        IsActive = false
+                    }
+                ],
+                HasExplicitProfile = true,
+                ProfileUpdateTime = "smoke-version",
+                ProfileCreatedAtUtc = DateTimeOffset.UtcNow,
+                ProfileUpdatedAtUtc = DateTimeOffset.UtcNow
+            },
+            new ExpirationsBrokerConfigurationItem
+            {
+                BrokerId = Guid.Parse("55555555-5555-5555-5555-555555555555"),
+                Name = "Corredor sin correo",
+                PrimaryEmailAddresses = [],
+                IsActive = false,
+                Assistants = [],
+                HasExplicitProfile = true,
+                ProfileUpdateTime = "smoke-no-email",
+                ProfileCreatedAtUtc = DateTimeOffset.UtcNow,
+                ProfileUpdatedAtUtc = DateTimeOffset.UtcNow
+            }
+        ];
+    }
+
     private sealed class SmokeCoordinator(ExpirationsAnalysisSessionSnapshot snapshot)
         : IExpirationsAnalysisCoordinator
     {
@@ -272,6 +372,9 @@ internal static class ModuleWindowUiSmokeRunner
 
         public Task<ExpirationsAnalysisSessionSnapshot> AnalyzeAsync(
             ExpirationsWorkbookReadOptions? options = null,
+            CancellationToken cancellationToken = default) => Task.FromResult(Snapshot);
+
+        public Task<ExpirationsAnalysisSessionSnapshot> RefreshCatalogAndReanalyzeAsync(
             CancellationToken cancellationToken = default) => Task.FromResult(Snapshot);
 
         public Task<ExpirationsWorkbookInspection> InspectWorkbookAsync(
@@ -309,5 +412,30 @@ internal static class ModuleWindowUiSmokeRunner
             string expectedUpdateTime,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("El smoke test visual no realiza operaciones Firestore.");
+    }
+
+    private sealed class SmokeConfigurationService(
+        IReadOnlyList<ExpirationsBrokerConfigurationItem>? items = null)
+        : IExpirationsBrokerConfigurationService
+    {
+        private readonly IReadOnlyList<ExpirationsBrokerConfigurationItem> _items = items ?? [];
+
+        public Task<IReadOnlyList<ExpirationsBrokerConfigurationItem>> ListAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(_items);
+
+        public Task<ExpirationsBrokerConfigurationItem?> GetAsync(
+            Guid brokerId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(_items.FirstOrDefault(item => item.BrokerId == brokerId));
+
+        public Task<ExpirationsBrokerConfigurationSaveResult> SaveAsync(
+            ExpirationsBrokerConfigurationItem configuration,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ExpirationsBrokerConfigurationSaveResult
+            {
+                Outcome = ExpirationsBrokerConfigurationSaveOutcome.NoChanges,
+                Configuration = configuration
+            });
     }
 }

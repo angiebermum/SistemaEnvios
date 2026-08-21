@@ -257,6 +257,9 @@ public partial class App : Application
                 var catalogService = new ExpirationsBrokerCatalogService(
                     directoryRepository,
                     profileRepository);
+                var configurationService = new ExpirationsBrokerConfigurationService(
+                    directoryRepository,
+                    profileRepository);
                 var coordinator = new ExpirationsAnalysisCoordinator(
                     catalogService,
                     associationRepository);
@@ -268,7 +271,8 @@ public partial class App : Application
                     authentication,
                     appUsers,
                     profile.Value,
-                    coordinator);
+                    coordinator,
+                    configurationService);
                 return;
             }
 
@@ -374,9 +378,14 @@ public partial class App : Application
         IFirebaseAuthenticationService authentication,
         IAppUserRepository appUsers,
         AppUser currentUser,
-        IExpirationsAnalysisCoordinator coordinator)
+        IExpirationsAnalysisCoordinator coordinator,
+        IExpirationsBrokerConfigurationService configurationService)
     {
-        var expirationsWindow = new ExpirationsWindow(currentUser, appUsers, coordinator);
+        var expirationsWindow = new ExpirationsWindow(
+            currentUser,
+            appUsers,
+            coordinator,
+            configurationService);
         MainWindow = expirationsWindow;
         var restarting = false;
         expirationsWindow.LogoutRequested += (_, _) =>

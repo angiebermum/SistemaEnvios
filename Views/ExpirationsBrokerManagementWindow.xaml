@@ -1,0 +1,62 @@
+<Window x:Class="ECS.CommissionsMailer.Views.ExpirationsBrokerManagementWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Configuración de corredores — Vencimientos"
+        Width="1040" Height="680" MinWidth="840" MinHeight="520"
+        WindowStartupLocation="CenterOwner" Loaded="Window_Loaded"
+        Style="{StaticResource DialogWindowStyle}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Configuración de corredores — Vencimientos"
+                       Style="{StaticResource PageTitleTextStyle}" />
+            <TextBlock Text="Administre únicamente el estado y los asistentes propios de Vencimientos."
+                       Style="{StaticResource PageSubtitleTextStyle}" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="0,18,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="Buscar por corredor o correo" Style="{StaticResource CaptionTextStyle}" />
+                <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="Buscar por corredor o correo" Margin="0,5,0,0" />
+            </StackPanel>
+            <TextBlock Grid.Column="1" Text="{Binding BusyText}" Style="{StaticResource CaptionTextStyle}"
+                       VerticalAlignment="Center" Margin="14,0,0,0"
+                       Visibility="{Binding BusyVisibility}" />
+        </Grid>
+
+        <DataGrid Grid.Row="2" ItemsSource="{Binding VisibleItems}"
+                  SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                  IsReadOnly="True" AutoGenerateColumns="False">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Corredor" Binding="{Binding Name}" Width="220" />
+                <DataGridTextColumn Header="Correo principal" Binding="{Binding PrimaryEmailsText}" Width="320" />
+                <DataGridTextColumn Header="Estado Vencimientos" Binding="{Binding StatusText}" Width="160" />
+                <DataGridTextColumn Header="Asistentes activos" Binding="{Binding ActiveAssistantCount}" Width="135" />
+                <DataGridTextColumn Header="Asistentes totales" Binding="{Binding TotalAssistantCount}" Width="135" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <Grid Grid.Row="3" Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button Content="Configurar seleccionado" Click="ConfigureSelected_Click"
+                    IsEnabled="{Binding CanConfigure}" Style="{StaticResource PrimaryButtonStyle}"
+                    HorizontalAlignment="Left" />
+            <Button Grid.Column="1" Content="Cerrar" IsCancel="True"
+                    Style="{StaticResource CompactButtonStyle}" Margin="0" />
+        </Grid>
+    </Grid>
+</Window>

@@ -254,6 +254,98 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         Assert.EndsWith("new.xlsx", coordinator.Snapshot.SourcePath, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task RefreshCatalogReanalyzesActiveAndInactiveBrokerWithoutLosingSession()
+    {
+        var associations = new FakeAssociationRepository([]);
+        var directory = new FakeDirectoryRepository([
+            new ExpirationsBrokerDirectoryEntry
+            {
+                BrokerId = BrokerA,
+                Name = "Broker A",
+                PrimaryEmailAddresses = ["a@example.test"]
+            }
+        ]);
+        var profiles = new FakeProfileRepository([]);
+        var coordinator = new ExpirationsAnalysisCoordinator(
+            new ExpirationsBrokerCatalogService(directory, profiles),
+            associations,
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(30, "Broker A"))),
+            inspectionService: new FakeInspectionService());
+        Prepare(coordinator, "refresh.xlsx");
+        var initial = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Assert.True(initial.CanGenerate);
+
+        profiles.Documents.Add(StoredProfile(new ExpirationsBrokerProfile
+        {
+            BrokerId = BrokerA,
+            IsActive = false,
+            CreatedAtUtc = Now,
+            UpdatedAtUtc = Now
+        }, "inactive"));
+        var inactive = await coordinator.RefreshCatalogAndReanalyzeAsync(TestContext.Current.CancellationToken);
+        Assert.False(inactive.CanGenerate);
+        Assert.Equal(
+            ExpirationsBrokerResolutionStatus.InactiveBroker,
+            Assert.Single(Assert.Single(inactive.Analysis!.RowResolutions).Components).Status);
+
+        profiles.Documents[0] = StoredProfile(new ExpirationsBrokerProfile
+        {
+            BrokerId = BrokerA,
+            IsActive = true,
+            CreatedAtUtc = Now,
+            UpdatedAtUtc = Now
+        }, "active");
+        var active = await coordinator.RefreshCatalogAndReanalyzeAsync(TestContext.Current.CancellationToken);
+        Assert.True(active.CanGenerate);
+        Assert.Equal(ExpirationsProcess.PreviousMonth, active.Process);
+        Assert.EndsWith("refresh.xlsx", active.SourcePath, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(associations.Created);
+        Assert.Empty(associations.Updated);
+    }
+
+    [Fact]
+    public async Task RefreshRemovesOverrideThatNowTargetsInactiveBroker()
+    {
+        var associations = new FakeAssociationRepository([]);
+        var directory = new FakeDirectoryRepository([
+            new ExpirationsBrokerDirectoryEntry
+            {
+                BrokerId = BrokerA,
+                Name = "Broker A",
+                PrimaryEmailAddresses = ["a@example.test"]
+            }
+        ]);
+        var profiles = new FakeProfileRepository([]);
+        var coordinator = new ExpirationsAnalysisCoordinator(
+            new ExpirationsBrokerCatalogService(directory, profiles),
+            associations,
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(31, "VALOR SIN ASOCIAR"))),
+            inspectionService: new FakeInspectionService());
+        Prepare(coordinator, "override-refresh.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Assert.True(coordinator.ApplyManualOverride(31, 0, BrokerA).Snapshot.CanGenerate);
+
+        profiles.Documents.Add(StoredProfile(new ExpirationsBrokerProfile
+        {
+            BrokerId = BrokerA,
+            IsActive = false,
+            CreatedAtUtc = Now,
+            UpdatedAtUtc = Now
+        }, "inactive"));
+        var refreshed = await coordinator.RefreshCatalogAndReanalyzeAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(refreshed.CanGenerate);
+        Assert.Empty(refreshed.ManualOverrides);
+        Assert.Equal(
+            ExpirationsBrokerResolutionStatus.Unresolved,
+            Assert.Single(Assert.Single(refreshed.Analysis!.RowResolutions).Components).Status);
+        Assert.Equal(ExpirationsProcess.PreviousMonth, refreshed.Process);
+        Assert.EndsWith("override-refresh.xlsx", refreshed.SourcePath, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(associations.Created);
+        Assert.Empty(associations.Updated);
+    }
+
     private static ExpirationsAnalysisCoordinator Coordinator(
         IExpirationsWorkbookReader reader,
         FakeAssociationRepository associations,
@@ -318,6 +410,11 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         string updateTime = "version-1") =>
         new(association, $"modules/vencimientos/associations/{association.Id:D}", updateTime);
 
+    private static FirestoreStoredDocument<ExpirationsBrokerProfile> StoredProfile(
+        ExpirationsBrokerProfile profile,
+        string updateTime) =>
+        new(profile, $"modules/vencimientos/brokerProfiles/{profile.BrokerId:D}", updateTime);
+
     private static ExpirationsSourceRow SourceRow(uint rowNumber, string value) => new()
     {
         RowNumber = rowNumber,
@@ -375,7 +472,7 @@ public sealed class ExpirationsAnalysisCoordinatorTests
     private sealed class FakeProfileRepository(IEnumerable<ExpirationsBrokerProfile> profiles)
         : IExpirationsBrokerProfileRepository
     {
-        private readonly List<FirestoreStoredDocument<ExpirationsBrokerProfile>> _documents = profiles
+        public List<FirestoreStoredDocument<ExpirationsBrokerProfile>> Documents { get; } = profiles
             .Select(value => new FirestoreStoredDocument<ExpirationsBrokerProfile>(
                 value,
                 $"modules/vencimientos/brokerProfiles/{value.BrokerId:D}",
@@ -384,10 +481,10 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         public Task<FirestoreStoredDocument<ExpirationsBrokerProfile>?> GetAsync(
             Guid brokerId,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(_documents.FirstOrDefault(item => item.Value.BrokerId == brokerId));
+            Task.FromResult(Documents.FirstOrDefault(item => item.Value.BrokerId == brokerId));
         public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerProfile>>> ListAsync(
             CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerProfile>>>(_documents);
+                Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerProfile>>>(Documents);
         public Task<FirestoreStoredDocument<ExpirationsBrokerProfile>> CreateAsync(
             ExpirationsBrokerProfile value,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();

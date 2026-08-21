@@ -105,11 +105,13 @@ public partial class UserAdministrationWindow : Window
         var selected = Selected;
         ActiveCheckBox.IsEnabled = selected is not null;
         CommissionsCheckBox.IsEnabled = selected is not null;
+        ExpirationsCheckBox.IsEnabled = selected is not null;
         RoleComboBox.IsEnabled = selected is not null;
         SaveButton.IsEnabled = selected is not null;
         if (selected is null) return;
         ActiveCheckBox.IsChecked = selected.User.IsActive;
         CommissionsCheckBox.IsChecked = selected.User.CanUseCommissions;
+        ExpirationsCheckBox.IsChecked = selected.User.CanUseExpirations;
         RoleComboBox.SelectedItem = selected.User.Role;
     }
 
@@ -121,17 +123,13 @@ public partial class UserAdministrationWindow : Window
                 "Confirmar permisos", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return;
 
-        var updated = new AppUser
-        {
-            Uid = selected.User.Uid,
-            Email = selected.User.Email,
-            DisplayName = selected.User.DisplayName,
-            Role = role,
-            IsActive = ActiveCheckBox.IsChecked == true,
-            CanUseCommissions = CommissionsCheckBox.IsChecked == true,
-            CreatedAtUtc = selected.User.CreatedAtUtc,
-            UpdatedAtUtc = DateTimeOffset.UtcNow
-        };
+        var updated = BuildUpdatedUser(
+            selected.User,
+            role,
+            ActiveCheckBox.IsChecked == true,
+            CommissionsCheckBox.IsChecked == true,
+            ExpirationsCheckBox.IsChecked == true,
+            DateTimeOffset.UtcNow);
         SetBusy(true, "Guardando permisos…");
         try
         {
@@ -165,6 +163,25 @@ public partial class UserAdministrationWindow : Window
         SaveButton.IsEnabled = !busy && Selected is not null;
         if (status is not null) StatusTextBlock.Text = status;
     }
+
+    internal static AppUser BuildUpdatedUser(
+        AppUser existing,
+        AppUserRole role,
+        bool isActive,
+        bool canUseCommissions,
+        bool canUseExpirations,
+        DateTimeOffset updatedAtUtc) => new()
+    {
+        Uid = existing.Uid,
+        Email = existing.Email,
+        DisplayName = existing.DisplayName,
+        Role = role,
+        IsActive = isActive,
+        CanUseCommissions = canUseCommissions,
+        CanUseExpirations = canUseExpirations,
+        CreatedAtUtc = existing.CreatedAtUtc,
+        UpdatedAtUtc = updatedAtUtc
+    };
 
     private sealed class UserRow(AppUser user, string updateTime)
     {

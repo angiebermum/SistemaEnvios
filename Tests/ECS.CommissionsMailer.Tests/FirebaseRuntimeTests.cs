@@ -107,9 +107,13 @@ public sealed class FirebaseRuntimeTests
     public void AuthorizationBlocksMissingOrInactiveProfile(bool? active, string expected)
     {
         var user = active.HasValue ? User(isActive: active.Value) : null;
-        var error = Assert.Throws<AppUserAuthorizationException>(() =>
-            AppUserAuthorization.DemandCommissionsAccess(user));
-        Assert.Contains(expected, error.Message, StringComparison.OrdinalIgnoreCase);
+        var errors = new[]
+        {
+            Assert.Throws<AppUserAuthorizationException>(() => AppUserAuthorization.DemandCommissionsAccess(user)),
+            Assert.Throws<AppUserAuthorizationException>(() => AppUserAuthorization.DemandExpirationsAccess(user)),
+            Assert.Throws<AppUserAuthorizationException>(() => AppUserAuthorization.DemandAdmin(user))
+        };
+        Assert.All(errors, error => Assert.Contains(expected, error.Message, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -127,6 +131,60 @@ public sealed class FirebaseRuntimeTests
         AppUserAuthorization.DemandCommissionsAccess(User(role: AppUserRole.Admin));
         Assert.Throws<AppUserAuthorizationException>(() => AppUserAuthorization.DemandAdmin(User()));
         AppUserAuthorization.DemandAdmin(User(role: AppUserRole.Admin));
+    }
+
+    [Fact]
+    public void AuthorizationKeepsCommissionsAndExpirationsIndependent()
+    {
+        var commissionsOnly = User(canUseCommissions: true, canUseExpirations: false);
+        AppUserAuthorization.DemandCommissionsAccess(commissionsOnly);
+        Assert.Throws<AppUserAuthorizationException>(() =>
+            AppUserAuthorization.DemandExpirationsAccess(commissionsOnly));
+
+        var expirationsOnly = User(canUseCommissions: false, canUseExpirations: true);
+        Assert.Throws<AppUserAuthorizationException>(() =>
+            AppUserAuthorization.DemandCommissionsAccess(expirationsOnly));
+        AppUserAuthorization.DemandExpirationsAccess(expirationsOnly);
+
+        var both = User(canUseCommissions: true, canUseExpirations: true);
+        AppUserAuthorization.DemandCommissionsAccess(both);
+        AppUserAuthorization.DemandExpirationsAccess(both);
+    }
+
+    [Fact]
+    public void AuthorizationRequiresOnlyActiveAdminRoleForAdministration()
+    {
+        AppUserAuthorization.DemandAdmin(User(
+            role: AppUserRole.Admin,
+            canUseCommissions: false,
+            canUseExpirations: true));
+        Assert.Throws<AppUserAuthorizationException>(() => AppUserAuthorization.DemandAdmin(User(
+            role: AppUserRole.Operator,
+            canUseCommissions: true,
+            canUseExpirations: true)));
+    }
+
+    [Fact]
+    public void AppUserMapperDefaultsMissingExpirationsPermissionToFalse()
+    {
+        var fields = new AppUserMapper().ToFields(User(canUseExpirations: true))
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        fields.Remove("canUseExpirations");
+
+        var mapped = new AppUserMapper().FromFields(fields);
+
+        Assert.False(mapped.CanUseExpirations);
+        Assert.True(mapped.CanUseCommissions);
+    }
+
+    [Fact]
+    public void AppUserMapperRoundTripsExpirationsPermission()
+    {
+        var mapper = new AppUserMapper();
+        var fields = mapper.ToFields(User(canUseExpirations: true));
+
+        Assert.True(fields.Required("canUseExpirations").RequireBoolean("canUseExpirations"));
+        Assert.True(mapper.FromFields(fields).CanUseExpirations);
     }
 
     [Fact]
@@ -404,7 +462,8 @@ public sealed class FirebaseRuntimeTests
     private static AppUser User(
         AppUserRole role = AppUserRole.Operator,
         bool isActive = true,
-        bool canUseCommissions = true) => new()
+        bool canUseCommissions = true,
+        bool canUseExpirations = false) => new()
     {
         Uid = "uid",
         Email = "u@example.test",
@@ -412,6 +471,7 @@ public sealed class FirebaseRuntimeTests
         Role = role,
         IsActive = isActive,
         CanUseCommissions = canUseCommissions,
+        CanUseExpirations = canUseExpirations,
         CreatedAtUtc = DateTimeOffset.UtcNow,
         UpdatedAtUtc = DateTimeOffset.UtcNow
     };

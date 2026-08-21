@@ -14,6 +14,7 @@ const profile = (uid, role = 'operator', overrides = {}) => ({
   role,
   isActive: true,
   canUseCommissions: true,
+  canUseExpirations: false,
   createdAtUtc: new Date('2026-08-10T00:00:00Z'),
   updatedAtUtc: new Date('2026-08-10T00:00:00Z'),
   ...overrides
@@ -34,6 +35,13 @@ beforeEach(async () => {
     await setDoc(doc(db, 'appUsers/admin'), profile('admin', 'admin'));
     await setDoc(doc(db, 'appUsers/inactive'), profile('inactive', 'operator', { isActive: false }));
     await setDoc(doc(db, 'appUsers/no-commissions'), profile('no-commissions', 'operator', { canUseCommissions: false }));
+    await setDoc(doc(db, 'appUsers/expirations-admin'), profile('expirations-admin', 'admin', {
+      canUseCommissions: false,
+      canUseExpirations: true
+    }));
+    const legacyProfile = profile('legacy');
+    delete legacyProfile.canUseExpirations;
+    await setDoc(doc(db, 'appUsers/legacy'), legacyProfile);
     await setDoc(doc(db, 'settings/commissions'), { defaultSubject: 'test' });
     await setDoc(doc(db, 'system/schema'), { version: 1 });
     await setDoc(doc(db, 'system/migrationState'), { status: 'completed' });
@@ -68,6 +76,28 @@ test('5. operator válido accede a operaciones de Comisiones', async () => {
   await assertSucceeds(setDoc(doc(db, 'sessions/current'), { subject: 'ok' }));
 });
 
+test('recursos actuales de Comisiones continúan requiriendo canUseCommissions', async () => {
+  const db = environment.authenticatedContext('expirations-admin').firestore();
+  const commissionPaths = [
+    'settings/commissions',
+    'brokers/broker-1',
+    'sessions/session-1',
+    'sessions/session-1/brokerItems/broker-1',
+    'recentSends/send-1',
+    'paymentGenerations/generation-1',
+    'paymentGenerations/generation-1/files/file-1'
+  ];
+  for (const path of commissionPaths)
+    await assertFails(getDoc(doc(db, path)));
+});
+
+test('perfil antiguo conserva Comisiones y no obtiene acceso accidental a Vencimientos', async () => {
+  const db = environment.authenticatedContext('legacy').firestore();
+  await assertSucceeds(getDoc(doc(db, 'appUsers/legacy')));
+  await assertSucceeds(getDoc(doc(db, 'settings/commissions')));
+  await assertFails(getDoc(doc(db, 'expirations/example')));
+});
+
 test('6. operator no puede promoverse admin', async () => {
   const db = environment.authenticatedContext('operator').firestore();
   await assertFails(updateDoc(doc(db, 'appUsers/operator'), { role: 'admin' }));
@@ -83,6 +113,14 @@ test('8. admin puede administrar perfiles con forma válida', async () => {
   await assertSucceeds(updateDoc(doc(db, 'appUsers/inactive'), {
     isActive: true,
     updatedAtUtc: new Date('2026-08-10T01:00:00Z')
+  }));
+});
+
+test('admin activo sin Comisiones puede administrar appUsers', async () => {
+  const db = environment.authenticatedContext('expirations-admin').firestore();
+  await assertSucceeds(updateDoc(doc(db, 'appUsers/inactive'), {
+    canUseExpirations: true,
+    updatedAtUtc: new Date('2026-08-10T02:00:00Z')
   }));
 });
 
@@ -132,6 +170,9 @@ test('create appUser: shape inválido recibe DENY', async () => {
   const missingRequiredField = profile('missing-name');
   delete missingRequiredField.displayName;
   await assertFails(setDoc(doc(db, 'appUsers/missing-name'), missingRequiredField));
+  const missingExpirationsPermission = profile('missing-expirations');
+  delete missingExpirationsPermission.canUseExpirations;
+  await assertFails(setDoc(doc(db, 'appUsers/missing-expirations'), missingExpirationsPermission));
   await assertFails(setDoc(doc(db, 'appUsers/bad-timestamp'), profile('bad-timestamp', 'operator', {
     createdAtUtc: '2026-08-10T00:00:00Z'
   })));

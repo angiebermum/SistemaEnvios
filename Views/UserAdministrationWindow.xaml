@@ -1,7 +1,7 @@
 <Window x:Class="ECS.CommissionsMailer.Views.UserAdministrationWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Administración de accesos — ECS Comisiones"
+        Title="Administración de accesos — ECS"
         Icon="pack://application:,,,/Images/icon.ico"
         Width="900" Height="600" MinWidth="760" MinHeight="500"
         WindowStartupLocation="CenterOwner" Style="{StaticResource DialogWindowStyle}"
@@ -38,6 +38,7 @@
                 <DataGridTextColumn Header="Rol" Binding="{Binding User.Role}" Width="110" />
                 <DataGridCheckBoxColumn Header="Activo" Binding="{Binding User.IsActive}" Width="80" />
                 <DataGridCheckBoxColumn Header="Comisiones" Binding="{Binding User.CanUseCommissions}" Width="100" />
+                <DataGridCheckBoxColumn Header="Vencimientos" Binding="{Binding User.CanUseExpirations}" Width="110" />
             </DataGrid.Columns>
         </DataGrid>
 
@@ -46,6 +47,7 @@
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <CheckBox x:Name="ActiveCheckBox" Content="Perfil activo" IsEnabled="False" />
                 <CheckBox x:Name="CommissionsCheckBox" Content="Puede usar Comisiones" Margin="18,4,0,4" IsEnabled="False" />
+                <CheckBox x:Name="ExpirationsCheckBox" Content="Puede usar Vencimientos" Margin="18,4,0,4" IsEnabled="False" />
                 <TextBlock Text="Rol" Margin="22,0,8,0" VerticalAlignment="Center" />
                 <ComboBox x:Name="RoleComboBox" Width="120" IsEnabled="False" />
             </StackPanel>

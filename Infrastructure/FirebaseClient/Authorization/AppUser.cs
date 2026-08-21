@@ -16,6 +16,7 @@ public sealed class AppUser
     public AppUserRole Role { get; set; } = AppUserRole.Operator;
     public bool IsActive { get; set; }
     public bool CanUseCommissions { get; set; }
+    public bool CanUseExpirations { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }
 }
@@ -33,6 +34,7 @@ public sealed class AppUserMapper : IFirestoreEntityMapper<AppUser>
             ["role"] = FirestoreRestValue.String(value.Role == AppUserRole.Admin ? "admin" : "operator"),
             ["isActive"] = FirestoreRestValue.Boolean(value.IsActive),
             ["canUseCommissions"] = FirestoreRestValue.Boolean(value.CanUseCommissions),
+            ["canUseExpirations"] = FirestoreRestValue.Boolean(value.CanUseExpirations),
             ["createdAtUtc"] = FirestoreRestValue.Timestamp(value.CreatedAtUtc),
             ["updatedAtUtc"] = FirestoreRestValue.Timestamp(value.UpdatedAtUtc)
         };
@@ -53,6 +55,7 @@ public sealed class AppUserMapper : IFirestoreEntityMapper<AppUser>
             },
             IsActive = fields.Required("isActive").RequireBoolean("isActive"),
             CanUseCommissions = fields.Required("canUseCommissions").RequireBoolean("canUseCommissions"),
+            CanUseExpirations = fields.Optional("canUseExpirations")?.RequireBoolean("canUseExpirations") ?? false,
             CreatedAtUtc = fields.Required("createdAtUtc").RequireTimestamp("createdAtUtc"),
             UpdatedAtUtc = fields.Required("updatedAtUtc").RequireTimestamp("updatedAtUtc")
         };
@@ -84,19 +87,31 @@ public sealed class AppUserRepository(IFirestoreRestClient client) : IAppUserRep
 
 public static class AppUserAuthorization
 {
-    public static void DemandCommissionsAccess(AppUser? user)
+    public static void DemandActiveUser(AppUser? user)
     {
         if (user is null)
             throw new AppUserAuthorizationException("No existe un perfil de acceso para esta cuenta.");
         if (!user.IsActive)
             throw new AppUserAuthorizationException("Este perfil de la aplicación está inactivo.");
-        if (!user.CanUseCommissions)
+    }
+
+    public static void DemandCommissionsAccess(AppUser? user)
+    {
+        DemandActiveUser(user);
+        if (!user!.CanUseCommissions)
             throw new AppUserAuthorizationException("Este perfil no tiene permiso para usar Comisiones.");
+    }
+
+    public static void DemandExpirationsAccess(AppUser? user)
+    {
+        DemandActiveUser(user);
+        if (!user!.CanUseExpirations)
+            throw new AppUserAuthorizationException("Este perfil no tiene permiso para usar Vencimientos.");
     }
 
     public static void DemandAdmin(AppUser? user)
     {
-        DemandCommissionsAccess(user);
+        DemandActiveUser(user);
         if (user!.Role != AppUserRole.Admin)
             throw new AppUserAuthorizationException("Esta operación requiere el rol admin.");
     }

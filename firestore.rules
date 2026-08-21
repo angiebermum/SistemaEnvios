@@ -23,18 +23,22 @@ service cloud.firestore {
       return isActive() && currentAppUser().canUseCommissions == true;
     }
 
+    function canUseExpirations() {
+      return isActive() && currentAppUser().get('canUseExpirations', false) == true;
+    }
+
     function isAdmin() {
-      return canUseCommissions() && currentAppUser().role == 'admin';
+      return isActive() && currentAppUser().role == 'admin';
     }
 
     function validAppUserShape() {
       return request.resource.data.keys().hasAll([
           'uid', 'email', 'displayName', 'role', 'isActive',
-          'canUseCommissions', 'createdAtUtc', 'updatedAtUtc'
+          'canUseCommissions', 'canUseExpirations', 'createdAtUtc', 'updatedAtUtc'
         ]) &&
         request.resource.data.keys().hasOnly([
           'uid', 'email', 'displayName', 'role', 'isActive',
-          'canUseCommissions', 'createdAtUtc', 'updatedAtUtc'
+          'canUseCommissions', 'canUseExpirations', 'createdAtUtc', 'updatedAtUtc'
         ]) &&
         request.resource.data.uid is string &&
         request.resource.data.email is string &&
@@ -42,6 +46,7 @@ service cloud.firestore {
         request.resource.data.role in ['admin', 'operator'] &&
         request.resource.data.isActive is bool &&
         request.resource.data.canUseCommissions is bool &&
+        request.resource.data.canUseExpirations is bool &&
         request.resource.data.createdAtUtc is timestamp &&
         request.resource.data.updatedAtUtc is timestamp;
     }

@@ -51,6 +51,54 @@ service cloud.firestore {
         request.resource.data.updatedAtUtc is timestamp;
     }
 
+    function validExpirationsBrokerProfileShape(brokerId) {
+      return request.resource.data.keys().hasAll([
+          'brokerId', 'isActive', 'assistants', 'createdAtUtc', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'brokerId', 'isActive', 'assistants', 'createdAtUtc', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.brokerId is string &&
+        request.resource.data.brokerId == brokerId &&
+        request.resource.data.isActive is bool &&
+        request.resource.data.assistants is list &&
+        request.resource.data.createdAtUtc is timestamp &&
+        request.resource.data.updatedAtUtc is timestamp;
+    }
+
+    function validExpirationsAssociationShape(associationId) {
+      return request.resource.data.keys().hasAll([
+          'id', 'brokerId', 'kind', 'value', 'normalizedValue', 'isActive',
+          'createdAtUtc', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'id', 'brokerId', 'kind', 'value', 'normalizedValue', 'isActive',
+          'createdAtUtc', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.id is string &&
+        request.resource.data.id == associationId &&
+        request.resource.data.brokerId is string &&
+        request.resource.data.kind in ['Name', 'Alias', 'Code'] &&
+        request.resource.data.value is string &&
+        request.resource.data.normalizedValue is string &&
+        request.resource.data.isActive is bool &&
+        request.resource.data.createdAtUtc is timestamp &&
+        request.resource.data.updatedAtUtc is timestamp;
+    }
+
+    function validExpirationsSettingsShape() {
+      return request.resource.data.keys().hasAll([
+          'defaultSubject', 'defaultMessage', 'commonCcAddresses', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'defaultSubject', 'defaultMessage', 'commonCcAddresses', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.defaultSubject is string &&
+        request.resource.data.defaultMessage is string &&
+        request.resource.data.commonCcAddresses is list &&
+        request.resource.data.updatedAtUtc is timestamp;
+    }
+
     // Technical metadata is administrative only. Server/Admin SDK access based on
     // IAM bypasses these client rules and remains available to bootstrap/migration.
     match /system/{document=**} {
@@ -72,7 +120,32 @@ service cloud.firestore {
     }
 
     match /brokers/{document} {
-      allow read, write: if canUseCommissions();
+      allow read: if canUseCommissions() || canUseExpirations();
+      allow create, update, delete: if canUseCommissions();
+    }
+
+    match /modules/vencimientos/brokerProfiles/{brokerId} {
+      allow read: if canUseExpirations();
+      allow create, update: if canUseExpirations() &&
+        validExpirationsBrokerProfileShape(brokerId) &&
+        exists(/databases/$(database)/documents/brokers/$(brokerId));
+      allow delete: if false;
+    }
+
+    match /modules/vencimientos/associations/{associationId} {
+      allow read: if canUseExpirations();
+      allow create, update: if canUseExpirations() &&
+        validExpirationsAssociationShape(associationId) &&
+        exists(/databases/$(database)/documents/brokers/$(request.resource.data.brokerId));
+      allow delete: if false;
+    }
+
+    match /modules/vencimientos/settings/{processId} {
+      allow read: if canUseExpirations() && processId in ['previousMonth', 'nextMonth'];
+      allow create, update: if canUseExpirations() &&
+        processId in ['previousMonth', 'nextMonth'] &&
+        validExpirationsSettingsShape();
+      allow delete: if false;
     }
 
     match /sessions/{sessionId} {

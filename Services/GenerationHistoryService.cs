@@ -6,11 +6,13 @@ public sealed class GenerationHistoryService
 {
     private readonly AppDataPaths _paths;
     private readonly AtomicJsonFile _json;
+    private readonly bool _persistenceEnabled;
 
-    public GenerationHistoryService(AppDataPaths paths, FileLogger logger)
+    public GenerationHistoryService(AppDataPaths paths, FileLogger logger, bool persistenceEnabled = true)
     {
         _paths = paths;
         _json = new AtomicJsonFile(logger);
+        _persistenceEnabled = persistenceEnabled;
     }
 
     public List<string> Warnings { get; } = [];
@@ -51,7 +53,10 @@ public sealed class GenerationHistoryService
         }
 
         batches.Add(batch);
-        Save(batches);
+        if (_persistenceEnabled)
+        {
+            Save(batches);
+        }
     }
 
     public PaymentGenerationBatch? FindActive(
@@ -77,7 +82,28 @@ public sealed class GenerationHistoryService
         }
 
         var expectedFiles = batch.Files.Where(value => value.BrokerId == brokerId).ToList();
-        var expected = expectedFiles.Select(value => Path.GetFullPath(value.OutputPath))
+        var expectedPaths = new List<(GeneratedPaymentFile File, string Path)>();
+        foreach (var file in expectedFiles)
+        {
+            if (string.IsNullOrWhiteSpace(file.OutputPath) || !Path.IsPathFullyQualified(file.OutputPath))
+            {
+                errors.Add(
+                    $"El archivo generado de la hoja '{file.WorksheetName}' no está disponible en este equipo.");
+                continue;
+            }
+
+            try
+            {
+                expectedPaths.Add((file, Path.GetFullPath(file.OutputPath)));
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                errors.Add(
+                    $"El archivo generado de la hoja '{file.WorksheetName}' no está disponible en este equipo.");
+            }
+        }
+
+        var expected = expectedPaths.Select(value => value.Path)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var actual = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var missing in expected.Where(value => !actual.Contains(value)))
@@ -99,8 +125,8 @@ public sealed class GenerationHistoryService
             }
             else
             {
-                var expectedHash = expectedFiles.First(value =>
-                    string.Equals(Path.GetFullPath(value.OutputPath), path, StringComparison.OrdinalIgnoreCase)).Sha256;
+                var expectedHash = expectedPaths.First(value =>
+                    string.Equals(value.Path, path, StringComparison.OrdinalIgnoreCase)).File.Sha256;
                 var actualHash = new GeneratedFileHashService().ComputeSha256(path);
                 if (!string.Equals(expectedHash, actualHash, StringComparison.OrdinalIgnoreCase))
                 {

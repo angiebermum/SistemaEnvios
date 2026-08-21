@@ -94,7 +94,19 @@ public sealed class InstallerInitializationTests
             "configuracion.json",
             "sesion-actual.json",
             "envios-recientes.json",
-            "generaciones-detalles-pago.json"
+            "generaciones-detalles-pago.json",
+            "firebase-runtime.json",
+            "firebase-refresh-token.dat",
+            "firebase-session.json",
+            "firebase-auth.json",
+            "user-session.json",
+            "refresh-token.json",
+            "application_default_credentials.json",
+            "credentials.json",
+            "adc.json",
+            "service-account.json",
+            "service_account.json",
+            "firebase-adminsdk.json"
         };
         var forbiddenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -106,7 +118,17 @@ public sealed class InstallerInitializationTests
         };
 
         var packagedFiles = Directory.EnumerateFiles(AppContext.BaseDirectory, "*", SearchOption.AllDirectories)
-            .Where(path => forbiddenFileNames.Contains(System.IO.Path.GetFileName(path)))
+            .Where(path =>
+            {
+                var fileName = System.IO.Path.GetFileName(path);
+                return forbiddenFileNames.Contains(fileName) ||
+                       fileName.EndsWith(".dpapi", StringComparison.OrdinalIgnoreCase) ||
+                       (fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase) &&
+                        (fileName.Contains("service-account", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.Contains("service_account", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.Contains("refresh-token", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.Contains("refresh_token", StringComparison.OrdinalIgnoreCase)));
+            })
             .ToList();
         var packagedDirectories = Directory.EnumerateDirectories(AppContext.BaseDirectory, "*", SearchOption.AllDirectories)
             .Where(path => forbiddenDirectories.Contains(System.IO.Path.GetFileName(path)))

@@ -16,6 +16,10 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\ECS.CommissionsMailer.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\FirebaseClient\ECS.CommissionsMailer.FirebaseClient.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\Firestore\ECS.CommissionsMailer.Firestore.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\Firestore.Mapping\ECS.CommissionsMailer.Firestore.Mapping.csproj" />
+    <ProjectReference Include="..\..\tools\ECSCommissionsMailer.FirestoreMigration\ECSCommissionsMailer.FirestoreMigration.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\Data\correos-iniciales.v3.json" Link="Data\correos-iniciales.v3.json">

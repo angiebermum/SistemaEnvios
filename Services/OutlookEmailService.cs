@@ -9,13 +9,23 @@ public sealed class OutlookEmailService
 {
     private readonly FileLogger _logger;
     private readonly OutlookApplicationFactory _applicationFactory;
-    private readonly object _accountSync = new();
-    private string? _connectedAccountEmail;
+    private readonly OutlookAccountSelectionManager _accountSelection;
 
     public OutlookEmailService(FileLogger logger)
+        : this(new AppDataPaths(), logger)
+    {
+    }
+
+    public OutlookEmailService(AppDataPaths paths, FileLogger logger)
+        : this(logger, new OutlookAccountPreferenceService(paths, logger))
+    {
+    }
+
+    internal OutlookEmailService(FileLogger logger, IOutlookAccountPreferenceStore preferences)
     {
         _logger = logger;
         _applicationFactory = new OutlookApplicationFactory(logger);
+        _accountSelection = new OutlookAccountSelectionManager(preferences);
     }
 
     public Task<OutlookConnectionInfo> CheckAvailabilityAsync() =>
@@ -36,75 +46,68 @@ public sealed class OutlookEmailService
     public Task<OutlookDiagnosticResult> DisplayDraftAsync(EmailSendRequest request, bool closeAfterDisplay) =>
         StaTaskRunner.RunAsync(() => DisplayDraft(request, closeAfterDisplay));
 
+    public string SelectSendingAccount(string emailAddress) => _accountSelection.Select(emailAddress);
+
     private OutlookConnectionInfo CheckAvailability()
     {
         var environment = InspectAndLogEnvironment("comprobación de disponibilidad");
         Outlook.Application? application = null;
         Outlook.NameSpace? session = null;
         Outlook.Accounts? accounts = null;
-        Outlook.Recipient? currentUser = null;
         try
         {
             OutlookApplicationFactory.EnsureSta();
             application = _applicationFactory.CreateValidatedApplication();
             session = application.Session;
             accounts = session.Accounts;
-            var emailAddress = GetDefaultAccountEmail(accounts);
-            if (string.IsNullOrWhiteSpace(emailAddress))
+            var selection = _accountSelection.Refresh(GetAvailableAccountEmails(accounts));
+            var message = selection.AvailableAccounts.Count switch
             {
-                currentUser = session.CurrentUser;
-                var currentUserAddress = currentUser?.Address;
-                if (!string.IsNullOrWhiteSpace(currentUserAddress) && currentUserAddress.Contains('@'))
-                {
-                    emailAddress = currentUserAddress;
-                }
+                0 => "Outlook clásico está conectado, pero no se encontró una cuenta con dirección SMTP identificable.",
+                1 => $"Outlook clásico detectado. Se seleccionó automáticamente {selection.SelectedAccountEmail}.",
+                _ when selection.SelectedAccountEmail is not null =>
+                    $"Outlook clásico detectado. Se restauró la cuenta local {selection.SelectedAccountEmail}.",
+                _ => "Outlook clásico detectado. Seleccione una cuenta de envío antes de enviar correos."
+            };
+            if (!string.IsNullOrWhiteSpace(selection.SelectedAccountEmail))
+            {
+                _logger.Info($"Cuenta de envío seleccionada: {selection.SelectedAccountEmail}.");
             }
 
-            var message = string.IsNullOrWhiteSpace(emailAddress)
-                ? "Outlook clásico está conectado, pero no fue posible identificar el correo de la cuenta predeterminada."
-                : "Outlook clásico detectado y conectado.";
-            ConnectedAccountEmail = emailAddress;
-            if (!string.IsNullOrWhiteSpace(emailAddress))
-            {
-                _logger.Info($"Cuenta de envío conectada: {emailAddress}.");
-            }
-
-            return new OutlookConnectionInfo(true, message, emailAddress);
+            return new OutlookConnectionInfo(
+                true,
+                message,
+                selection.SelectedAccountEmail,
+                selection.AvailableAccounts);
         }
         catch (Exception ex)
         {
-            ConnectedAccountEmail = null;
+            _accountSelection.ClearAvailableAccounts();
             var failure = OutlookFailureClassifier.Classify(ex, environment, _logger.LogFilePath);
             _logger.Error($"No fue posible comprobar Outlook clásico. Clasificación={failure.Reason}.", ex);
             return new OutlookConnectionInfo(false, failure.UserMessage);
         }
         finally
         {
-            ComObjectHelper.FinalRelease(currentUser);
             ComObjectHelper.FinalRelease(accounts);
             ComObjectHelper.FinalRelease(session);
             ComObjectHelper.FinalRelease(application);
         }
     }
 
-    private static string? GetDefaultAccountEmail(Outlook.Accounts accounts)
+    private static IReadOnlyList<string> GetAvailableAccountEmails(Outlook.Accounts accounts)
     {
+        var result = new List<string>();
         for (var index = 1; index <= accounts.Count; index++)
         {
             Outlook.Account? account = null;
             try
             {
                 account = accounts[index];
-                var smtpAddress = account.SmtpAddress;
-                if (!string.IsNullOrWhiteSpace(smtpAddress))
+                var emailAddress = GetAccountEmail(account);
+                if (!string.IsNullOrWhiteSpace(emailAddress))
                 {
-                    return smtpAddress.Trim();
-                }
-
-                var displayName = account.DisplayName;
-                if (!string.IsNullOrWhiteSpace(displayName) && displayName.Contains('@'))
-                {
-                    return displayName.Trim();
+                    result.Add(emailAddress);
                 }
             }
             finally
@@ -113,7 +116,7 @@ public sealed class OutlookEmailService
             }
         }
 
-        return null;
+        return result;
     }
 
     private OutlookDiagnosticResult TestConnection(
@@ -464,36 +467,18 @@ public sealed class OutlookEmailService
         }
     }
 
-    private string? ConnectedAccountEmail
-    {
-        get
-        {
-            lock (_accountSync)
-            {
-                return _connectedAccountEmail;
-            }
-        }
-        set
-        {
-            lock (_accountSync)
-            {
-                _connectedAccountEmail = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-            }
-        }
-    }
-
     private Outlook.Account ResolveSendingAccount(Outlook.Application application, out string emailAddress)
     {
         Outlook.NameSpace? session = null;
         Outlook.Accounts? accounts = null;
         Outlook.Account? selectedAccount = null;
-        var expectedEmail = ConnectedAccountEmail;
         emailAddress = string.Empty;
         try
         {
             OutlookApplicationFactory.EnsureSta();
             session = application.Session;
             accounts = session.Accounts;
+            var expectedEmail = _accountSelection.RequireAvailableSelection(GetAvailableAccountEmails(accounts));
             for (var index = 1; index <= accounts.Count; index++)
             {
                 Outlook.Account? candidate = null;
@@ -502,8 +487,7 @@ public sealed class OutlookEmailService
                     candidate = accounts[index];
                     var candidateEmail = GetAccountEmail(candidate);
                     if (string.IsNullOrWhiteSpace(candidateEmail) ||
-                        (!string.IsNullOrWhiteSpace(expectedEmail) &&
-                         !candidateEmail.Equals(expectedEmail, StringComparison.OrdinalIgnoreCase)))
+                        !candidateEmail.Equals(expectedEmail, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
@@ -521,15 +505,12 @@ public sealed class OutlookEmailService
 
             if (selectedAccount is null)
             {
-                var detail = string.IsNullOrWhiteSpace(expectedEmail)
-                    ? "No se encontró una cuenta de Outlook con dirección SMTP."
-                    : $"La cuenta conectada {expectedEmail} ya no está disponible en Outlook.";
                 throw new OutlookIntegrationException(
                     OutlookFailureReason.SendingAccountUnavailable,
-                    $"{detail} No se envió ningún correo para evitar usar otra cuenta.");
+                    $"La cuenta seleccionada {expectedEmail} ya no está disponible en Outlook. " +
+                    "No se envió ningún correo para evitar usar otra cuenta.");
             }
 
-            ConnectedAccountEmail = emailAddress;
             return selectedAccount;
         }
         catch
@@ -549,38 +530,19 @@ public sealed class OutlookEmailService
         Outlook.Account sendingAccount,
         string expectedEmail)
     {
-        Outlook.Account? assignedAccount = null;
-        try
-        {
-            mailItem.SendUsingAccount = sendingAccount;
-            assignedAccount = mailItem.SendUsingAccount;
-            var assignedEmail = assignedAccount is null ? null : GetAccountEmail(assignedAccount);
-            if (!string.Equals(assignedEmail, expectedEmail, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new OutlookIntegrationException(
-                    OutlookFailureReason.SendingAccountUnavailable,
-                    $"Outlook no confirmó la cuenta de envío {expectedEmail}. " +
-                    "No se envió ningún correo para evitar usar otra cuenta.");
-            }
-        }
-        finally
-        {
-            ComObjectHelper.FinalRelease(assignedAccount);
-        }
+        OutlookSendingAccountAssignment.AssignAndVerify(
+            sendingAccount,
+            expectedEmail,
+            account => mailItem.SendUsingAccount = account,
+            () => mailItem.SendUsingAccount,
+            GetAccountEmail,
+            ComObjectHelper.FinalRelease);
     }
 
     private static string? GetAccountEmail(Outlook.Account account)
     {
         var smtpAddress = account.SmtpAddress;
-        if (!string.IsNullOrWhiteSpace(smtpAddress))
-        {
-            return smtpAddress.Trim();
-        }
-
-        var displayName = account.DisplayName;
-        return !string.IsNullOrWhiteSpace(displayName) && displayName.Contains('@')
-            ? displayName.Trim()
-            : null;
+        return string.IsNullOrWhiteSpace(smtpAddress) ? null : smtpAddress.Trim();
     }
 
     private OutlookEnvironmentInfo InspectAndLogEnvironment(string operation)

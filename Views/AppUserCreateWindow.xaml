@@ -1,0 +1,57 @@
+<Window x:Class="ECS.CommissionsMailer.Views.AppUserCreateWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Registrar perfil de acceso — ECS Comisiones"
+        Icon="pack://application:,,,/Images/icon.ico"
+        Width="570" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" Style="{StaticResource DialogWindowStyle}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Registrar perfil de acceso" Style="{StaticResource PageTitleTextStyle}" />
+            <TextBlock Text="Cree primero la cuenta en Firebase Console y copie aquí su UID. El WPF no crea cuentas Auth ni solicita contraseñas."
+                       Style="{StaticResource PageSubtitleTextStyle}" Margin="0,5,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,20,0,0">
+            <TextBlock Text="Firebase Authentication UID" Style="{StaticResource FieldLabelTextStyle}" />
+            <TextBox x:Name="UidTextBox" Margin="0,6,0,0" MaxLength="128"
+                     AutomationProperties.Name="Firebase Authentication UID" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Margin="0,14,0,0">
+            <TextBlock Text="Nombre para mostrar" Style="{StaticResource FieldLabelTextStyle}" />
+            <TextBox x:Name="DisplayNameTextBox" Margin="0,6,0,0" MaxLength="160" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="3" Margin="0,14,0,0">
+            <TextBlock Text="Correo electrónico" Style="{StaticResource FieldLabelTextStyle}" />
+            <TextBox x:Name="EmailTextBox" Margin="0,6,0,0" MaxLength="254" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="4" Margin="0,14,0,0">
+            <TextBlock Text="Rol" Style="{StaticResource FieldLabelTextStyle}" />
+            <ComboBox x:Name="RoleComboBox" Margin="0,6,0,0" Width="160" HorizontalAlignment="Left" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,18,0,0">
+            <CheckBox x:Name="ActiveCheckBox" Content="Perfil activo" IsChecked="True" />
+            <CheckBox x:Name="CommissionsCheckBox" Content="Puede usar Comisiones" IsChecked="True" Margin="22,4,0,4" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0">
+            <Button Content="Cancelar" IsCancel="True" />
+            <Button Content="Continuar" Click="Continue_Click" IsDefault="True"
+                    Style="{StaticResource PrimaryButtonStyle}" Margin="0" />
+        </StackPanel>
+    </Grid>
+</Window>

@@ -250,6 +250,7 @@ internal sealed class ExpirationsBrokerAssociationMapper : IFirestoreEntityMappe
             ["kind"] = FirestoreRestValue.String(value.Kind.ToString()),
             ["value"] = FirestoreRestValue.String(value.Value),
             ["normalizedValue"] = FirestoreRestValue.String(value.NormalizedValue),
+            ["origin"] = FirestoreRestValue.String(value.Origin.ToString()),
             ["isActive"] = FirestoreRestValue.Boolean(value.IsActive),
             ["createdAtUtc"] = FirestoreRestValue.Timestamp(value.CreatedAtUtc),
             ["updatedAtUtc"] = FirestoreRestValue.Timestamp(value.UpdatedAtUtc)
@@ -274,11 +275,62 @@ internal sealed class ExpirationsBrokerAssociationMapper : IFirestoreEntityMappe
             Kind = kind,
             Value = fields.Required("value").RequireString("value"),
             NormalizedValue = fields.Required("normalizedValue").RequireString("normalizedValue"),
+            Origin = ReadAssociationOrigin(fields),
             IsActive = fields.Required("isActive").RequireBoolean("isActive"),
             CreatedAtUtc = fields.Required("createdAtUtc").RequireTimestamp("createdAtUtc"),
             UpdatedAtUtc = fields.Required("updatedAtUtc").RequireTimestamp("updatedAtUtc")
         };
     }
+
+    private static ExpirationsAssociationOrigin ReadAssociationOrigin(
+        IReadOnlyDictionary<string, FirestoreRestValue> fields)
+    {
+        if (!fields.TryGetValue("origin", out var value))
+            return ExpirationsAssociationOrigin.Confirmed;
+        return value.RequireString("origin") switch
+        {
+            nameof(ExpirationsAssociationOrigin.Confirmed) => ExpirationsAssociationOrigin.Confirmed,
+            nameof(ExpirationsAssociationOrigin.Imported) => ExpirationsAssociationOrigin.Imported,
+            nameof(ExpirationsAssociationOrigin.ManuallyConfirmed) => ExpirationsAssociationOrigin.ManuallyConfirmed,
+            nameof(ExpirationsAssociationOrigin.ManuallyAdded) => ExpirationsAssociationOrigin.ManuallyAdded,
+            _ => throw new InvalidDataException("El campo 'origin' contiene un origen no permitido.")
+        };
+    }
+}
+
+internal sealed class ExpirationsObservedIdentifierMapper : IFirestoreEntityMapper<ExpirationsObservedIdentifier>
+{
+    public IReadOnlyDictionary<string, FirestoreRestValue> ToFields(ExpirationsObservedIdentifier value) =>
+        new Dictionary<string, FirestoreRestValue>(StringComparer.Ordinal)
+        {
+            ["id"] = ExpirationsFirestoreFields.Guid(value.Id),
+            ["brokerId"] = ExpirationsFirestoreFields.Guid(value.BrokerId),
+            ["kind"] = FirestoreRestValue.String(value.Kind.ToString()),
+            ["value"] = FirestoreRestValue.String(value.Value),
+            ["normalizedValue"] = FirestoreRestValue.String(value.NormalizedValue),
+            ["firstSeenAtUtc"] = FirestoreRestValue.Timestamp(value.FirstSeenAtUtc),
+            ["lastSeenAtUtc"] = FirestoreRestValue.Timestamp(value.LastSeenAtUtc),
+            ["isIgnored"] = FirestoreRestValue.Boolean(value.IsIgnored)
+        };
+
+    public ExpirationsObservedIdentifier FromFields(
+        IReadOnlyDictionary<string, FirestoreRestValue> fields) => new()
+    {
+        Id = ExpirationsFirestoreFields.ReadGuid(fields.Required("id"), "id"),
+        BrokerId = ExpirationsFirestoreFields.ReadGuid(fields.Required("brokerId"), "brokerId"),
+        Kind = fields.Required("kind").RequireString("kind") switch
+        {
+            nameof(ExpirationsAssociationKind.Name) => ExpirationsAssociationKind.Name,
+            nameof(ExpirationsAssociationKind.Alias) => ExpirationsAssociationKind.Alias,
+            nameof(ExpirationsAssociationKind.Code) => ExpirationsAssociationKind.Code,
+            _ => throw new InvalidDataException("El campo 'kind' contiene un tipo observado no permitido.")
+        },
+        Value = fields.Required("value").RequireString("value"),
+        NormalizedValue = fields.Required("normalizedValue").RequireString("normalizedValue"),
+        FirstSeenAtUtc = fields.Required("firstSeenAtUtc").RequireTimestamp("firstSeenAtUtc"),
+        LastSeenAtUtc = fields.Required("lastSeenAtUtc").RequireTimestamp("lastSeenAtUtc"),
+        IsIgnored = fields.Required("isIgnored").RequireBoolean("isIgnored")
+    };
 }
 
 internal sealed class ExpirationsExclusionMapper : IFirestoreEntityMapper<ExpirationsExclusion>

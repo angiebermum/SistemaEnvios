@@ -74,4 +74,5 @@ public sealed record ExpirationsNextMonthStandardWorkbookGenerationRequest(
     string WorksheetName,
     uint HeaderRowNumber,
     IReadOnlyList<uint> SourceRowNumbers,
-    ExpirationsPremiumColumnOptions? PremiumColumnOptions = null);
+    ExpirationsPremiumColumnOptions? PremiumColumnOptions = null,
+    ExpirationsPremiumTotalsPlan? PrecomputedTotalsPlan = null);

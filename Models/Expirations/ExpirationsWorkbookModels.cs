@@ -82,6 +82,7 @@ public sealed class ExpirationsBrokerComponentResolution
     public IReadOnlyList<Guid> MatchedAssociationIds { get; init; } = [];
     public IReadOnlyList<Guid> UnknownCatalogBrokerIds { get; init; } = [];
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
+    public bool CanBeObservedAutomatically { get; init; }
 }
 
 public sealed class ExpirationsRowResolution

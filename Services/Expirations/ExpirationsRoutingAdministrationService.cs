@@ -7,6 +7,8 @@ public interface IExpirationsRoutingAdministrationService
 {
     Task<IReadOnlyList<ExpirationsAssociationAdministrationItem>> ListAssociationsAsync(
         CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ExpirationsKnownIdentifierAdministrationItem>> ListKnownIdentifiersAsync(
+        CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ExpirationsExclusionAdministrationItem>> ListExclusionsAsync(
         CancellationToken cancellationToken = default);
     Task<ExpirationsRoutingAdministrationResult> CreateAssociationAsync(
@@ -34,6 +36,19 @@ public interface IExpirationsRoutingAdministrationService
         Guid associationId,
         string expectedUpdateTime,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> ConfirmObservedIdentifierAsync(
+        Guid identifierId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> ReassignAndConfirmObservedIdentifierAsync(
+        Guid identifierId,
+        Guid destinationBrokerId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> IgnoreObservedIdentifierAsync(
+        Guid identifierId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
     Task<ExpirationsRoutingAdministrationResult> SetExclusionActiveAsync(
         Guid exclusionId,
         bool isActive,
@@ -48,19 +63,115 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
     private readonly IExpirationsBrokerConfigurationService _brokers;
     private readonly ExpirationsBrokerNormalizer _normalizer;
     private readonly TimeProvider _timeProvider;
+    private readonly IExpirationsObservedIdentifierRepository? _observedIdentifiers;
 
     public ExpirationsRoutingAdministrationService(
         IExpirationsBrokerAssociationRepository associations,
         IExpirationsExclusionRepository exclusions,
         IExpirationsBrokerConfigurationService brokers,
         ExpirationsBrokerNormalizer? normalizer = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IExpirationsObservedIdentifierRepository? observedIdentifiers = null)
     {
         _associations = associations ?? throw new ArgumentNullException(nameof(associations));
         _exclusions = exclusions ?? throw new ArgumentNullException(nameof(exclusions));
         _brokers = brokers ?? throw new ArgumentNullException(nameof(brokers));
         _normalizer = normalizer ?? new ExpirationsBrokerNormalizer();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _observedIdentifiers = observedIdentifiers;
+    }
+
+    public async Task<IReadOnlyList<ExpirationsKnownIdentifierAdministrationItem>> ListKnownIdentifiersAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var associationsTask = ListAssociationsAsync(cancellationToken);
+        var brokersTask = _brokers.ListAsync(cancellationToken);
+        var observedTask = _observedIdentifiers?.ListAsync(cancellationToken) ??
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsObservedIdentifier>>>([]);
+        await Task.WhenAll(associationsTask, brokersTask, observedTask);
+        var brokers = (await brokersTask).ToDictionary(item => item.BrokerId);
+        var associationItems = await associationsTask;
+        var associationNormalizedValues = associationItems
+            .Select(item => Normalize(item.Association.NormalizedValue, item.Association.Value))
+            .ToHashSet(StringComparer.Ordinal);
+        var masterNormalizedValues = brokers.Values
+            .Select(item => _normalizer.Normalize(item.Name))
+            .Where(value => value.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        var result = new List<ExpirationsKnownIdentifierAdministrationItem>();
+
+        foreach (var broker in brokers.Values)
+        {
+            result.Add(new ExpirationsKnownIdentifierAdministrationItem
+            {
+                BrokerId = broker.BrokerId,
+                BrokerName = broker.Name,
+                BrokerPrimaryEmail = broker.PrimaryEmailAddresses.FirstOrDefault(email =>
+                    !string.IsNullOrWhiteSpace(email)) ?? string.Empty,
+                Kind = ExpirationsAssociationKind.Name,
+                Value = broker.Name,
+                NormalizedValue = _normalizer.Normalize(broker.Name),
+                OriginText = "Maestro",
+                StatusText = broker.IsActive ? "Activo" : "Inactivo",
+                UpdatedAtUtc = broker.ProfileUpdatedAtUtc,
+                IsMaster = true
+            });
+        }
+
+        result.AddRange(associationItems
+            .Where(item => !masterNormalizedValues.Contains(
+                Normalize(item.Association.NormalizedValue, item.Association.Value)))
+            .Select(item => new ExpirationsKnownIdentifierAdministrationItem
+            {
+                BrokerId = item.Association.BrokerId,
+                BrokerName = item.BrokerName,
+                BrokerPrimaryEmail = item.BrokerPrimaryEmail,
+                Kind = item.Association.Kind,
+                Value = item.Association.Value,
+                NormalizedValue = Normalize(item.Association.NormalizedValue, item.Association.Value),
+                OriginText = item.OriginText,
+                StatusText = item.Association.IsActive ? "Activo" : "Inactivo",
+                UpdatedAtUtc = item.Association.UpdatedAtUtc,
+                AssociationItem = item
+            }));
+
+        foreach (var document in await observedTask)
+        {
+            var observed = document.Value;
+            var normalized = Normalize(observed.NormalizedValue, observed.Value);
+            if (observed.IsIgnored || associationNormalizedValues.Contains(normalized) ||
+                masterNormalizedValues.Contains(normalized))
+                continue;
+            brokers.TryGetValue(observed.BrokerId, out var broker);
+            var item = new ExpirationsObservedIdentifierAdministrationItem
+            {
+                Identifier = ExpirationsObservedIdentifierCaptureService.Copy(observed),
+                UpdateTime = document.UpdateTime,
+                BrokerName = broker?.Name ?? $"Corredor inexistente ({observed.BrokerId:D})",
+                BrokerPrimaryEmail = broker?.PrimaryEmailAddresses.FirstOrDefault(email =>
+                    !string.IsNullOrWhiteSpace(email)) ?? string.Empty
+            };
+            result.Add(new ExpirationsKnownIdentifierAdministrationItem
+            {
+                BrokerId = observed.BrokerId,
+                BrokerName = item.BrokerName,
+                BrokerPrimaryEmail = item.BrokerPrimaryEmail,
+                Kind = observed.Kind,
+                Value = observed.Value,
+                NormalizedValue = normalized,
+                OriginText = "Detectado automáticamente",
+                StatusText = "Pendiente",
+                UpdatedAtUtc = observed.LastSeenAtUtc,
+                ObservedItem = item
+            });
+        }
+
+        return result
+            .OrderBy(item => item.BrokerName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenByDescending(item => item.IsMaster)
+            .ThenBy(item => item.Value, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(item => item.NormalizedValue, StringComparer.Ordinal)
+            .ToList();
     }
 
     public async Task<IReadOnlyList<ExpirationsAssociationAdministrationItem>> ListAssociationsAsync(
@@ -104,7 +215,20 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         Guid brokerId,
         ExpirationsAssociationKind kind,
         string value,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await CreateAssociationCoreAsync(
+            brokerId,
+            kind,
+            value,
+            ExpirationsAssociationOrigin.ManuallyAdded,
+            cancellationToken);
+
+    private async Task<ExpirationsRoutingAdministrationResult> CreateAssociationCoreAsync(
+        Guid brokerId,
+        ExpirationsAssociationKind kind,
+        string value,
+        ExpirationsAssociationOrigin origin,
+        CancellationToken cancellationToken)
     {
         var validation = ValidateAssociationInput(kind, value);
         if (validation is not null)
@@ -125,6 +249,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             Kind = kind,
             Value = value.Trim(),
             NormalizedValue = _normalizer.Normalize(value),
+            Origin = origin,
             IsActive = true,
             CreatedAtUtc = now,
             UpdatedAtUtc = now
@@ -273,6 +398,59 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         }
     }
 
+    public async Task<ExpirationsRoutingAdministrationResult> ConfirmObservedIdentifierAsync(
+        Guid identifierId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default)
+    {
+        var observed = await GetObservedAsync(identifierId, expectedUpdateTime, cancellationToken);
+        if (observed.Result is not null)
+            return observed.Result;
+        return await CreateAssociationCoreAsync(
+            observed.Document!.Value.BrokerId,
+            observed.Document.Value.Kind,
+            observed.Document.Value.Value,
+            ExpirationsAssociationOrigin.ManuallyConfirmed,
+            cancellationToken);
+    }
+
+    public async Task<ExpirationsRoutingAdministrationResult> ReassignAndConfirmObservedIdentifierAsync(
+        Guid identifierId,
+        Guid destinationBrokerId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default)
+    {
+        var observed = await GetObservedAsync(identifierId, expectedUpdateTime, cancellationToken);
+        if (observed.Result is not null)
+            return observed.Result;
+        var created = await CreateAssociationCoreAsync(
+            destinationBrokerId,
+            observed.Document!.Value.Kind,
+            observed.Document.Value.Value,
+            ExpirationsAssociationOrigin.ManuallyConfirmed,
+            cancellationToken);
+        if (!created.WasPersisted)
+            return created;
+        return await IgnoreObservedCoreAsync(
+            observed.Document,
+            "El identificador fue reasignado y confirmado.",
+            cancellationToken);
+    }
+
+    public async Task<ExpirationsRoutingAdministrationResult> IgnoreObservedIdentifierAsync(
+        Guid identifierId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default)
+    {
+        var observed = await GetObservedAsync(identifierId, expectedUpdateTime, cancellationToken);
+        if (observed.Result is not null)
+            return observed.Result;
+        return await IgnoreObservedCoreAsync(
+            observed.Document!,
+            "El identificador observado fue ignorado.",
+            cancellationToken);
+    }
+
     public async Task<ExpirationsRoutingAdministrationResult> SetExclusionActiveAsync(
         Guid exclusionId,
         bool isActive,
@@ -352,6 +530,62 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         return null;
     }
 
+    private async Task<(
+        FirestoreStoredDocument<ExpirationsObservedIdentifier>? Document,
+        ExpirationsRoutingAdministrationResult? Result)> GetObservedAsync(
+        Guid identifierId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken)
+    {
+        if (_observedIdentifiers is null)
+        {
+            return (null, Result(
+                ExpirationsRoutingAdministrationOutcome.Rejected,
+                "La administración de identificadores observados no está disponible."));
+        }
+        var stored = await _observedIdentifiers.GetAsync(identifierId, cancellationToken);
+        if (stored is null)
+            return (null, Result(ExpirationsRoutingAdministrationOutcome.NotFound,
+                "El identificador observado ya no existe."));
+        if (!string.Equals(stored.UpdateTime, expectedUpdateTime, StringComparison.Ordinal))
+            return (null, Concurrency());
+        if (stored.Value.IsIgnored)
+            return (null, Result(ExpirationsRoutingAdministrationOutcome.Rejected,
+                "El identificador observado ya fue ignorado."));
+        return (stored, null);
+    }
+
+    private async Task<ExpirationsRoutingAdministrationResult> IgnoreObservedCoreAsync(
+        FirestoreStoredDocument<ExpirationsObservedIdentifier> stored,
+        string successMessage,
+        CancellationToken cancellationToken)
+    {
+        var updated = ExpirationsObservedIdentifierCaptureService.Copy(stored.Value);
+        updated.IsIgnored = true;
+        try
+        {
+            await _observedIdentifiers!.UpdateAsync(updated, stored.UpdateTime, cancellationToken);
+            return Result(ExpirationsRoutingAdministrationOutcome.Updated, successMessage);
+        }
+        catch (FirestoreConcurrencyException)
+        {
+            var latest = await _observedIdentifiers!.GetAsync(stored.Value.Id, cancellationToken);
+            if (latest is null || latest.Value.IsIgnored)
+                return Result(ExpirationsRoutingAdministrationOutcome.Updated, successMessage);
+            updated = ExpirationsObservedIdentifierCaptureService.Copy(latest.Value);
+            updated.IsIgnored = true;
+            try
+            {
+                await _observedIdentifiers.UpdateAsync(updated, latest.UpdateTime, cancellationToken);
+                return Result(ExpirationsRoutingAdministrationOutcome.Updated, successMessage);
+            }
+            catch (FirestoreConcurrencyException)
+            {
+                return Concurrency();
+            }
+        }
+    }
+
     private static ExpirationsRoutingAdministrationResult? ValidateAssociationInput(
         ExpirationsAssociationKind kind,
         string value)
@@ -409,6 +643,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         Kind = value.Kind,
         Value = value.Value,
         NormalizedValue = value.NormalizedValue,
+        Origin = value.Origin,
         IsActive = value.IsActive,
         CreatedAtUtc = value.CreatedAtUtc,
         UpdatedAtUtc = value.UpdatedAtUtc

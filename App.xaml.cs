@@ -272,6 +272,7 @@ public partial class App : Application
                 var directoryRepository = new ExpirationsBrokerDirectoryRepository(moduleContext.FirestoreClient);
                 var profileRepository = new ExpirationsBrokerProfileRepository(moduleContext.FirestoreClient);
                 var associationRepository = new ExpirationsBrokerAssociationRepository(moduleContext.FirestoreClient);
+                var observedIdentifierRepository = new ExpirationsObservedIdentifierRepository(moduleContext.FirestoreClient);
                 var exclusionRepository = new ExpirationsExclusionRepository(moduleContext.FirestoreClient);
                 var settingsRepository = new ExpirationsProcessSettingsRepository(moduleContext.FirestoreClient);
                 var sendHistoryRepository = new ExpirationsSendHistoryRepository(moduleContext.FirestoreClient);
@@ -284,11 +285,14 @@ public partial class App : Application
                 var coordinator = new ExpirationsAnalysisCoordinator(
                     catalogService,
                     associationRepository,
-                    exclusions: exclusionRepository);
+                    exclusions: exclusionRepository,
+                    observedIdentifierCapture: new ExpirationsObservedIdentifierCaptureService(
+                        observedIdentifierRepository));
                 var routingAdministrationService = new ExpirationsRoutingAdministrationService(
                     associationRepository,
                     exclusionRepository,
-                    configurationService);
+                    configurationService,
+                    observedIdentifiers: observedIdentifierRepository);
                 var generationService = new ExpirationsGenerationService();
                 var emailSettingsService = new ExpirationsEmailSettingsService(settingsRepository);
                 var sendPreparationService = new ExpirationsSendPreparationService(

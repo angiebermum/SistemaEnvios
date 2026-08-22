@@ -12,14 +12,17 @@ public partial class ExpirationsBrokerManagementWindow : Window
 {
     private readonly IExpirationsBrokerConfigurationService _service;
     private readonly IExpirationsRoutingAdministrationService? _routingAdministration;
+    private readonly ExpirationsProcess _process;
     internal readonly ExpirationsBrokerManagementState State = new();
 
     public ExpirationsBrokerManagementWindow(
         IExpirationsBrokerConfigurationService service,
-        IExpirationsRoutingAdministrationService? routingAdministration = null)
+        IExpirationsRoutingAdministrationService? routingAdministration = null,
+        ExpirationsProcess process = ExpirationsProcess.NextMonth)
     {
         _service = service ?? throw new ArgumentNullException(nameof(service));
         _routingAdministration = routingAdministration;
+        _process = process;
         InitializeComponent();
         DataContext = State;
         RoutingAdministrationButton.Visibility = routingAdministration is null
@@ -70,7 +73,7 @@ public partial class ExpirationsBrokerManagementWindow : Window
     {
         if (State.SelectedItem is not { } selected)
             return;
-        var editor = new ExpirationsBrokerProfileWindow(_service, selected) { Owner = this };
+        var editor = new ExpirationsBrokerProfileWindow(_service, selected, _process) { Owner = this };
         if (editor.ShowDialog() != true || editor.SavedConfiguration is null)
             return;
         State.Replace(editor.SavedConfiguration);

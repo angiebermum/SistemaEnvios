@@ -174,7 +174,10 @@ internal static class ModuleWindowUiSmokeRunner
             var configurationService = new SmokeConfigurationService(configurationItems);
             var routingService = new SmokeRoutingAdministrationService(configurationItems);
             Render(
-                new ExpirationsBrokerManagementWindow(configurationService, routingService),
+                new ExpirationsBrokerManagementWindow(
+                    configurationService,
+                    routingService,
+                    ExpirationsProcess.PreviousMonth),
                 brokerManagementPath);
             Render(
                 new ExpirationsRoutingAdministrationWindow(
@@ -184,10 +187,16 @@ internal static class ModuleWindowUiSmokeRunner
             Render(new ExpirationsExclusionsWindow(routingService), exclusionsPath);
             Render(new ExpirationsAssociationEditorWindow(configurationItems[0]), associationEditorPath);
             Render(
-                new ExpirationsBrokerProfileWindow(configurationService, configurationItems[0]),
+                new ExpirationsBrokerProfileWindow(
+                    configurationService,
+                    configurationItems[0],
+                    ExpirationsProcess.PreviousMonth),
                 defaultProfilePath);
             Render(
-                new ExpirationsBrokerProfileWindow(configurationService, configurationItems[1]),
+                new ExpirationsBrokerProfileWindow(
+                    configurationService,
+                    configurationItems[1],
+                    ExpirationsProcess.NextMonth),
                 configuredProfilePath);
             Render(
                 new ExpirationsAssistantEditorWindow(
@@ -1000,6 +1009,41 @@ internal static class ModuleWindowUiSmokeRunner
             ]);
         }
 
+        public async Task<IReadOnlyList<ExpirationsKnownIdentifierAdministrationItem>> ListKnownIdentifiersAsync(
+            CancellationToken cancellationToken = default)
+        {
+            var broker = brokers.First();
+            var association = AssertSingle(await ListAssociationsAsync(cancellationToken));
+            return
+            [
+                new ExpirationsKnownIdentifierAdministrationItem
+                {
+                    BrokerId = broker.BrokerId,
+                    BrokerName = broker.Name,
+                    BrokerPrimaryEmail = broker.PrimaryEmailAddresses.FirstOrDefault() ?? string.Empty,
+                    Kind = ExpirationsAssociationKind.Name,
+                    Value = broker.Name,
+                    NormalizedValue = broker.Name.ToUpperInvariant(),
+                    OriginText = "Maestro",
+                    StatusText = "Activo",
+                    IsMaster = true
+                },
+                new ExpirationsKnownIdentifierAdministrationItem
+                {
+                    BrokerId = broker.BrokerId,
+                    BrokerName = broker.Name,
+                    BrokerPrimaryEmail = broker.PrimaryEmailAddresses.FirstOrDefault() ?? string.Empty,
+                    Kind = association.Association.Kind,
+                    Value = association.Association.Value,
+                    NormalizedValue = association.Association.NormalizedValue,
+                    OriginText = association.OriginText,
+                    StatusText = "Activo",
+                    UpdatedAtUtc = association.Association.UpdatedAtUtc,
+                    AssociationItem = association
+                }
+            ];
+        }
+
         public Task<IReadOnlyList<ExpirationsExclusionAdministrationItem>> ListExclusionsAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<ExpirationsExclusionAdministrationItem>>(
@@ -1042,6 +1086,22 @@ internal static class ModuleWindowUiSmokeRunner
         public Task<ExpirationsRoutingAdministrationResult> SetExclusionActiveAsync(
             Guid exclusionId, bool isActive, string expectedUpdateTime,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ExpirationsRoutingAdministrationResult> ConfirmObservedIdentifierAsync(
+            Guid identifierId, string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ExpirationsRoutingAdministrationResult> ReassignAndConfirmObservedIdentifierAsync(
+            Guid identifierId, Guid destinationBrokerId, string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ExpirationsRoutingAdministrationResult> IgnoreObservedIdentifierAsync(
+            Guid identifierId, string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        private static T AssertSingle<T>(IReadOnlyList<T> values) => values.Count == 1
+            ? values[0]
+            : throw new InvalidOperationException("El smoke esperaba exactamente un elemento.");
     }
 
     private sealed class SmokeEmailSettingsService : IExpirationsEmailSettingsService

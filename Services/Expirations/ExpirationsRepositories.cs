@@ -124,6 +124,49 @@ public sealed class ExpirationsBrokerAssociationRepository(IFirestoreRestClient 
         _repository.DeleteAsync(associationId.ToString("D"), expectedUpdateTime, cancellationToken);
 }
 
+public interface IExpirationsObservedIdentifierRepository
+{
+    Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>?> GetAsync(
+        Guid identifierId,
+        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsObservedIdentifier>>> ListAsync(
+        CancellationToken cancellationToken = default);
+    Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>> CreateAsync(
+        ExpirationsObservedIdentifier value,
+        CancellationToken cancellationToken = default);
+    Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>> UpdateAsync(
+        ExpirationsObservedIdentifier value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class ExpirationsObservedIdentifierRepository(IFirestoreRestClient client)
+    : IExpirationsObservedIdentifierRepository
+{
+    private readonly FirestoreCollectionRepository<ExpirationsObservedIdentifier> _repository =
+        new(client, new ExpirationsObservedIdentifierMapper(), "modules/vencimientos", "observedIdentifiers");
+
+    public Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>?> GetAsync(
+        Guid identifierId,
+        CancellationToken cancellationToken = default) =>
+        _repository.GetAsync(identifierId.ToString("D"), cancellationToken);
+
+    public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsObservedIdentifier>>> ListAsync(
+        CancellationToken cancellationToken = default) =>
+        _repository.ListAsync(cancellationToken: cancellationToken);
+
+    public Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>> CreateAsync(
+        ExpirationsObservedIdentifier value,
+        CancellationToken cancellationToken = default) =>
+        _repository.CreateAsync(value.Id.ToString("D"), value, cancellationToken);
+
+    public Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>> UpdateAsync(
+        ExpirationsObservedIdentifier value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        _repository.UpdateAsync(value.Id.ToString("D"), value, expectedUpdateTime, cancellationToken);
+}
+
 public interface IExpirationsExclusionRepository
 {
     Task<FirestoreStoredDocument<ExpirationsExclusion>?> GetAsync(

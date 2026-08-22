@@ -1,7 +1,7 @@
 <Window x:Class="ECS.CommissionsMailer.Views.ExpirationsRoutingAdministrationWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Administración de asociaciones — Vencimientos"
+        Title="Identificadores conocidos — Vencimientos"
         Width="1120" Height="760" MinWidth="920" MinHeight="620"
         WindowStartupLocation="CenterOwner" Loaded="Window_Loaded"
         Style="{StaticResource DialogWindowStyle}">
@@ -17,9 +17,9 @@
         </Grid.RowDefinitions>
 
         <StackPanel>
-            <TextBlock Text="Administración de asociaciones — Vencimientos"
+            <TextBlock Text="Identificadores conocidos — Vencimientos"
                        Style="{StaticResource PageTitleTextStyle}" />
-            <TextBlock Text="Revise y administre los nombres, alias y códigos asociados a cada corredor."
+            <TextBlock Text="Revise la identidad maestra, asociaciones y valores detectados para cada corredor."
                        Style="{StaticResource PageSubtitleTextStyle}" Margin="0,4,0,0" />
         </StackPanel>
 
@@ -30,7 +30,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="Buscar por valor, tipo, corredor o correo"
+                <TextBlock Text="Buscar por nombre, código, alias, corredor, correo u origen"
                            Style="{StaticResource CaptionTextStyle}" />
                 <TextBox Text="{Binding AssociationSearchText, UpdateSourceTrigger=PropertyChanged}"
                          Margin="0,5,0,0" />
@@ -67,24 +67,23 @@
         </Border>
 
         <StackPanel Grid.Row="3" Margin="0,12,0,8">
-            <TextBlock Text="Asociaciones adicionales" FontWeight="SemiBold" />
-            <TextBlock Text="Este corredor no tiene códigos, alias o nombres adicionales asociados."
+            <TextBlock Text="Identificadores conocidos" FontWeight="SemiBold" />
+            <TextBlock Text="Este corredor sólo tiene su identidad maestra."
                        Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0"
                        Visibility="{Binding NoAssociationsVisibility}" />
             <TextBlock Text="Nombre: nombre alternativo utilizado para identificar al corredor.  ·  Alias: otra forma en que puede aparecer el corredor en el Excel.  ·  Código: código único utilizado para identificar al corredor."
                        Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,4,0,0" />
         </StackPanel>
 
-        <DataGrid Grid.Row="4" ItemsSource="{Binding VisibleAssociations}"
-                  SelectedItem="{Binding SelectedAssociation, Mode=TwoWay}"
+        <DataGrid Grid.Row="4" ItemsSource="{Binding VisibleKnownIdentifiers}"
+                  SelectedItem="{Binding SelectedKnownIdentifier, Mode=TwoWay}"
                   IsReadOnly="True" AutoGenerateColumns="False" IsEnabled="{Binding IsUiEnabled}">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Tipo" Binding="{Binding KindText}" Width="130" />
-                <DataGridTextColumn Header="Valor asociado" Binding="{Binding Association.Value}" Width="2*" />
-                <DataGridTextColumn Header="Origen" Binding="{Binding OriginText}" Width="170" />
-                <DataGridTextColumn Header="Corredor" Binding="{Binding BrokerName}" Width="2*" />
-                <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="95" />
-                <DataGridTextColumn Header="Actualizado" Binding="{Binding Association.UpdatedAtUtc, StringFormat={}{0:g}}" Width="145" />
+                <DataGridTextColumn Header="Tipo" Binding="{Binding KindText}" Width="110" />
+                <DataGridTextColumn Header="Valor" Binding="{Binding Value}" Width="300" />
+                <DataGridTextColumn Header="Origen" Binding="{Binding OriginText}" Width="190" />
+                <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="100" />
+                <DataGridTextColumn Header="Actualizado" Binding="{Binding UpdatedAtUtc, StringFormat={}{0:g}}" Width="145" />
             </DataGrid.Columns>
         </DataGrid>
 
@@ -99,12 +98,16 @@
                     IsEnabled="{Binding CanReactivateAssociation}" Style="{StaticResource CompactButtonStyle}" />
             <Button Content="Eliminar" Click="DeleteAssociation_Click"
                     IsEnabled="{Binding CanDeleteAssociation}" Style="{StaticResource CompactButtonStyle}" />
+            <Button Content="Confirmar" Click="ConfirmObserved_Click"
+                    IsEnabled="{Binding CanConfirmObserved}" Style="{StaticResource CompactButtonStyle}" />
+            <Button Content="Ignorar" Click="IgnoreObserved_Click"
+                    IsEnabled="{Binding CanIgnoreObserved}" Style="{StaticResource CompactButtonStyle}" />
             <TextBlock Text="Reasignar a" Style="{StaticResource CaptionTextStyle}"
                        VerticalAlignment="Center" Margin="14,0,8,0" />
             <ComboBox Width="270" ItemsSource="{Binding DestinationBrokers}"
                       SelectedItem="{Binding SelectedDestinationBroker, Mode=TwoWay}"
                       DisplayMemberPath="DisplayText" />
-            <Button Content="Reasignar" Click="ReassignAssociation_Click"
+            <Button Content="{Binding ReassignButtonText}" Click="ReassignAssociation_Click"
                     IsEnabled="{Binding CanReassign}" Style="{StaticResource CompactButtonStyle}" />
         </WrapPanel>
 

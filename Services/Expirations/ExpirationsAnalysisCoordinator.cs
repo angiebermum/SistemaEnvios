@@ -48,6 +48,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, string> _computeSourceSha256;
     private readonly IExpirationsNextMonthGenerationPreflightService _nextMonthPreflightService;
+    private readonly IExpirationsObservedIdentifierCaptureService? _observedIdentifierCapture;
     private ExpirationsProcess? _process;
     private string _sourcePath = string.Empty;
     private ExpirationsWorkbookReadOptions? _readOptions;
@@ -57,6 +58,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     private IReadOnlyList<FirestoreStoredDocument<ExpirationsExclusion>> _exclusionDocuments = [];
     private readonly List<ExpirationsManualResolutionOverride> _manualOverrides = [];
     private string _analyzedSourceSha256 = string.Empty;
+    private IReadOnlyList<string> _observationWarnings = [];
 
     public ExpirationsAnalysisCoordinator(
         ExpirationsBrokerCatalogService catalogService,
@@ -69,7 +71,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         TimeProvider? timeProvider = null,
         Func<string, string>? sourceHashProvider = null,
         IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null,
-        IExpirationsExclusionRepository? exclusions = null)
+        IExpirationsExclusionRepository? exclusions = null,
+        IExpirationsObservedIdentifierCaptureService? observedIdentifierCapture = null)
     {
         _catalogService = catalogService ?? throw new ArgumentNullException(nameof(catalogService));
         _associations = associations ?? throw new ArgumentNullException(nameof(associations));
@@ -84,6 +87,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         _computeSourceSha256 = sourceHashProvider ?? hashService.ComputeSha256;
         _nextMonthPreflightService = nextMonthPreflightService ??
             new ExpirationsNextMonthGenerationPreflightService();
+        _observedIdentifierCapture = observedIdentifierCapture;
         Snapshot = EmptySnapshot();
     }
 
@@ -121,6 +125,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
 
         _readOptions = options;
         _manualOverrides.Clear();
+        _observationWarnings = [];
         var readResult = await Task.Run(
             () => _reader.Read(_sourcePath, options),
             cancellationToken);
@@ -152,6 +157,23 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         }
         _analyzedSourceSha256 = completedHash;
         Snapshot = BuildSnapshot();
+        if (_observedIdentifierCapture is not null && Snapshot.Analysis is { } analysis)
+        {
+            try
+            {
+                await _observedIdentifierCapture.CaptureAsync(analysis, Snapshot.Catalog, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _observationWarnings =
+                    [$"El análisis terminó, pero no fue posible registrar los identificadores observados: {ex.Message}"];
+                Snapshot = BuildSnapshot();
+            }
+        }
         return Snapshot;
     }
 
@@ -399,6 +421,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                 Kind = confirmation.Kind,
                 Value = component.RawValue,
                 NormalizedValue = normalizedValue,
+                Origin = ExpirationsAssociationOrigin.ManuallyConfirmed,
                 IsActive = true,
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now
@@ -604,7 +627,11 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
             PendingIssues = pending,
             ExcludedValues = excluded,
             ManualOverrides = _manualOverrides.ToList(),
-            Messages = _readResult.Messages.Concat(_catalog.Warnings).Distinct().ToList()
+            Messages = _readResult.Messages
+                .Concat(_catalog.Warnings)
+                .Concat(_observationWarnings)
+                .Distinct()
+                .ToList()
         };
     }
 
@@ -706,6 +733,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         Kind = value.Kind,
         Value = value.Value,
         NormalizedValue = value.NormalizedValue,
+        Origin = value.Origin,
         IsActive = value.IsActive,
         CreatedAtUtc = value.CreatedAtUtc,
         UpdatedAtUtc = value.UpdatedAtUtc

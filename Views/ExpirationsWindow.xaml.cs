@@ -304,9 +304,12 @@ public partial class ExpirationsWindow : Window
 
     private async void ConfigureBrokers_Click(object sender, RoutedEventArgs e)
     {
+        if (_state.SelectedProcessOption?.Value is not { } process)
+            return;
         var management = new ExpirationsBrokerManagementWindow(
             _configurationService,
-            _routingAdministrationService) { Owner = this };
+            _routingAdministrationService,
+            process) { Owner = this };
         _ = management.ShowDialog();
         if (!management.HasSavedChanges)
             return;

@@ -52,6 +52,14 @@ public enum ExpirationsAssociationKind
     Code
 }
 
+public enum ExpirationsAssociationOrigin
+{
+    Confirmed,
+    Imported,
+    ManuallyConfirmed,
+    ManuallyAdded
+}
+
 public sealed class ExpirationsBrokerAssociation
 {
     public Guid Id { get; set; }
@@ -59,9 +67,22 @@ public sealed class ExpirationsBrokerAssociation
     public ExpirationsAssociationKind Kind { get; set; }
     public string Value { get; set; } = string.Empty;
     public string NormalizedValue { get; set; } = string.Empty;
+    public ExpirationsAssociationOrigin Origin { get; set; } = ExpirationsAssociationOrigin.Confirmed;
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }
+}
+
+public sealed class ExpirationsObservedIdentifier
+{
+    public Guid Id { get; set; }
+    public Guid BrokerId { get; set; }
+    public ExpirationsAssociationKind Kind { get; set; }
+    public string Value { get; set; } = string.Empty;
+    public string NormalizedValue { get; set; } = string.Empty;
+    public DateTimeOffset FirstSeenAtUtc { get; set; }
+    public DateTimeOffset LastSeenAtUtc { get; set; }
+    public bool IsIgnored { get; set; }
 }
 
 public sealed class ExpirationsExclusion

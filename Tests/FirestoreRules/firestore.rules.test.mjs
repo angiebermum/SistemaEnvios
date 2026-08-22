@@ -68,6 +68,18 @@ const exclusion = (id, overrides = {}) => ({
   ...overrides
 });
 
+const observedIdentifier = (id, brokerId, overrides = {}) => ({
+  id,
+  brokerId,
+  kind: 'Alias',
+  value: 'Adriana Arroyo/AAV - 90',
+  normalizedValue: 'ADRIANA ARROYO AAV 90',
+  firstSeenAtUtc: new Date('2026-08-10T00:00:00Z'),
+  lastSeenAtUtc: new Date('2026-08-10T00:00:00Z'),
+  isIgnored: false,
+  ...overrides
+});
+
 const expirationsSettings = (overrides = {}) => ({
   defaultSubject: 'Vencimientos',
   defaultMessage: 'Mensaje de Vencimientos',
@@ -319,6 +331,26 @@ test('associations: no permite broker inexistente y solo Comisiones recibe DENY'
     association(associationId, missingBroker)));
   await assertFails(getDoc(
     doc(commissionsDb, `modules/vencimientos/associations/${existingAssociation}`)));
+});
+
+test('observedIdentifiers: auditoría estricta permite upsert e ignore, pero no mutar identidad ni borrar', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  const commissionsDb = environment.authenticatedContext('operator').firestore();
+  const identifierId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  const path = `modules/vencimientos/observedIdentifiers/${identifierId}`;
+  await assertSucceeds(setDoc(doc(db, path), observedIdentifier(identifierId, brokerOne)));
+  await assertSucceeds(getDoc(doc(db, path)));
+  await assertSucceeds(updateDoc(doc(db, path), {
+    lastSeenAtUtc: new Date('2026-08-10T01:00:00Z'),
+    isIgnored: true
+  }));
+  await assertFails(updateDoc(doc(db, path), { normalizedValue: 'CAMBIADO' }));
+  await assertFails(updateDoc(doc(db, path), { brokerId: brokerTwo }));
+  await assertFails(deleteDoc(doc(db, path)));
+  await assertFails(setDoc(
+    doc(db, 'modules/vencimientos/observedIdentifiers/eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'),
+    observedIdentifier('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', missingBroker)));
+  await assertFails(getDoc(doc(commissionsDb, path)));
 });
 
 test('exclusions: Vencimientos permite read/create/update estricto pero no delete', async () => {

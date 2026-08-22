@@ -17,10 +17,11 @@ public partial class ExpirationsBrokerProfileWindow : Window
 
     public ExpirationsBrokerProfileWindow(
         IExpirationsBrokerConfigurationService service,
-        ExpirationsBrokerConfigurationItem configuration)
+        ExpirationsBrokerConfigurationItem configuration,
+        ExpirationsProcess process = ExpirationsProcess.NextMonth)
     {
         _service = service ?? throw new ArgumentNullException(nameof(service));
-        State = new ExpirationsBrokerProfileState(configuration, _validation);
+        State = new ExpirationsBrokerProfileState(configuration, _validation, process);
         InitializeComponent();
         DataContext = State;
     }
@@ -58,6 +59,19 @@ public partial class ExpirationsBrokerProfileWindow : Window
     }
 
     private void ToggleAssistant_Click(object sender, RoutedEventArgs e) => State.ToggleSelectedAssistant();
+
+    private void DeleteAssistant_Click(object sender, RoutedEventArgs e)
+    {
+        if (State.SelectedAssistant is not { } selected)
+            return;
+        if (MessageBox.Show(
+                $"¿Desea eliminar a \"{selected.Name}\" de los asistentes de Vencimientos?",
+                "Eliminar asistente",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
+        State.RemoveSelectedAssistant();
+    }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
@@ -126,12 +140,15 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
     private ExpirationsNextMonthGenerationModeOption _selectedNextMonthGenerationModeOption;
     private ExpirationsAssistant? _selectedAssistant;
     private bool _isBusy;
+    private readonly ExpirationsProcess _process;
 
     public ExpirationsBrokerProfileState(
         ExpirationsBrokerConfigurationItem configuration,
-        ExpirationsAssistantValidationService validation)
+        ExpirationsAssistantValidationService validation,
+        ExpirationsProcess process = ExpirationsProcess.NextMonth)
     {
         _validation = validation ?? throw new ArgumentNullException(nameof(validation));
+        _process = process;
         NextMonthGenerationModeOptions =
         [
             new(ExpirationsNextMonthGenerationMode.Standard, "Estándar"),
@@ -159,6 +176,13 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
     public bool CanSave => !IsBusy;
     public bool CanEditAssistant => !IsBusy && SelectedAssistant is not null;
     public bool CanToggleAssistant => !IsBusy && SelectedAssistant is not null;
+    public bool CanDeleteAssistant => !IsBusy && SelectedAssistant is not null;
+    public Visibility PreviousMonthFormatVisibility => _process == ExpirationsProcess.PreviousMonth
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public Visibility NextMonthFormatVisibility => _process == ExpirationsProcess.NextMonth
+        ? Visibility.Visible
+        : Visibility.Collapsed;
     public string ChangesText => HasUnsavedChanges ? "Hay cambios sin guardar." : "Sin cambios pendientes.";
     public int ActiveAssistantCount => Assistants.Count(value => value.IsActive);
     public int TotalAssistantCount => Assistants.Count;
@@ -197,6 +221,7 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
             Notify();
             Notify(nameof(CanEditAssistant));
             Notify(nameof(CanToggleAssistant));
+            Notify(nameof(CanDeleteAssistant));
         }
     }
 
@@ -230,13 +255,28 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         });
     }
 
+    public bool RemoveSelectedAssistant()
+    {
+        if (SelectedAssistant is not { } selected)
+            return false;
+        var removed = Assistants.Remove(Assistants.First(value => value.Id == selected.Id));
+        if (!removed)
+            return false;
+        SelectedAssistant = null;
+        Notify(nameof(Assistants));
+        NotifyChanges();
+        return true;
+    }
+
     public ExpirationsBrokerConfigurationItem BuildConfiguration() => new()
     {
         BrokerId = _persisted.BrokerId,
         Name = _persisted.Name,
         PrimaryEmailAddresses = _persisted.PrimaryEmailAddresses.ToList(),
         IsActive = IsActive,
-        NextMonthGenerationMode = SelectedNextMonthGenerationModeOption.Value,
+        NextMonthGenerationMode = _process == ExpirationsProcess.PreviousMonth
+            ? _persisted.NextMonthGenerationMode
+            : SelectedNextMonthGenerationModeOption.Value,
         Assistants = Assistants.Select(CopyAssistant).ToList(),
         HasExplicitProfile = _persisted.HasExplicitProfile,
         ProfileUpdateTime = _persisted.ProfileUpdateTime,
@@ -267,6 +307,7 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         Notify(nameof(CanSave));
         Notify(nameof(CanEditAssistant));
         Notify(nameof(CanToggleAssistant));
+        Notify(nameof(CanDeleteAssistant));
     }
 
     private void ReplaceAssistants(IEnumerable<ExpirationsAssistant> assistants)

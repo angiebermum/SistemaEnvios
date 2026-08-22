@@ -214,6 +214,7 @@ public sealed class ExpirationsBrokerResolver
                 : ExpirationsBrokerResolutionStatus.InactiveBroker,
             CandidateBrokerIds = orderedCandidates,
             ResolvedBrokerId = brokerId,
+            CanBeObservedAutomatically = isActive,
             MatchedAssociationIds = orderedAssociations,
             Diagnostics = isActive ? [] : ["La coincidencia apunta a un corredor inactivo en Vencimientos."]
         };

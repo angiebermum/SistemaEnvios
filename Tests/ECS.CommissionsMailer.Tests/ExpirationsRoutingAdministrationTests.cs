@@ -216,6 +216,9 @@ public sealed class ExpirationsRoutingAdministrationTests
         Assert.Equal("Activo", state.SelectedBrokerStatus);
         Assert.Equal(Visibility.Visible, state.BrokerIdentityVisibility);
         Assert.Equal(2, state.VisibleAssociations.Count);
+        Assert.Equal(3, state.VisibleKnownIdentifiers.Count);
+        Assert.Contains(state.VisibleKnownIdentifiers, item => item.IsMaster &&
+            item.OriginText == "Maestro" && item.Value == "Fernando Cabada");
         Assert.Contains(state.VisibleAssociations, item => item.StatusText == "Activa");
         Assert.Contains(state.VisibleAssociations, item => item.StatusText == "Inactiva");
         state.SelectedBrokerFilter = state.BrokerFilters.Single(item => item.BrokerId == LongBroker);
@@ -315,6 +318,98 @@ public sealed class ExpirationsRoutingAdministrationTests
     }
 
     [Fact]
+    public async Task KnownIdentifiersMergeMasterAssociationsAndObservedWithDeterministicPrecedence()
+    {
+        var association = Association(ShortBroker, "FC-01");
+        association.Origin = ExpirationsAssociationOrigin.Imported;
+        var associations = new FakeAssociationRepository([Stored(association, "a-1")]);
+        var observations = new FakeObservedRepository([
+            Stored(Observed(ShortBroker, "FC-01"), "o-1"),
+            Stored(Observed(ShortBroker, "Fernando Cabada/FCC - 52"), "o-2"),
+            Stored(Observed(ShortBroker, "Ignorado", ignored: true), "o-3")
+        ]);
+        var service = Service(
+            associations,
+            new FakeExclusionRepository([]),
+            new FakeConfigurationService(
+                BrokerConfiguration(ShortBroker, "Fernando Cabada", "short@example.test")),
+            observations);
+
+        var items = await service.ListKnownIdentifiersAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, items.Count);
+        Assert.Contains(items, item => item.IsMaster && item.OriginText == "Maestro");
+        Assert.Contains(items, item => item.IsAssociation && item.OriginText == "Importado" && item.Value == "FC-01");
+        Assert.Contains(items, item => item.IsObserved &&
+            item.OriginText == "Detectado automáticamente" &&
+            item.Value == "Fernando Cabada/FCC - 52");
+        Assert.DoesNotContain(items, item => item.Value == "Ignorado");
+        Assert.Single(items, item => item.NormalizedValue == association.NormalizedValue);
+
+        var state = new ExpirationsRoutingAdministrationState();
+        var broker = BrokerConfiguration(ShortBroker, "Fernando Cabada", "short@example.test");
+        state.SetKnownData(items, [broker], ShortBroker);
+        foreach (var query in new[]
+                 {
+                     "Fernando Cabada/FCC - 52", "Detectado automáticamente", "short@example.test", "Alias"
+                 })
+        {
+            state.AssociationSearchText = query;
+            Assert.Contains(state.VisibleKnownIdentifiers, item => item.Value == "Fernando Cabada/FCC - 52");
+        }
+    }
+
+    [Fact]
+    public async Task ObservedIdentifiersCanBeConfirmedReassignedAndIgnoredWithoutBecomingResolverInput()
+    {
+        var associations = new FakeAssociationRepository([]);
+        var observations = new FakeObservedRepository([
+            Stored(Observed(ShortBroker, "FC-01"), "o-1"),
+            Stored(Observed(ShortBroker, "FCC - 52"), "o-2"),
+            Stored(Observed(ShortBroker, "Descartar"), "o-3")
+        ]);
+        var service = Service(
+            associations,
+            new FakeExclusionRepository([]),
+            new FakeConfigurationService(
+                BrokerConfiguration(ShortBroker, "Fernando Cabada", "short@example.test"),
+                BrokerConfiguration(LongBroker, "Fernando Cabada Corvisier", "long@example.test")),
+            observations);
+
+        var confirmed = await service.ConfirmObservedIdentifierAsync(
+            observations.Documents[0].Value.Id,
+            "o-1",
+            TestContext.Current.CancellationToken);
+        var reassigned = await service.ReassignAndConfirmObservedIdentifierAsync(
+            observations.Documents.Single(item => item.Value.Value == "FCC - 52").Value.Id,
+            LongBroker,
+            "o-2",
+            TestContext.Current.CancellationToken);
+        var ignoredDocument = observations.Documents.Single(item => item.Value.Value == "Descartar");
+        var ignored = await service.IgnoreObservedIdentifierAsync(
+            ignoredDocument.Value.Id,
+            ignoredDocument.UpdateTime,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(confirmed.WasPersisted);
+        Assert.True(reassigned.WasPersisted);
+        Assert.True(ignored.WasPersisted);
+        Assert.Contains(associations.Documents, item => item.Value.BrokerId == ShortBroker &&
+            item.Value.Value == "FC-01" &&
+            item.Value.Origin == ExpirationsAssociationOrigin.ManuallyConfirmed);
+        Assert.Contains(associations.Documents, item => item.Value.BrokerId == LongBroker &&
+            item.Value.Value == "FCC - 52" &&
+            item.Value.Origin == ExpirationsAssociationOrigin.ManuallyConfirmed);
+        Assert.True(observations.Documents.Single(item => item.Value.Value == "FCC - 52").Value.IsIgnored);
+        Assert.True(observations.Documents.Single(item => item.Value.Value == "Descartar").Value.IsIgnored);
+        Assert.Equal(
+            ExpirationsBrokerResolutionStatus.Unresolved,
+            new ExpirationsBrokerResolver(
+                [Broker(ShortBroker, "Fernando Cabada"), Broker(LongBroker, "Fernando Cabada Corvisier")],
+                []).Resolve(Component("Descartar")).Status);
+    }
+
+    [Fact]
     public void ExclusionsStateListsAllValuesAndSearchesIndependentlyOfAnyBroker()
     {
         var state = new ExpirationsExclusionsState();
@@ -338,7 +433,7 @@ public sealed class ExpirationsRoutingAdministrationTests
         Assert.DoesNotContain("ViewExcluded_Click", main, StringComparison.Ordinal);
         Assert.Contains("ViewExclusions_Click", management, StringComparison.Ordinal);
         Assert.Contains("Administrar asociaciones", management, StringComparison.Ordinal);
-        Assert.Contains("Administración de asociaciones — Vencimientos", associations, StringComparison.Ordinal);
+        Assert.Contains("Identificadores conocidos — Vencimientos", associations, StringComparison.Ordinal);
         Assert.DoesNotContain("Administración de routing", associations, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("exclus", associations, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("TabControl", associations, StringComparison.Ordinal);
@@ -347,11 +442,13 @@ public sealed class ExpirationsRoutingAdministrationTests
     private static ExpirationsRoutingAdministrationService Service(
         FakeAssociationRepository associations,
         FakeExclusionRepository exclusions,
-        FakeConfigurationService brokers) => new(
+        FakeConfigurationService brokers,
+        FakeObservedRepository? observed = null) => new(
         associations,
         exclusions,
         brokers,
-        timeProvider: new FixedTimeProvider(UpdatedAt.AddHours(1)));
+        timeProvider: new FixedTimeProvider(UpdatedAt.AddHours(1)),
+        observedIdentifiers: observed);
 
     private static string SourceFile(
         string directory,
@@ -413,6 +510,23 @@ public sealed class ExpirationsRoutingAdministrationTests
         UpdatedAtUtc = UpdatedAt
     };
 
+    private static ExpirationsObservedIdentifier Observed(
+        Guid brokerId,
+        string value,
+        bool ignored = false) => new()
+    {
+        Id = ExpirationsObservedIdentifierCaptureService.DeterministicId(
+            brokerId,
+            new ExpirationsBrokerNormalizer().Normalize(value)),
+        BrokerId = brokerId,
+        Kind = ExpirationsAssociationKind.Alias,
+        Value = value,
+        NormalizedValue = new ExpirationsBrokerNormalizer().Normalize(value),
+        FirstSeenAtUtc = CreatedAt,
+        LastSeenAtUtc = UpdatedAt,
+        IsIgnored = ignored
+    };
+
     private static ExpirationsWorkbookReadResult Read(params ExpirationsSourceRow[] rows) => new()
     {
         Status = ExpirationsWorkbookReadStatus.Success,
@@ -433,6 +547,10 @@ public sealed class ExpirationsRoutingAdministrationTests
     private static FirestoreStoredDocument<ExpirationsExclusion> Stored(
         ExpirationsExclusion value,
         string version) => new(value, $"modules/vencimientos/exclusions/{value.Id:D}", version);
+
+    private static FirestoreStoredDocument<ExpirationsObservedIdentifier> Stored(
+        ExpirationsObservedIdentifier value,
+        string version) => new(value, $"modules/vencimientos/observedIdentifiers/{value.Id:D}", version);
 
     private sealed class FakeAssociationRepository(
         IEnumerable<FirestoreStoredDocument<ExpirationsBrokerAssociation>> documents)
@@ -505,6 +623,52 @@ public sealed class ExpirationsRoutingAdministrationTests
             Documents[index] = stored;
             return Task.FromResult(stored);
         }
+    }
+
+    private sealed class FakeObservedRepository(
+        IEnumerable<FirestoreStoredDocument<ExpirationsObservedIdentifier>>? documents = null)
+        : IExpirationsObservedIdentifierRepository
+    {
+        private int _version = 3;
+        public List<FirestoreStoredDocument<ExpirationsObservedIdentifier>> Documents { get; } =
+            documents?.ToList() ?? [];
+
+        public Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>?> GetAsync(
+            Guid identifierId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Documents.FirstOrDefault(document => document.Value.Id == identifierId));
+
+        public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsObservedIdentifier>>> ListAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsObservedIdentifier>>>(Documents.ToList());
+
+        public Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>> CreateAsync(
+            ExpirationsObservedIdentifier value,
+            CancellationToken cancellationToken = default)
+        {
+            var stored = Store(value);
+            Documents.Add(stored);
+            return Task.FromResult(stored);
+        }
+
+        public Task<FirestoreStoredDocument<ExpirationsObservedIdentifier>> UpdateAsync(
+            ExpirationsObservedIdentifier value,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default)
+        {
+            var index = Documents.FindIndex(document => document.Value.Id == value.Id);
+            if (index < 0 || Documents[index].UpdateTime != expectedUpdateTime)
+                throw new FirestoreConcurrencyException($"observedIdentifiers/{value.Id:D}", expectedUpdateTime);
+            var stored = Store(value);
+            Documents[index] = stored;
+            return Task.FromResult(stored);
+        }
+
+        private FirestoreStoredDocument<ExpirationsObservedIdentifier> Store(
+            ExpirationsObservedIdentifier value) => new(
+            ExpirationsObservedIdentifierCaptureService.Copy(value),
+            $"modules/vencimientos/observedIdentifiers/{value.Id:D}",
+            $"o-{++_version}");
     }
 
     private sealed class FakeConfigurationService(params ExpirationsBrokerConfigurationItem[] brokers)

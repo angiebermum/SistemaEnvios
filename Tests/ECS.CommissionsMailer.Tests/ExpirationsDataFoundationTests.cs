@@ -235,6 +235,20 @@ public sealed class ExpirationsDataFoundationTests
         Assert.False(mapped.IsActive);
         Assert.Equal("AMA", mapped.NormalizedValue);
         Assert.Equal(ExpirationsAssociationKind.Code, mapped.Kind);
+        Assert.Equal(ExpirationsAssociationOrigin.Confirmed, mapped.Origin);
+    }
+
+    [Fact]
+    public void LegacyAssociationWithoutOriginMapsAsConfirmed()
+    {
+        var mapper = new ExpirationsBrokerAssociationMapper();
+        var fields = mapper.ToFields(Association(
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            BrokerOne,
+            true)).ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        fields.Remove("origin");
+
+        Assert.Equal(ExpirationsAssociationOrigin.Confirmed, mapper.FromFields(fields).Origin);
     }
 
     [Fact]
@@ -272,6 +286,7 @@ public sealed class ExpirationsDataFoundationTests
         AssertPublicMethods<IExpirationsBrokerDirectoryRepository>("GetAsync", "ListAsync");
         AssertPublicMethods<IExpirationsBrokerProfileRepository>("GetAsync", "ListAsync", "CreateAsync", "UpdateAsync");
         AssertPublicMethods<IExpirationsBrokerAssociationRepository>("GetAsync", "ListAsync", "CreateAsync", "UpdateAsync", "DeleteAsync");
+        AssertPublicMethods<IExpirationsObservedIdentifierRepository>("GetAsync", "ListAsync", "CreateAsync", "UpdateAsync");
         AssertPublicMethods<IExpirationsProcessSettingsRepository>("GetAsync", "CreateAsync", "UpdateAsync");
     }
 

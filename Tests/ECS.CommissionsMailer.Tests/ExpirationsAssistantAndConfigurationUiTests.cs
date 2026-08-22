@@ -188,6 +188,87 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
     }
 
     [Fact]
+    public void PreviousMonthShowsReadOnlyStandardAndPreservesPersistedNextMonthMode()
+    {
+        var state = new ExpirationsBrokerProfileState(
+            Configuration(
+                "Félix",
+                ["felix@example.test"],
+                mode: ExpirationsNextMonthGenerationMode.SpecialDualSorted),
+            _validation,
+            ExpirationsProcess.PreviousMonth);
+
+        Assert.Equal(System.Windows.Visibility.Visible, state.PreviousMonthFormatVisibility);
+        Assert.Equal(System.Windows.Visibility.Collapsed, state.NextMonthFormatVisibility);
+        state.SelectedNextMonthGenerationModeOption = state.NextMonthGenerationModeOptions.Single(option =>
+            option.Value == ExpirationsNextMonthGenerationMode.Standard);
+
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.SpecialDualSorted,
+            state.BuildConfiguration().NextMonthGenerationMode);
+    }
+
+    [Fact]
+    public void NextMonthShowsEditablePersistedSpecialModeAndRespectsStandardOverride()
+    {
+        var state = new ExpirationsBrokerProfileState(
+            Configuration(
+                "Félix",
+                ["felix@example.test"],
+                mode: ExpirationsNextMonthGenerationMode.SpecialDualSorted),
+            _validation,
+            ExpirationsProcess.NextMonth);
+
+        Assert.Equal(System.Windows.Visibility.Collapsed, state.PreviousMonthFormatVisibility);
+        Assert.Equal(System.Windows.Visibility.Visible, state.NextMonthFormatVisibility);
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.SpecialDualSorted,
+            state.SelectedNextMonthGenerationModeOption.Value);
+        state.SelectedNextMonthGenerationModeOption = state.NextMonthGenerationModeOptions.Single(option =>
+            option.Value == ExpirationsNextMonthGenerationMode.Standard);
+
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.Standard,
+            state.BuildConfiguration().NextMonthGenerationMode);
+    }
+
+    [Fact]
+    public void AssistantDeleteIsLocalUntilBuildAndDiscardRestoresIt()
+    {
+        var kept = Assistant("Conservado", "kept@example.test");
+        var removed = Assistant("Eliminar", "remove@example.test");
+        var state = new ExpirationsBrokerProfileState(
+            Configuration("Corredor", ["broker@example.test"], [kept, removed]),
+            _validation);
+        state.SelectedAssistant = state.Assistants.Single(value => value.Id == removed.Id);
+
+        Assert.True(state.RemoveSelectedAssistant());
+        Assert.True(state.HasUnsavedChanges);
+        Assert.Null(state.SelectedAssistant);
+        Assert.Equal(kept.Id, Assert.Single(state.BuildConfiguration().Assistants).Id);
+
+        state.DiscardChanges();
+        Assert.False(state.HasUnsavedChanges);
+        Assert.Equal(
+            new[] { kept.Id, removed.Id }.Order(),
+            state.Assistants.Select(value => value.Id).Order());
+    }
+
+    [Fact]
+    public void DeleteConfirmationCancellationLeavesAssistantStateUntouched()
+    {
+        var assistant = Assistant("Sin eliminar", "kept@example.test");
+        var state = new ExpirationsBrokerProfileState(
+            Configuration("Corredor", ["broker@example.test"], [assistant]),
+            _validation);
+        state.SelectedAssistant = state.Assistants.Single();
+
+        // A canceled confirmation does not invoke RemoveSelectedAssistant.
+        Assert.False(state.HasUnsavedChanges);
+        Assert.Equal(assistant.Id, Assert.Single(state.Assistants).Id);
+    }
+
+    [Fact]
     public void AssistantEditorStateDefaultsActiveAndPreservesExistingId()
     {
         var create = new ExpirationsAssistantEditorState(_validation)

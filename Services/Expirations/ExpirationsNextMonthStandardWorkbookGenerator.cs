@@ -62,25 +62,8 @@ public sealed class ExpirationsNextMonthStandardWorkbookGenerator(
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var columns = _premiumColumnsService.Resolve(
-                request.SourceWorkbookPath,
-                request.WorksheetName,
-                request.HeaderRowNumber,
-                request.PremiumColumnOptions);
-            DemandResolvedColumns(columns);
-            var inspectedRows = _premiumDataInspectionService.Inspect(
-                request.SourceWorkbookPath,
-                request.WorksheetName,
-                sourceRows,
-                columns.PremiumColumnReference,
-                columns.CurrencyColumnReference,
-                cancellationToken);
-            var plan = _premiumTotalsPlanner.CreatePlan(
-                DataSheetName,
-                request.HeaderRowNumber,
-                sourceRows,
-                columns,
-                inspectedRows);
+            var plan = request.PrecomputedTotalsPlan ?? CreateTotalsPlan(request, sourceRows, cancellationToken);
+            DemandCompatiblePrecomputedPlan(plan, request.HeaderRowNumber, sourceRows.Length);
 
             _standardWorkbookGenerator.Generate(new ExpirationsStandardWorkbookGenerationRequest(
                 request.SourceWorkbookPath,
@@ -108,6 +91,50 @@ public sealed class ExpirationsNextMonthStandardWorkbookGenerator(
             throw new ExpirationsGenerationException(
                 "No fue posible generar el archivo de Vencimientos del mes siguiente.",
                 exception);
+        }
+    }
+
+    private ExpirationsPremiumTotalsPlan CreateTotalsPlan(
+        ExpirationsNextMonthStandardWorkbookGenerationRequest request,
+        IReadOnlyList<uint> sourceRows,
+        CancellationToken cancellationToken)
+    {
+        var columns = _premiumColumnsService.Resolve(
+            request.SourceWorkbookPath,
+            request.WorksheetName,
+            request.HeaderRowNumber,
+            request.PremiumColumnOptions);
+        DemandResolvedColumns(columns);
+        var inspectedRows = _premiumDataInspectionService.Inspect(
+            request.SourceWorkbookPath,
+            request.WorksheetName,
+            sourceRows,
+            columns.PremiumColumnReference,
+            columns.CurrencyColumnReference,
+            cancellationToken);
+        return _premiumTotalsPlanner.CreatePlan(
+            DataSheetName,
+            request.HeaderRowNumber,
+            sourceRows,
+            columns,
+            inspectedRows);
+    }
+
+    private static void DemandCompatiblePrecomputedPlan(
+        ExpirationsPremiumTotalsPlan plan,
+        uint headerRowNumber,
+        int rowCount)
+    {
+        if (!string.Equals(plan.WorksheetName, DataSheetName, StringComparison.Ordinal) ||
+            plan.HeaderRowNumber != headerRowNumber ||
+            plan.RowCount != rowCount ||
+            plan.DataFirstRow != headerRowNumber + 1 ||
+            plan.DataLastRow != headerRowNumber + (uint)rowCount ||
+            string.IsNullOrWhiteSpace(plan.PremiumColumnReference) ||
+            string.IsNullOrWhiteSpace(plan.CurrencyColumnReference))
+        {
+            throw new ExpirationsGenerationException(
+                "El plan de primas preparado no coincide con las filas del corredor.");
         }
     }
 

@@ -64,23 +64,38 @@ public sealed class ExpirationsNextMonthGenerationPreflightService(
             premiumColumnOptions);
         DemandResolvedColumns(columns);
 
-        foreach (var target in context.Analysis.ResolvedRowNumbersByBroker)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var sourceRows = target.Value.Distinct().Order().ToArray();
-            if (sourceRows.Length == 0)
-                continue;
-            var inspections = _premiumDataInspectionService.Inspect(
+        var targetRows = context.Analysis.ResolvedRowNumbersByBroker
+            .Select(target => new
+            {
+                target.Key,
+                Rows = target.Value.Distinct().Order().ToArray()
+            })
+            .Where(target => target.Rows.Length > 0)
+            .ToList();
+        var allSourceRows = targetRows
+            .SelectMany(target => target.Rows)
+            .Distinct()
+            .Order()
+            .ToArray();
+        var allInspections = allSourceRows.Length == 0
+            ? []
+            : _premiumDataInspectionService.Inspect(
                 context.SourceWorkbookPath,
                 context.SourceWorkbook.WorksheetName,
-                sourceRows,
+                allSourceRows,
                 columns.PremiumColumnReference,
                 columns.CurrencyColumnReference,
                 cancellationToken);
-            _ = _premiumTotalsPlanner.CreatePlan(
-                context.SourceWorkbook.WorksheetName,
+        var inspectionsByRow = allInspections.ToDictionary(row => row.RowNumber);
+        var totalsPlans = new Dictionary<Guid, ExpirationsPremiumTotalsPlan>();
+        foreach (var target in targetRows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var inspections = target.Rows.Select(rowNumber => inspectionsByRow[rowNumber]).ToArray();
+            totalsPlans[target.Key] = _premiumTotalsPlanner.CreatePlan(
+                ExpirationsNextMonthStandardWorkbookGenerator.DataSheetName,
                 context.SourceWorkbook.HeaderRowNumber,
-                sourceRows,
+                target.Rows,
                 columns,
                 inspections);
         }
@@ -101,6 +116,7 @@ public sealed class ExpirationsNextMonthGenerationPreflightService(
         return new ExpirationsNextMonthPreflightResult
         {
             PremiumColumns = columns,
+            PremiumTotalsPlansByBrokerId = totalsPlans,
             SpecialBrokerId = special.BrokerId,
             FelixPlan = felixPlan
         };

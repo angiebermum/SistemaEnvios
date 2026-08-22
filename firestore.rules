@@ -77,17 +77,43 @@ service cloud.firestore {
         ]) &&
         request.resource.data.keys().hasOnly([
           'id', 'brokerId', 'kind', 'value', 'normalizedValue', 'isActive',
-          'createdAtUtc', 'updatedAtUtc'
+          'createdAtUtc', 'updatedAtUtc', 'origin'
         ]) &&
         request.resource.data.id is string &&
         request.resource.data.id == associationId &&
         request.resource.data.brokerId is string &&
         request.resource.data.kind in ['Name', 'Alias', 'Code'] &&
+        request.resource.data.get('origin', 'Confirmed') in [
+          'Confirmed', 'Imported', 'ManuallyConfirmed', 'ManuallyAdded'
+        ] &&
         request.resource.data.value is string &&
         request.resource.data.normalizedValue is string &&
         request.resource.data.isActive is bool &&
         request.resource.data.createdAtUtc is timestamp &&
         request.resource.data.updatedAtUtc is timestamp;
+    }
+
+    function validExpirationsObservedIdentifierShape(identifierId) {
+      return request.resource.data.keys().hasAll([
+          'id', 'brokerId', 'kind', 'value', 'normalizedValue',
+          'firstSeenAtUtc', 'lastSeenAtUtc', 'isIgnored'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'id', 'brokerId', 'kind', 'value', 'normalizedValue',
+          'firstSeenAtUtc', 'lastSeenAtUtc', 'isIgnored'
+        ]) &&
+        request.resource.data.id is string &&
+        request.resource.data.id == identifierId &&
+        request.resource.data.brokerId is string &&
+        request.resource.data.kind in ['Name', 'Alias', 'Code'] &&
+        request.resource.data.value is string &&
+        request.resource.data.value.size() > 0 &&
+        request.resource.data.normalizedValue is string &&
+        request.resource.data.normalizedValue.size() > 0 &&
+        request.resource.data.firstSeenAtUtc is timestamp &&
+        request.resource.data.lastSeenAtUtc is timestamp &&
+        request.resource.data.lastSeenAtUtc >= request.resource.data.firstSeenAtUtc &&
+        request.resource.data.isIgnored is bool;
     }
 
     function validExpirationsExclusionShape(exclusionId) {
@@ -241,6 +267,23 @@ service cloud.firestore {
         validExpirationsAssociationShape(associationId) &&
         exists(/databases/$(database)/documents/brokers/$(request.resource.data.brokerId));
       allow delete: if canUseExpirations();
+    }
+
+    match /modules/vencimientos/observedIdentifiers/{identifierId} {
+      allow read: if canUseExpirations();
+      allow create: if canUseExpirations() &&
+        validExpirationsObservedIdentifierShape(identifierId) &&
+        exists(/databases/$(database)/documents/brokers/$(request.resource.data.brokerId));
+      allow update: if canUseExpirations() &&
+        validExpirationsObservedIdentifierShape(identifierId) &&
+        exists(/databases/$(database)/documents/brokers/$(request.resource.data.brokerId)) &&
+        request.resource.data.id == resource.data.id &&
+        request.resource.data.brokerId == resource.data.brokerId &&
+        request.resource.data.kind == resource.data.kind &&
+        request.resource.data.value == resource.data.value &&
+        request.resource.data.normalizedValue == resource.data.normalizedValue &&
+        request.resource.data.firstSeenAtUtc == resource.data.firstSeenAtUtc;
+      allow delete: if false;
     }
 
     match /modules/vencimientos/exclusions/{exclusionId} {

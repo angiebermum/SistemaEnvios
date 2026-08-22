@@ -79,6 +79,41 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         Assert.Equal(BrokerA, Assert.Single(snapshot.Distribution).BrokerId);
     }
 
+    [Fact]
+    public async Task InitialGeneralAnalysisCapturesSafeObservedIdentifiersOnce()
+    {
+        var capture = new FakeObservedCaptureService();
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(2, "Broker A/AAV - 90"))),
+            new FakeAssociationRepository([]),
+            [Broker(BrokerA, "Broker A")],
+            observedIdentifierCapture: capture);
+        Prepare(coordinator, "observed.xlsx");
+
+        var snapshot = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        _ = await coordinator.RefreshCatalogAndReanalyzeAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(snapshot.CanGenerate);
+        Assert.Equal(1, capture.Calls);
+        Assert.True(capture.LastAnalysis!.RowResolutions[0].Components[0].CanBeObservedAutomatically);
+    }
+
+    [Fact]
+    public async Task ObservationPersistenceFailureDoesNotBlockAnalysisAndProducesWarning()
+    {
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(2, "Broker A"))),
+            new FakeAssociationRepository([]),
+            [Broker(BrokerA, "Broker A")],
+            observedIdentifierCapture: new FakeObservedCaptureService(new InvalidOperationException("sin conexión")));
+        Prepare(coordinator, "observed-warning.xlsx");
+
+        var snapshot = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(snapshot.CanGenerate);
+        Assert.Contains(snapshot.Messages, message => message.Contains("identificadores observados", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(ExpirationsAssociationKind.Alias)]
     [InlineData(ExpirationsAssociationKind.Code)]
@@ -546,7 +581,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         FakeAssociationRepository associations,
         IReadOnlyList<ExpirationsBrokerCatalogItem> brokers,
         FakeExclusionRepository? exclusions = null,
-        IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null)
+        IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null,
+        IExpirationsObservedIdentifierCaptureService? observedIdentifierCapture = null)
     {
         var directory = new FakeDirectoryRepository(brokers.Select(item => new ExpirationsBrokerDirectoryEntry
         {
@@ -571,7 +607,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             timeProvider: new FixedTimeProvider(Now),
             sourceHashProvider: _ => "stable-hash",
             nextMonthPreflightService: nextMonthPreflightService,
-            exclusions: exclusions);
+            exclusions: exclusions,
+            observedIdentifierCapture: observedIdentifierCapture);
     }
 
     private static void Prepare(ExpirationsAnalysisCoordinator coordinator, string path)
@@ -649,6 +686,23 @@ public sealed class ExpirationsAnalysisCoordinatorTests
     private sealed class FakeInspectionService : IExpirationsWorkbookInspectionService
     {
         public ExpirationsWorkbookInspection Inspect(string sourcePath) => new() { SourcePath = sourcePath };
+    }
+
+    private sealed class FakeObservedCaptureService(Exception? failure = null)
+        : IExpirationsObservedIdentifierCaptureService
+    {
+        public int Calls { get; private set; }
+        public ExpirationsWorkbookAnalysisResult? LastAnalysis { get; private set; }
+
+        public Task CaptureAsync(
+            ExpirationsWorkbookAnalysisResult analysis,
+            IReadOnlyList<ExpirationsBrokerCatalogItem> catalog,
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            LastAnalysis = analysis;
+            return failure is null ? Task.CompletedTask : Task.FromException(failure);
+        }
     }
 
     private sealed class FakeDirectoryRepository(IEnumerable<ExpirationsBrokerDirectoryEntry> entries)

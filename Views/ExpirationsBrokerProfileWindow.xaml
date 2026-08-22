@@ -52,9 +52,19 @@
                       Style="{StaticResource SwitchToggleButtonStyle}"
                       HorizontalAlignment="Left" Margin="0,16,0,12" />
 
-        <Border Grid.Row="4" Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,14">
+        <Border Grid.Row="4" Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,14"
+                Visibility="{Binding PreviousMonthFormatVisibility}">
             <StackPanel>
-                <TextBlock Text="Formato de generación del mes siguiente"
+                <TextBlock Text="Formato para este proceso"
+                           Style="{StaticResource SectionTitleTextStyle}" />
+                <TextBlock Text="Estándar" FontWeight="SemiBold" Margin="0,8,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="4" Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,14"
+                Visibility="{Binding NextMonthFormatVisibility}">
+            <StackPanel>
+                <TextBlock Text="Formato para vencimientos del mes siguiente"
                            Style="{StaticResource SectionTitleTextStyle}" />
                 <ComboBox ItemsSource="{Binding NextMonthGenerationModeOptions}"
                           SelectedItem="{Binding SelectedNextMonthGenerationModeOption, Mode=TwoWay}"
@@ -89,6 +99,9 @@
                             Style="{StaticResource CompactButtonStyle}" />
                     <Button Content="Activar / Desactivar" Click="ToggleAssistant_Click"
                             IsEnabled="{Binding CanToggleAssistant}"
+                            Style="{StaticResource CompactButtonStyle}" />
+                    <Button Content="Eliminar" Click="DeleteAssistant_Click"
+                            IsEnabled="{Binding CanDeleteAssistant}"
                             Style="{StaticResource CompactButtonStyle}" Margin="0" />
                 </StackPanel>
             </Grid>

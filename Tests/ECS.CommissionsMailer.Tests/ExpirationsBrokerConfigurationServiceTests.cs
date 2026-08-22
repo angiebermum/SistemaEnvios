@@ -175,6 +175,29 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
     }
 
     [Fact]
+    public async Task RemovingOneExpirationsAssistantPersistsAndKeepsEveryOtherAssistant()
+    {
+        var removed = Assistant("Eliminar", "remove@example.test");
+        var kept = Assistant("Conservar", "keep@example.test", active: false);
+        var profile = Profile(true);
+        profile.Assistants = [removed, kept];
+        var profiles = new FakeProfileRepository([Stored(profile, "version-delete")]);
+        var service = Service(profiles);
+        var current = await service.GetAsync(BrokerId, TestContext.Current.CancellationToken);
+
+        var result = await service.SaveAsync(
+            With(current, assistants: [kept]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsBrokerConfigurationSaveOutcome.Updated, result.Outcome);
+        var persisted = Assert.Single(profiles.Documents).Value;
+        var persistedAssistant = Assert.Single(persisted.Assistants);
+        Assert.Equal(kept.Id, persistedAssistant.Id);
+        Assert.False(persistedAssistant.IsActive);
+        Assert.DoesNotContain(persisted.Assistants, assistant => assistant.Id == removed.Id);
+    }
+
+    [Fact]
     public async Task SavingSpecialCreatesProfileAndExistingProfileUsesOptimisticUpdate()
     {
         var profiles = new FakeProfileRepository([]);

@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Diagnostics;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
@@ -15,6 +16,104 @@ public sealed class ExpirationsNextMonthBatchGenerationTests
     private static readonly Guid Standard = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid OtherSpecial = Guid.Parse("33333333-3333-3333-3333-333333333333");
     private static readonly ExpirationsPeriod Period = new(2026, 8);
+
+    [Fact]
+    public async Task NextMonthPerformanceMeasurementUsesFixedThreeFileFixture()
+    {
+        using var directory = new ExpirationsGenerationTestDirectory();
+        var source = Path.Combine(directory.Path, "performance-next-month.xlsx");
+        ExpirationsFelixTestWorkbook.Create(source);
+        var context = Context(source, [2U, 3U, 4U, 6U], [5U]);
+        var service = new ExpirationsGenerationService();
+        _ = await service.GenerateAsync(
+            new ExpirationsGenerationRequest(context, directory.Path, Period),
+            cancellationToken: TestContext.Current.CancellationToken);
+        var measurements = new List<long>();
+        for (var iteration = 0; iteration < 5; iteration++)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var batch = await service.GenerateAsync(
+                new ExpirationsGenerationRequest(context, directory.Path, Period),
+                cancellationToken: TestContext.Current.CancellationToken);
+            stopwatch.Stop();
+            Assert.Equal(3, batch.Files.Count);
+            measurements.Add(stopwatch.ElapsedMilliseconds);
+        }
+        measurements.Sort();
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"PERFORMANCE_NEXTMONTH_MEDIAN_MS={measurements[measurements.Count / 2]};" +
+            $"FILES=3;SAMPLES={string.Join(',', measurements)}");
+    }
+
+    [Fact]
+    public async Task PreflightInspectsPremiumsOnceAndReusesEveryBrokerTotalsPlan()
+    {
+        using var directory = new ExpirationsGenerationTestDirectory();
+        var source = Path.Combine(directory.Path, "single-premium-inspection.xlsx");
+        ExpirationsFelixTestWorkbook.Create(source);
+        var columns = new CountingPremiumColumnsService();
+        var inspections = new CountingPremiumInspectionService();
+        var planner = new CountingPremiumTotalsPlanner();
+        var preflight = new ExpirationsNextMonthGenerationPreflightService(
+            columns,
+            inspections,
+            planner);
+        var standardGenerator = new ExpirationsNextMonthStandardWorkbookGenerator(
+            premiumColumnsService: columns,
+            premiumDataInspectionService: inspections,
+            premiumTotalsPlanner: planner);
+        var service = new ExpirationsGenerationService(
+            nextMonthWorkbookGenerator: standardGenerator,
+            nextMonthPreflightService: preflight);
+
+        var batch = await service.GenerateAsync(
+            new ExpirationsGenerationRequest(
+                Context(source, [2U, 3U, 4U, 6U], [5U]),
+                directory.Path,
+                Period),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, batch.Files.Count);
+        Assert.Equal(1, columns.Calls);
+        Assert.Equal(1, inspections.Calls);
+        Assert.Equal(2, planner.Calls);
+    }
+
+    [Fact]
+    public async Task ReusedPlansAndLegacyRecalculationProduceEquivalentLogicalWorkbooks()
+    {
+        using var optimizedDirectory = new ExpirationsGenerationTestDirectory();
+        using var legacyDirectory = new ExpirationsGenerationTestDirectory();
+        var optimizedSource = Path.Combine(optimizedDirectory.Path, "equivalent.xlsx");
+        var legacySource = Path.Combine(legacyDirectory.Path, "equivalent.xlsx");
+        ExpirationsFelixTestWorkbook.Create(optimizedSource);
+        File.Copy(optimizedSource, legacySource);
+        var optimized = await new ExpirationsGenerationService().GenerateAsync(
+            new ExpirationsGenerationRequest(
+                Context(optimizedSource, [2U, 3U, 4U, 6U], [5U]),
+                optimizedDirectory.Path,
+                Period),
+            cancellationToken: TestContext.Current.CancellationToken);
+        var legacy = await new ExpirationsGenerationService(
+            nextMonthPreflightService: new TotalsPlanStrippingPreflightService()).GenerateAsync(
+            new ExpirationsGenerationRequest(
+                Context(legacySource, [2U, 3U, 4U, 6U], [5U]),
+                legacyDirectory.Path,
+                Period),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, optimized.Files.Count);
+        foreach (var optimizedFile in optimized.Files)
+        {
+            var legacyFile = legacy.Files.Single(file =>
+                file.BrokerId == optimizedFile.BrokerId && file.Variant == optimizedFile.Variant);
+            Assert.Equal(optimizedFile.SourceRowNumbers, legacyFile.SourceRowNumbers);
+            Assert.Equal(DetailPolicies(optimizedFile.OutputPath), DetailPolicies(legacyFile.OutputPath));
+            Assert.Equal(TotalFormulas(optimizedFile.OutputPath), TotalFormulas(legacyFile.OutputPath));
+            Assert.Empty(Validate(optimizedFile.OutputPath));
+            Assert.Empty(Validate(legacyFile.OutputPath));
+        }
+    }
 
     [Fact]
     public async Task MixedBatchCreatesOneStandardAndExactlyTwoSpecialFilesAtomically()
@@ -542,6 +641,83 @@ public sealed class ExpirationsNextMonthBatchGenerationTests
                 using var reader = new StreamReader(entry.Open());
                 return reader.ReadToEnd();
             }));
+    }
+
+    private sealed class CountingPremiumColumnsService : IExpirationsPremiumColumnsService
+    {
+        private readonly ExpirationsPremiumColumnsService _inner = new();
+        public int Calls { get; private set; }
+
+        public ExpirationsPremiumColumnResolution Resolve(
+            string sourceWorkbookPath,
+            string worksheetName,
+            uint headerRowNumber,
+            ExpirationsPremiumColumnOptions? options = null)
+        {
+            Calls++;
+            return _inner.Resolve(sourceWorkbookPath, worksheetName, headerRowNumber, options);
+        }
+    }
+
+    private sealed class CountingPremiumInspectionService : IExpirationsPremiumDataInspectionService
+    {
+        private readonly ExpirationsPremiumDataInspectionService _inner = new();
+        public int Calls { get; private set; }
+
+        public IReadOnlyList<ExpirationsPremiumRowInspection> Inspect(
+            string sourceWorkbookPath,
+            string worksheetName,
+            IReadOnlyList<uint> sourceRowNumbers,
+            string premiumColumnReference,
+            string currencyColumnReference,
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return _inner.Inspect(
+                sourceWorkbookPath,
+                worksheetName,
+                sourceRowNumbers,
+                premiumColumnReference,
+                currencyColumnReference,
+                cancellationToken);
+        }
+    }
+
+    private sealed class CountingPremiumTotalsPlanner : IExpirationsPremiumTotalsPlanner
+    {
+        private readonly ExpirationsPremiumTotalsPlanner _inner = new();
+        public int Calls { get; private set; }
+
+        public ExpirationsPremiumTotalsPlan CreatePlan(
+            string worksheetName,
+            uint headerRowNumber,
+            IReadOnlyList<uint> sourceRowNumbers,
+            ExpirationsPremiumColumnResolution columns,
+            IReadOnlyList<ExpirationsPremiumRowInspection> rows)
+        {
+            Calls++;
+            return _inner.CreatePlan(worksheetName, headerRowNumber, sourceRowNumbers, columns, rows);
+        }
+    }
+
+    private sealed class TotalsPlanStrippingPreflightService : IExpirationsNextMonthGenerationPreflightService
+    {
+        private readonly ExpirationsNextMonthGenerationPreflightService _inner = new();
+
+        public ExpirationsNextMonthPreflightResult Validate(
+            ExpirationsGenerationContext context,
+            ExpirationsPeriod? period,
+            ExpirationsPremiumColumnOptions? premiumColumnOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            var result = _inner.Validate(context, period, premiumColumnOptions, cancellationToken);
+            return new ExpirationsNextMonthPreflightResult
+            {
+                PremiumColumns = result.PremiumColumns,
+                SpecialBrokerId = result.SpecialBrokerId,
+                FelixPlan = result.FelixPlan
+            };
+        }
     }
 
     private sealed class FailingFelixGenerator(int failAtCall) : IExpirationsFelixWorkbookGenerator

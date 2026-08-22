@@ -146,8 +146,47 @@ public sealed class ExpirationsAssociationAdministrationItem
         ExpirationsAssociationKind.Code => "Código",
         _ => Association.Kind.ToString()
     };
-    public string OriginText => "Asociación confirmada";
+    public string OriginText => Association.Origin switch
+    {
+        ExpirationsAssociationOrigin.Imported => "Importado",
+        ExpirationsAssociationOrigin.ManuallyConfirmed => "Confirmado manualmente",
+        ExpirationsAssociationOrigin.ManuallyAdded => "Agregado manualmente",
+        _ => "Confirmado"
+    };
     public string StatusText => Association.IsActive ? "Activa" : "Inactiva";
+}
+
+public sealed class ExpirationsObservedIdentifierAdministrationItem
+{
+    public ExpirationsObservedIdentifier Identifier { get; init; } = new();
+    public string UpdateTime { get; init; } = string.Empty;
+    public string BrokerName { get; init; } = string.Empty;
+    public string BrokerPrimaryEmail { get; init; } = string.Empty;
+}
+
+public sealed class ExpirationsKnownIdentifierAdministrationItem
+{
+    public Guid BrokerId { get; init; }
+    public string BrokerName { get; init; } = string.Empty;
+    public string BrokerPrimaryEmail { get; init; } = string.Empty;
+    public ExpirationsAssociationKind Kind { get; init; }
+    public string Value { get; init; } = string.Empty;
+    public string NormalizedValue { get; init; } = string.Empty;
+    public string OriginText { get; init; } = string.Empty;
+    public string StatusText { get; init; } = string.Empty;
+    public DateTimeOffset? UpdatedAtUtc { get; init; }
+    public ExpirationsAssociationAdministrationItem? AssociationItem { get; init; }
+    public ExpirationsObservedIdentifierAdministrationItem? ObservedItem { get; init; }
+    public bool IsMaster { get; init; }
+    public string KindText => Kind switch
+    {
+        ExpirationsAssociationKind.Name => "Nombre",
+        ExpirationsAssociationKind.Alias => "Alias",
+        ExpirationsAssociationKind.Code => "Código",
+        _ => Kind.ToString()
+    };
+    public bool IsAssociation => AssociationItem is not null;
+    public bool IsObserved => ObservedItem is not null;
 }
 
 public sealed class ExpirationsExclusionAdministrationItem

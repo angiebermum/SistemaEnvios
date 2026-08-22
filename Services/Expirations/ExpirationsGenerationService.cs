@@ -190,7 +190,8 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                 request.Context.SourceWorkbook.WorksheetName,
                 request.Context.SourceWorkbook.HeaderRowNumber,
                 target.RowNumbers,
-                request.PremiumColumnOptions);
+                request.PremiumColumnOptions,
+                nextMonthPreflight?.PremiumTotalsPlansByBrokerId.GetValueOrDefault(target.Broker.BrokerId));
             await Task.Run(
                 () => _nextMonthWorkbookGenerator.Generate(materialization, cancellationToken),
                 cancellationToken);

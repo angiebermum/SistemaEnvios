@@ -41,6 +41,8 @@ public sealed record ExpirationsFelixWorkbookGenerationRequest(
 public sealed class ExpirationsNextMonthPreflightResult
 {
     public ExpirationsPremiumColumnResolution PremiumColumns { get; init; } = new();
+    public IReadOnlyDictionary<Guid, ExpirationsPremiumTotalsPlan> PremiumTotalsPlansByBrokerId { get; init; } =
+        new Dictionary<Guid, ExpirationsPremiumTotalsPlan>();
     public Guid SpecialBrokerId { get; init; }
     public ExpirationsFelixGenerationPlan? FelixPlan { get; init; }
 }

@@ -41,11 +41,86 @@ public sealed class ExpirationsFileNameService
                 : $"{item.BaseName}.xlsx");
     }
 
-    public string CreateBatchDirectoryName(ExpirationsProcess process, DateTimeOffset localTime)
+    public IReadOnlyDictionary<ExpirationsGeneratedFileNameKey, string> CreateNextMonthFileNames(
+        ExpirationsPeriod period,
+        IReadOnlyList<ExpirationsGeneratedFileNameRequest> files)
     {
-        if (process != ExpirationsProcess.PreviousMonth)
-            throw new ExpirationsGenerationException("La generación de Vencimientos del mes siguiente todavía no está habilitada.");
-        return $"Pendientes mes anterior - {localTime:yyyyMMdd-HHmmss}";
+        ArgumentNullException.ThrowIfNull(period);
+        ArgumentNullException.ThrowIfNull(files);
+        var candidates = files
+            .Select(file => new
+            {
+                Key = new ExpirationsGeneratedFileNameKey(file.BrokerId, file.Variant),
+                file.BrokerId,
+                BrokerName = _sanitizer.SanitizePart(file.BrokerName),
+                file.Variant
+            })
+            .OrderBy(item => item.BrokerId)
+            .ThenBy(item => item.Key.Variant)
+            .ToList();
+        if (candidates.Select(item => item.Key).Distinct().Count() != candidates.Count)
+            throw new ExpirationsGenerationException("La generación contiene una variante de archivo duplicada.");
+        var collisions = candidates
+            .GroupBy(
+                item => CreateNextMonthName(item.BrokerName, item.Variant, period, null),
+                StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return candidates.ToDictionary(
+            item => item.Key,
+            item =>
+            {
+                var baseName = CreateNextMonthName(item.BrokerName, item.Variant, period, null);
+                return collisions.Contains(baseName)
+                    ? CreateNextMonthName(item.BrokerName, item.Variant, period, item.BrokerId)
+                    : baseName;
+            });
+    }
+
+    public string CreateBatchDirectoryName(
+        ExpirationsProcess process,
+        DateTimeOffset localTime,
+        ExpirationsPeriod? period = null)
+    {
+        return process switch
+        {
+            ExpirationsProcess.PreviousMonth => $"Pendientes mes anterior - {localTime:yyyyMMdd-HHmmss}",
+            ExpirationsProcess.NextMonth when period is not null =>
+                $"Vencimientos mes siguiente - {period.FileToken} - {localTime:yyyyMMdd-HHmmss}",
+            ExpirationsProcess.NextMonth => throw new ExpirationsGenerationException(
+                "Seleccione el período de mes siguiente."),
+            _ => throw new ArgumentOutOfRangeException(nameof(process))
+        };
+    }
+
+    private static string VariantSuffix(ExpirationsGeneratedFileVariant variant) => variant switch
+    {
+        ExpirationsGeneratedFileVariant.Standard => string.Empty,
+        ExpirationsGeneratedFileVariant.FelixAlphabetical => " - ORDENADO ALFABETICAMENTE",
+        ExpirationsGeneratedFileVariant.FelixExpirationDate => " - ORDENADO POR VENCIMIENTO",
+        _ => throw new ArgumentOutOfRangeException(nameof(variant))
+    };
+
+    private static string CreateNextMonthName(
+        string sanitizedBrokerName,
+        ExpirationsGeneratedFileVariant variant,
+        ExpirationsPeriod period,
+        Guid? collisionBrokerId)
+    {
+        const string prefix = "Vencimientos mes siguiente - ";
+        var identity = collisionBrokerId is { } brokerId
+            ? $" - {brokerId.ToString("N")[..8]}"
+            : string.Empty;
+        var tail = $"{identity} - {period.FileToken}{VariantSuffix(variant)}";
+        const int extensionLength = 5;
+        var availableBrokerLength = MaximumBaseNameLength - extensionLength - prefix.Length - tail.Length;
+        if (availableBrokerLength <= 0)
+            throw new ExpirationsGenerationException("El nombre de archivo de mes siguiente excede el límite permitido.");
+        var brokerName = sanitizedBrokerName.Length <= availableBrokerLength
+            ? sanitizedBrokerName
+            : sanitizedBrokerName[..availableBrokerLength].TrimEnd(' ', '.', '-');
+        return $"{prefix}{brokerName}{tail}.xlsx";
     }
 
     private static string Limit(string value, int suffixLength = 5)

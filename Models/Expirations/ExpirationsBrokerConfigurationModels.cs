@@ -6,6 +6,7 @@ public sealed class ExpirationsBrokerConfigurationItem
     public string Name { get; init; } = string.Empty;
     public IReadOnlyList<string> PrimaryEmailAddresses { get; init; } = [];
     public bool IsActive { get; init; } = true;
+    public ExpirationsNextMonthGenerationMode NextMonthGenerationMode { get; init; }
     public IReadOnlyList<ExpirationsAssistant> Assistants { get; init; } = [];
     public bool HasExplicitProfile { get; init; }
     public string? ProfileUpdateTime { get; init; }
@@ -20,6 +21,10 @@ public sealed class ExpirationsBrokerConfigurationItem
     public int TotalAssistantCount => Assistants.Count;
     public bool HasPrimaryEmail => PrimaryEmailAddresses.Any(value => !string.IsNullOrWhiteSpace(value));
 }
+
+public sealed record ExpirationsNextMonthGenerationModeOption(
+    ExpirationsNextMonthGenerationMode Value,
+    string DisplayName);
 
 public enum ExpirationsBrokerConfigurationSaveOutcome
 {

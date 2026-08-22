@@ -64,6 +64,7 @@ internal sealed class ExpirationsBrokerProfileMapper : IFirestoreEntityMapper<Ex
         {
             ["brokerId"] = ExpirationsFirestoreFields.Guid(value.BrokerId),
             ["isActive"] = FirestoreRestValue.Boolean(value.IsActive),
+            ["nextMonthGenerationMode"] = FirestoreRestValue.String(WriteNextMonthGenerationMode(value.NextMonthGenerationMode)),
             ["assistants"] = FirestoreRestValue.Array(value.Assistants.Select(ExpirationsFirestoreFields.Assistant)),
             ["createdAtUtc"] = FirestoreRestValue.Timestamp(value.CreatedAtUtc),
             ["updatedAtUtc"] = FirestoreRestValue.Timestamp(value.UpdatedAtUtc)
@@ -73,11 +74,36 @@ internal sealed class ExpirationsBrokerProfileMapper : IFirestoreEntityMapper<Ex
     {
         BrokerId = ExpirationsFirestoreFields.ReadGuid(fields.Required("brokerId"), "brokerId"),
         IsActive = fields.Required("isActive").RequireBoolean("isActive"),
+        NextMonthGenerationMode = ReadNextMonthGenerationMode(fields),
         Assistants = fields.Required("assistants").RequireArray("assistants")
             .Select((item, index) => ExpirationsFirestoreFields.ReadAssistant(item, $"assistants[{index}]"))
             .ToList(),
         CreatedAtUtc = fields.Required("createdAtUtc").RequireTimestamp("createdAtUtc"),
         UpdatedAtUtc = fields.Required("updatedAtUtc").RequireTimestamp("updatedAtUtc")
+    };
+
+    private static ExpirationsNextMonthGenerationMode ReadNextMonthGenerationMode(
+        IReadOnlyDictionary<string, FirestoreRestValue> fields)
+    {
+        if (!fields.TryGetValue("nextMonthGenerationMode", out var value))
+            return ExpirationsNextMonthGenerationMode.Standard;
+        return value.RequireString("nextMonthGenerationMode") switch
+        {
+            nameof(ExpirationsNextMonthGenerationMode.Standard) =>
+                ExpirationsNextMonthGenerationMode.Standard,
+            nameof(ExpirationsNextMonthGenerationMode.SpecialDualSorted) =>
+                ExpirationsNextMonthGenerationMode.SpecialDualSorted,
+            _ => throw new InvalidDataException(
+                "El campo 'nextMonthGenerationMode' contiene un modo no permitido.")
+        };
+    }
+
+    private static string WriteNextMonthGenerationMode(ExpirationsNextMonthGenerationMode value) => value switch
+    {
+        ExpirationsNextMonthGenerationMode.Standard => nameof(ExpirationsNextMonthGenerationMode.Standard),
+        ExpirationsNextMonthGenerationMode.SpecialDualSorted =>
+            nameof(ExpirationsNextMonthGenerationMode.SpecialDualSorted),
+        _ => throw new InvalidDataException("El modo de generación de mes siguiente no está permitido.")
     };
 }
 

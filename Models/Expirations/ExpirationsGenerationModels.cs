@@ -68,7 +68,9 @@ public sealed class ExpirationsGenerationContext
 
 public sealed record ExpirationsGenerationRequest(
     ExpirationsGenerationContext Context,
-    string OutputParentDirectory);
+    string OutputParentDirectory,
+    ExpirationsPeriod? Period = null,
+    ExpirationsPremiumColumnOptions? PremiumColumnOptions = null);
 
 public sealed class ExpirationsGenerationBatch
 {
@@ -87,10 +89,18 @@ public sealed class ExpirationsGeneratedFile
     public Guid BrokerId { get; init; }
     public string BrokerName { get; init; } = string.Empty;
     public string OutputPath { get; init; } = string.Empty;
+    public ExpirationsGeneratedFileVariant Variant { get; init; }
     public int RowCount { get; init; }
     public string Sha256 { get; init; } = string.Empty;
     public IReadOnlyList<uint> SourceRowNumbers { get; init; } = [];
     public IReadOnlyList<string> Warnings { get; init; } = [];
+}
+
+public enum ExpirationsGeneratedFileVariant
+{
+    Standard,
+    FelixAlphabetical,
+    FelixExpirationDate
 }
 
 public sealed class ExpirationsGenerationPreparationResult
@@ -98,7 +108,16 @@ public sealed class ExpirationsGenerationPreparationResult
     public ExpirationsAnalysisSessionSnapshot Snapshot { get; init; } = new();
     public ExpirationsGenerationContext? Context { get; init; }
     public string ErrorMessage { get; init; } = string.Empty;
+    public ExpirationsPremiumColumnResolution? PremiumColumnResolution { get; init; }
     public bool CanGenerate => Context is not null && ErrorMessage.Length == 0;
+    public bool RequiresManualPremiumColumnSelection => PremiumColumnResolution?.Status is
+        ExpirationsPremiumColumnResolutionStatus.MissingPremiumColumn or
+        ExpirationsPremiumColumnResolutionStatus.MissingCurrencyColumn or
+        ExpirationsPremiumColumnResolutionStatus.AmbiguousPremiumColumn or
+        ExpirationsPremiumColumnResolutionStatus.AmbiguousCurrencyColumn or
+        ExpirationsPremiumColumnResolutionStatus.InvalidPremiumColumnOverride or
+        ExpirationsPremiumColumnResolutionStatus.InvalidCurrencyColumnOverride or
+        ExpirationsPremiumColumnResolutionStatus.ConflictingColumnOverrides;
 }
 
 public sealed record ExpirationsGenerationProgress(
@@ -113,7 +132,7 @@ public sealed record ExpirationsStandardWorkbookGenerationRequest(
     uint HeaderRowNumber,
     IReadOnlyList<uint> SourceRowNumbers);
 
-public sealed class ExpirationsGenerationException : InvalidOperationException
+public class ExpirationsGenerationException : InvalidOperationException
 {
     public ExpirationsGenerationException(string message) : base(message)
     {

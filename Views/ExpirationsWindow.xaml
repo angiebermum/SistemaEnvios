@@ -202,9 +202,32 @@
                         Visibility="{Binding GenerationVisibility}">
                     <StackPanel>
                         <TextBlock Text="Generación de archivos" Style="{StaticResource SectionTitleTextStyle}" />
-                        <TextBlock Text="La generación de Vencimientos del mes siguiente se habilitará al completar el cálculo de primas y su formato especial."
-                                   Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,8,0,0"
-                                   Visibility="{Binding NextMonthGenerationNoteVisibility}" />
+                        <Border Style="{StaticResource CardStyle}" Padding="12" Margin="0,10,0,0"
+                                Visibility="{Binding NextMonthPeriodVisibility}">
+                            <StackPanel>
+                                <TextBlock Text="Período del reporte" FontWeight="SemiBold" />
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Text="Mes" Style="{StaticResource CaptionTextStyle}"
+                                               VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <ComboBox Width="190" ItemsSource="{Binding MonthOptions}"
+                                              SelectedItem="{Binding SelectedMonthOption, Mode=TwoWay}"
+                                              DisplayMemberPath="DisplayName"
+                                              SelectionChanged="NextMonthPeriod_Changed" />
+                                    <TextBlock Text="Año" Style="{StaticResource CaptionTextStyle}"
+                                               VerticalAlignment="Center" Margin="18,0,8,0" />
+                                    <TextBox Width="90" Text="{Binding NextMonthYearText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             TextChanged="NextMonthPeriod_Changed" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding GenerationReadinessText}" TextWrapping="Wrap"
+                                           Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0" />
+                                <Button Content="Seleccionar columnas Prima / Moneda"
+                                        Click="SelectPremiumColumns_Click"
+                                        Visibility="{Binding PremiumColumnSelectionVisibility}"
+                                        IsEnabled="{Binding CanSelectPremiumColumns}"
+                                        Style="{StaticResource CompactButtonStyle}"
+                                        HorizontalAlignment="Left" Margin="0,8,0,0" />
+                            </StackPanel>
+                        </Border>
                         <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                             <Button Content="Generar archivos" Click="GenerateFiles_Click"
                                     IsEnabled="{Binding CanGenerate}" Style="{StaticResource PrimaryButtonStyle}" />
@@ -217,6 +240,9 @@
                             <StackPanel>
                                 <TextBlock Text="Generación completada." FontWeight="SemiBold" />
                                 <TextBlock Margin="0,4,0,0">
+                                    <Run Text="Corredores con archivos: " /><Run Text="{Binding GeneratedBrokerCount, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock Margin="0,2,0,0">
                                     <Run Text="Archivos generados: " /><Run Text="{Binding GeneratedFileCount, Mode=OneWay}" />
                                 </TextBlock>
                                 <TextBlock Text="{Binding GeneratedOutputDirectory}" TextWrapping="Wrap"

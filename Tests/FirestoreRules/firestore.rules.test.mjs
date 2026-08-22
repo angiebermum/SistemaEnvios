@@ -202,6 +202,27 @@ test('brokerProfiles: Vencimientos permite read/create/update pero no delete', a
   await assertFails(deleteDoc(doc(db, `modules/vencimientos/brokerProfiles/${brokerOne}`)));
 });
 
+test('brokerProfiles: conserva shape antiguo y permite ambos modos de mes siguiente', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  await assertSucceeds(getDoc(doc(db, `modules/vencimientos/brokerProfiles/${brokerOne}`)));
+  await assertSucceeds(setDoc(
+    doc(db, `modules/vencimientos/brokerProfiles/${brokerTwo}`),
+    expirationsBrokerProfile(brokerTwo, { nextMonthGenerationMode: 'Standard' })));
+  await assertSucceeds(updateDoc(
+    doc(db, `modules/vencimientos/brokerProfiles/${brokerTwo}`),
+    {
+      nextMonthGenerationMode: 'SpecialDualSorted',
+      updatedAtUtc: new Date('2026-08-10T01:00:00Z')
+    }));
+});
+
+test('brokerProfiles: rechaza modo de mes siguiente desconocido', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  await assertFails(setDoc(
+    doc(db, `modules/vencimientos/brokerProfiles/${brokerTwo}`),
+    expirationsBrokerProfile(brokerTwo, { nextMonthGenerationMode: 'FelixPorNombre' })));
+});
+
 test('brokerProfiles: solo Comisiones no puede leer ni escribir', async () => {
   const db = environment.authenticatedContext('operator').firestore();
   await assertFails(getDoc(doc(db, `modules/vencimientos/brokerProfiles/${brokerOne}`)));

@@ -8,6 +8,7 @@ namespace ECS.CommissionsMailer.Tests;
 public sealed class ExpirationsBrokerConfigurationServiceTests
 {
     private static readonly Guid BrokerId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid OtherBrokerId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly DateTimeOffset Created = new(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
     private static readonly DateTimeOffset Now = new(2026, 8, 21, 18, 0, 0, TimeSpan.Zero);
 
@@ -172,6 +173,64 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
         Assert.True(profiles.Documents.Single().Value.IsActive);
     }
 
+    [Fact]
+    public async Task SavingSpecialCreatesProfileAndExistingProfileUsesOptimisticUpdate()
+    {
+        var profiles = new FakeProfileRepository([]);
+        var service = Service(profiles);
+        var special = With(
+            await service.GetAsync(BrokerId, TestContext.Current.CancellationToken),
+            mode: ExpirationsNextMonthGenerationMode.SpecialDualSorted);
+
+        var created = await service.SaveAsync(special, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsBrokerConfigurationSaveOutcome.Created, created.Outcome);
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.SpecialDualSorted,
+            Assert.Single(profiles.Created).NextMonthGenerationMode);
+        var backToStandard = With(
+            created.Configuration,
+            assistants: [Assistant("Conservado", "kept@example.test")],
+            mode: ExpirationsNextMonthGenerationMode.Standard);
+        var updated = await service.SaveAsync(backToStandard, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsBrokerConfigurationSaveOutcome.Updated, updated.Outcome);
+        Assert.Equal(created.Configuration.ProfileUpdateTime, Assert.Single(profiles.Updated).ExpectedUpdateTime);
+        Assert.Equal(ExpirationsNextMonthGenerationMode.Standard, profiles.Updated[0].Profile.NextMonthGenerationMode);
+        Assert.Equal("kept@example.test", Assert.Single(profiles.Updated[0].Profile.Assistants).Email);
+        Assert.True(profiles.Updated[0].Profile.IsActive);
+    }
+
+    [Fact]
+    public async Task ServiceRejectsSecondSpecialWithoutChangingExistingProfile()
+    {
+        var other = new ExpirationsBrokerProfile
+        {
+            BrokerId = OtherBrokerId,
+            IsActive = true,
+            NextMonthGenerationMode = ExpirationsNextMonthGenerationMode.SpecialDualSorted,
+            CreatedAtUtc = Created,
+            UpdatedAtUtc = Created
+        };
+        var profiles = new FakeProfileRepository([Stored(other, "other-version")]);
+        var service = Service(profiles);
+        var special = With(
+            await service.GetAsync(BrokerId, TestContext.Current.CancellationToken),
+            mode: ExpirationsNextMonthGenerationMode.SpecialDualSorted);
+
+        var result = await service.SaveAsync(special, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsBrokerConfigurationSaveOutcome.ValidationFailed, result.Outcome);
+        Assert.Equal(
+            "Ya existe un corredor configurado con el formato especial de mes siguiente.",
+            result.Message);
+        Assert.Empty(profiles.Created);
+        Assert.Empty(profiles.Updated);
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.SpecialDualSorted,
+            profiles.Documents.Single().Value.NextMonthGenerationMode);
+    }
+
     private static ExpirationsBrokerConfigurationService Service(FakeProfileRepository profiles) => new(
         new FakeDirectoryRepository([Directory()]),
         profiles,
@@ -182,7 +241,8 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
         bool? isActive = null,
         IReadOnlyList<ExpirationsAssistant>? assistants = null,
         string? name = null,
-        IReadOnlyList<string>? emails = null)
+        IReadOnlyList<string>? emails = null,
+        ExpirationsNextMonthGenerationMode? mode = null)
     {
         source = Assert.IsType<ExpirationsBrokerConfigurationItem>(source);
         return new ExpirationsBrokerConfigurationItem
@@ -191,6 +251,7 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
             Name = name ?? source.Name,
             PrimaryEmailAddresses = emails ?? source.PrimaryEmailAddresses,
             IsActive = isActive ?? source.IsActive,
+            NextMonthGenerationMode = mode ?? source.NextMonthGenerationMode,
             Assistants = assistants ?? source.Assistants,
             HasExplicitProfile = source.HasExplicitProfile,
             ProfileUpdateTime = source.ProfileUpdateTime,

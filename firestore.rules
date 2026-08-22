@@ -56,12 +56,16 @@ service cloud.firestore {
           'brokerId', 'isActive', 'assistants', 'createdAtUtc', 'updatedAtUtc'
         ]) &&
         request.resource.data.keys().hasOnly([
-          'brokerId', 'isActive', 'assistants', 'createdAtUtc', 'updatedAtUtc'
+          'brokerId', 'isActive', 'assistants', 'createdAtUtc', 'updatedAtUtc',
+          'nextMonthGenerationMode'
         ]) &&
         request.resource.data.brokerId is string &&
         request.resource.data.brokerId == brokerId &&
         request.resource.data.isActive is bool &&
         request.resource.data.assistants is list &&
+        request.resource.data.get('nextMonthGenerationMode', 'Standard') in [
+          'Standard', 'SpecialDualSorted'
+        ] &&
         request.resource.data.createdAtUtc is timestamp &&
         request.resource.data.updatedAtUtc is timestamp;
     }

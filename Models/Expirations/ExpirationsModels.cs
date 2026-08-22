@@ -19,6 +19,7 @@ public sealed class ExpirationsBrokerProfile
 {
     public Guid BrokerId { get; set; }
     public bool IsActive { get; set; }
+    public ExpirationsNextMonthGenerationMode NextMonthGenerationMode { get; set; }
     public List<ExpirationsAssistant> Assistants { get; set; } = [];
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }
@@ -30,7 +31,14 @@ public sealed class ExpirationsBrokerCatalogItem
     public string Name { get; set; } = string.Empty;
     public List<string> PrimaryEmailAddresses { get; set; } = [];
     public bool IsActive { get; set; }
+    public ExpirationsNextMonthGenerationMode NextMonthGenerationMode { get; set; }
     public List<ExpirationsAssistant> Assistants { get; set; } = [];
+}
+
+public enum ExpirationsNextMonthGenerationMode
+{
+    Standard,
+    SpecialDualSorted
 }
 
 public sealed record ExpirationsBrokerCatalog(

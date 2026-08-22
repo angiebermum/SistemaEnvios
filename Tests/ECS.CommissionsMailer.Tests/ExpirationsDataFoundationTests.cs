@@ -157,6 +157,24 @@ public sealed class ExpirationsDataFoundationTests
     }
 
     [Fact]
+    public void ProfileMapperDefaultsOldDocumentsToStandardAndRoundTripsAllowedModes()
+    {
+        var mapper = new ExpirationsBrokerProfileMapper();
+        var oldFields = mapper.ToFields(Profile(BrokerOne)).ToDictionary(item => item.Key, item => item.Value);
+        Assert.True(oldFields.Remove("nextMonthGenerationMode"));
+
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.Standard,
+            mapper.FromFields(oldFields).NextMonthGenerationMode);
+        foreach (var mode in Enum.GetValues<ExpirationsNextMonthGenerationMode>())
+        {
+            var profile = Profile(BrokerOne, nextMonthGenerationMode: mode);
+            var mapped = mapper.FromFields(mapper.ToFields(profile));
+            Assert.Equal(mode, mapped.NextMonthGenerationMode);
+        }
+    }
+
+    [Fact]
     public async Task BrokerProfileRepositoryUsesExactModulePath()
     {
         var repository = new ExpirationsBrokerProfileRepository(new InMemoryFirestoreRestClient());
@@ -258,10 +276,13 @@ public sealed class ExpirationsDataFoundationTests
     private static ExpirationsBrokerProfile Profile(
         Guid brokerId,
         bool isActive = true,
-        List<ExpirationsAssistant>? assistants = null) => new()
+        List<ExpirationsAssistant>? assistants = null,
+        ExpirationsNextMonthGenerationMode nextMonthGenerationMode =
+            ExpirationsNextMonthGenerationMode.Standard) => new()
     {
         BrokerId = brokerId,
         IsActive = isActive,
+        NextMonthGenerationMode = nextMonthGenerationMode,
         Assistants = assistants ?? [],
         CreatedAtUtc = Timestamp,
         UpdatedAtUtc = Timestamp

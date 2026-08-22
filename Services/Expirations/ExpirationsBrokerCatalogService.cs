@@ -42,6 +42,8 @@ public sealed class ExpirationsBrokerCatalogService(
         Name = broker.Name,
         PrimaryEmailAddresses = [.. broker.PrimaryEmailAddresses],
         IsActive = profile?.IsActive ?? true,
+        NextMonthGenerationMode = profile?.NextMonthGenerationMode ??
+            ExpirationsNextMonthGenerationMode.Standard,
         Assistants = profile?.Assistants.Select(CopyAssistant).ToList() ?? []
     };
 

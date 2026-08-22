@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authorization;
@@ -17,6 +18,8 @@ public partial class ExpirationsWindow : Window
     private readonly IExpirationsBrokerConfigurationService _configurationService;
     private readonly IExpirationsGenerationService _generationService;
     private readonly ExpirationsWindowState _state;
+    private int _readinessVersion;
+    private CancellationTokenSource? _readinessCancellation;
 
     public ExpirationsWindow(
         AppUser currentUser,
@@ -42,10 +45,11 @@ public partial class ExpirationsWindow : Window
         remove => _state.LogoutRequested -= value;
     }
 
-    private void ProcessComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private async void ProcessComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         _coordinator.SelectProcess(_state.SelectedProcessOption?.Value);
         _state.ApplySnapshot(_coordinator.Snapshot);
+        await EvaluateNextMonthReadinessAsync();
     }
 
     private void SelectFile_Click(object sender, RoutedEventArgs e)
@@ -61,6 +65,7 @@ public partial class ExpirationsWindow : Window
             return;
 
         _coordinator.SelectFile(dialog.FileName);
+        _state.ResetPremiumColumnOptions();
         _state.ApplySnapshot(_coordinator.Snapshot);
     }
 
@@ -78,6 +83,7 @@ public partial class ExpirationsWindow : Window
             }
 
             _state.ApplySnapshot(snapshot);
+            await EvaluateNextMonthReadinessAsync();
             if (snapshot.ReadResult is { IsSuccess: false } && !snapshot.RequiresWorkbookSelection)
             {
                 MessageBox.Show(
@@ -124,6 +130,7 @@ public partial class ExpirationsWindow : Window
         {
             var result = _coordinator.ApplyManualOverride(issue.RowNumber, issue.ComponentIndex, brokerId);
             _state.ApplySnapshot(result.Snapshot);
+            await EvaluateNextMonthReadinessAsync();
             MessageBox.Show(
                 result.Message,
                 "Resolución manual",
@@ -140,6 +147,7 @@ public partial class ExpirationsWindow : Window
                 brokerId,
                 dialog.SelectedKind));
             _state.ApplySnapshot(result.Snapshot);
+            await EvaluateNextMonthReadinessAsync();
             var warning = result.Outcome is
                 ExpirationsAssociationConfirmationOutcome.Failed or
                 ExpirationsAssociationConfirmationOutcome.Rejected or
@@ -164,7 +172,92 @@ public partial class ExpirationsWindow : Window
         {
             var snapshot = await _coordinator.RefreshCatalogAndReanalyzeAsync();
             _state.ApplySnapshot(snapshot);
+            await EvaluateNextMonthReadinessAsync();
         });
+    }
+
+    private async void NextMonthPeriod_Changed(object sender, RoutedEventArgs e)
+    {
+        _state.InvalidateGenerationReadiness(
+            "Seleccione un mes y año válidos; después se validarán la configuración especial y las primas.");
+        await EvaluateNextMonthReadinessAsync();
+    }
+
+    private async void SelectPremiumColumns_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var workbook = _coordinator.Snapshot.ReadResult?.Workbook;
+            if (workbook is null)
+                return;
+            var inspection = await _coordinator.InspectWorkbookAsync();
+            var selection = new ExpirationsPremiumColumnSelectionWindow(
+                inspection,
+                workbook.WorksheetName,
+                workbook.HeaderRowNumber,
+                _state.PremiumColumnOptions) { Owner = this };
+            if (selection.ShowDialog() != true || selection.Options is null)
+                return;
+            _state.SetPremiumColumnOptions(selection.Options);
+            await EvaluateNextMonthReadinessAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"No fue posible seleccionar las columnas.\n\n{ex.Message}",
+                "Prima y Moneda",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private async Task EvaluateNextMonthReadinessAsync()
+    {
+        var version = ++_readinessVersion;
+        _readinessCancellation?.Cancel();
+        if (_state.SelectedProcessOption?.Value != ExpirationsProcess.NextMonth ||
+            _coordinator.Snapshot.Analysis?.CanGenerate != true)
+            return;
+        if (!_state.TryGetNextMonthPeriod(out var period))
+        {
+            _state.InvalidateGenerationReadiness("Seleccione un mes y año válidos para el reporte.");
+            return;
+        }
+
+        var readinessCancellation = new CancellationTokenSource();
+        _readinessCancellation = readinessCancellation;
+        _state.InvalidateGenerationReadiness("Validando configuración, columnas y primas...");
+        try
+        {
+            var preparation = await _coordinator.PrepareGenerationAsync(
+                period!,
+                _state.PremiumColumnOptions,
+                readinessCancellation.Token);
+            if (version != _readinessVersion)
+                return;
+            _state.ApplySnapshot(preparation.Snapshot);
+            _state.SetGenerationReadiness(
+                preparation.CanGenerate,
+                preparation.CanGenerate
+                    ? "Configuración especial, período y primas validados. Listo para generar."
+                    : preparation.ErrorMessage,
+                preparation.RequiresManualPremiumColumnSelection);
+        }
+        catch (OperationCanceledException) when (readinessCancellation.IsCancellationRequested)
+        {
+            // Una selección más reciente reemplazó esta validación.
+        }
+        catch (Exception ex)
+        {
+            if (version == _readinessVersion)
+                _state.InvalidateGenerationReadiness($"No fue posible validar la generación: {ex.Message}");
+        }
+        finally
+        {
+            if (ReferenceEquals(_readinessCancellation, readinessCancellation))
+                _readinessCancellation = null;
+            readinessCancellation.Dispose();
+        }
     }
 
     private async void GenerateFiles_Click(object sender, RoutedEventArgs e)
@@ -179,7 +272,27 @@ public partial class ExpirationsWindow : Window
 
         await RunBusyAsync("Preparando generación...", async () =>
         {
-            var preparation = await _coordinator.PrepareGenerationAsync();
+            ExpirationsPeriod? period = null;
+            ExpirationsGenerationPreparationResult preparation;
+            if (_state.SelectedProcessOption?.Value == ExpirationsProcess.NextMonth)
+            {
+                if (!_state.TryGetNextMonthPeriod(out period))
+                {
+                    MessageBox.Show(
+                        "Seleccione un mes y año válidos para generar el mes siguiente.",
+                        "Generación de Vencimientos",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+                preparation = await _coordinator.PrepareGenerationAsync(
+                    period!,
+                    _state.PremiumColumnOptions);
+            }
+            else
+            {
+                preparation = await _coordinator.PrepareGenerationAsync();
+            }
             _state.ApplySnapshot(preparation.Snapshot);
             if (!preparation.CanGenerate)
             {
@@ -194,11 +307,15 @@ public partial class ExpirationsWindow : Window
             var progress = new Progress<ExpirationsGenerationProgress>(value =>
                 _state.SetOperationStatus($"Generando archivo {value.CurrentFile} de {value.TotalFiles}..."));
             var batch = await _generationService.GenerateAsync(
-                new ExpirationsGenerationRequest(preparation.Context!, dialog.FolderName),
+                new ExpirationsGenerationRequest(
+                    preparation.Context!,
+                    dialog.FolderName,
+                    period,
+                    _state.PremiumColumnOptions),
                 progress);
             _state.ApplyGenerationBatch(batch);
             MessageBox.Show(
-                $"Generación completada.\n\nArchivos generados: {batch.Files.Count}\nCarpeta: {batch.OutputDirectory}",
+                $"Generación completada.\n\nCorredores con archivos: {batch.Files.Select(file => file.BrokerId).Distinct().Count()}\nArchivos generados: {batch.Files.Count}\nCarpeta: {batch.OutputDirectory}",
                 "Generación de Vencimientos",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -272,6 +389,12 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     private bool _isBusy;
     private string _operationStatusText = string.Empty;
     private ExpirationsGenerationBatch? _generationBatch;
+    private ExpirationsMonthOption? _selectedMonthOption;
+    private string _nextMonthYearText = string.Empty;
+    private ExpirationsPremiumColumnOptions? _premiumColumnOptions;
+    private bool _nextMonthGenerationReady;
+    private bool _premiumColumnSelectionRequired;
+    private string _generationReadinessText = "Seleccione un mes y año para validar la generación.";
 
     public ExpirationsWindowState(AppUser currentUser)
     {
@@ -286,10 +409,17 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
                 ExpirationsProcess.NextMonth,
                 "Vencimientos del mes siguiente")
         ];
+        MonthOptions = Enumerable.Range(1, 12)
+            .Select(month => new ExpirationsMonthOption(
+                month,
+                CultureInfo.GetCultureInfo("es-CR").TextInfo.ToTitleCase(
+                    CultureInfo.GetCultureInfo("es-CR").DateTimeFormat.GetMonthName(month))))
+            .ToArray();
     }
 
     public AppUser CurrentUser { get; }
     public IReadOnlyList<ExpirationsProcessOption> ProcessOptions { get; }
+    public IReadOnlyList<ExpirationsMonthOption> MonthOptions { get; }
     public string SignedInUserText => $"{CurrentUser.DisplayName} · {CurrentUser.Email}";
     public Visibility AdminAccessVisibility =>
         CurrentUser.IsActive && CurrentUser.Role == AppUserRole.Admin
@@ -301,10 +431,14 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public bool CanConfigureBrokers => !IsBusy;
     public bool CanAnalyze => !IsBusy && SelectedProcessOption is not null && SourcePath.Length > 0;
     public bool CanResolve => !IsBusy && SelectedPendingIssue?.CanResolve == true;
+    public bool CanSelectPremiumColumns => !IsBusy &&
+        _snapshot.Process == ExpirationsProcess.NextMonth &&
+        _snapshot.ReadResult?.Workbook is not null;
     public bool CanGenerate => !IsBusy &&
-        _snapshot.Process == ExpirationsProcess.PreviousMonth &&
         _snapshot.Analysis is { CanGenerate: true, TotalRows: > 0 } &&
-        _snapshot.Distribution.Count > 0;
+        _snapshot.Distribution.Count > 0 &&
+        (_snapshot.Process == ExpirationsProcess.PreviousMonth ||
+         (_snapshot.Process == ExpirationsProcess.NextMonth && _nextMonthGenerationReady));
     public Visibility BusyVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;
     public string OperationStatusText => _operationStatusText;
     public Visibility ResultVisibility =>
@@ -322,10 +456,13 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public Visibility GenerationVisibility => AnalysisVisibility;
     public Visibility GenerationResultVisibility =>
         _generationBatch is null ? Visibility.Collapsed : Visibility.Visible;
-    public Visibility NextMonthGenerationNoteVisibility =>
-        _snapshot.Process == ExpirationsProcess.NextMonth && _snapshot.Analysis?.CanGenerate == true
+    public Visibility NextMonthPeriodVisibility =>
+        SelectedProcessOption?.Value == ExpirationsProcess.NextMonth
             ? Visibility.Visible
             : Visibility.Collapsed;
+    public Visibility PremiumColumnSelectionVisibility =>
+        _premiumColumnSelectionRequired ? Visibility.Visible : Visibility.Collapsed;
+    public string GenerationReadinessText => _generationReadinessText;
     public int TotalRows => _snapshot.Analysis?.TotalRows ?? 0;
     public int ResolvedRows => _snapshot.Analysis?.ResolvedRows ?? 0;
     public int PendingRows => _snapshot.Analysis?.RowsWithBlockingIssues ?? 0;
@@ -351,10 +488,38 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         ? "El análisis está completo y listo para la generación."
         : "El análisis está completo.";
     public int GeneratedFileCount => _generationBatch?.Files.Count ?? 0;
+    public int GeneratedBrokerCount => _generationBatch?.Files.Select(file => file.BrokerId).Distinct().Count() ?? 0;
     public string GeneratedOutputDirectory => _generationBatch?.OutputDirectory ?? string.Empty;
     public string GenerationWarningsText => _generationBatch is { Warnings.Count: > 0 }
         ? string.Join(Environment.NewLine, _generationBatch.Warnings)
         : "Sin advertencias.";
+    public ExpirationsPremiumColumnOptions? PremiumColumnOptions => _premiumColumnOptions;
+
+    public ExpirationsMonthOption? SelectedMonthOption
+    {
+        get => _selectedMonthOption;
+        set
+        {
+            if (Equals(_selectedMonthOption, value)) return;
+            _selectedMonthOption = value;
+            _generationBatch = null;
+            InvalidateGenerationReadiness("Validación pendiente para el período seleccionado.");
+            Notify();
+        }
+    }
+
+    public string NextMonthYearText
+    {
+        get => _nextMonthYearText;
+        set
+        {
+            if (string.Equals(_nextMonthYearText, value, StringComparison.Ordinal)) return;
+            _nextMonthYearText = value;
+            _generationBatch = null;
+            InvalidateGenerationReadiness("Validación pendiente para el período seleccionado.");
+            Notify();
+        }
+    }
 
     public ExpirationsProcessOption? SelectedProcessOption
     {
@@ -365,6 +530,8 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             _selectedProcessOption = value;
             _selectedPendingIssue = null;
             _generationBatch = null;
+            InvalidateGenerationReadiness(
+                "Seleccione un mes y año para validar la configuración especial y las primas.");
             Notify();
             NotifyAllState();
         }
@@ -400,6 +567,51 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public void ApplyGenerationBatch(ExpirationsGenerationBatch batch)
     {
         _generationBatch = batch ?? throw new ArgumentNullException(nameof(batch));
+        NotifyAllState();
+    }
+
+    public bool TryGetNextMonthPeriod(out ExpirationsPeriod? period)
+    {
+        period = null;
+        if (SelectedMonthOption is null ||
+            !int.TryParse(NextMonthYearText, NumberStyles.None, CultureInfo.InvariantCulture, out var year))
+            return false;
+        try
+        {
+            period = new ExpirationsPeriod(year, SelectedMonthOption.Month);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+    }
+
+    public void SetPremiumColumnOptions(ExpirationsPremiumColumnOptions options)
+    {
+        _premiumColumnOptions = options ?? throw new ArgumentNullException(nameof(options));
+        _generationBatch = null;
+        InvalidateGenerationReadiness("Validando las columnas Prima y Moneda seleccionadas...");
+    }
+
+    public void ResetPremiumColumnOptions()
+    {
+        _premiumColumnOptions = null;
+        _generationBatch = null;
+        InvalidateGenerationReadiness("Seleccione un mes y año para validar la generación.");
+    }
+
+    public void InvalidateGenerationReadiness(string message) =>
+        SetGenerationReadiness(false, message, false);
+
+    public void SetGenerationReadiness(
+        bool isReady,
+        string message,
+        bool premiumColumnSelectionRequired)
+    {
+        _nextMonthGenerationReady = isReady;
+        _generationReadinessText = message ?? string.Empty;
+        _premiumColumnSelectionRequired = premiumColumnSelectionRequired;
         NotifyAllState();
     }
 

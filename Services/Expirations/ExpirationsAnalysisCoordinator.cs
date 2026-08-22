@@ -16,6 +16,10 @@ public interface IExpirationsAnalysisCoordinator
         CancellationToken cancellationToken = default);
     Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
         CancellationToken cancellationToken = default);
+    Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
+        ExpirationsPeriod period,
+        ExpirationsPremiumColumnOptions? premiumColumnOptions,
+        CancellationToken cancellationToken = default);
     Task<ExpirationsWorkbookInspection> InspectWorkbookAsync(CancellationToken cancellationToken = default);
     ExpirationsManualOverrideResult ApplyManualOverride(
         uint rowNumber,
@@ -37,6 +41,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     private readonly ExpirationsBrokerNormalizer _normalizer;
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, string> _computeSourceSha256;
+    private readonly IExpirationsNextMonthGenerationPreflightService _nextMonthPreflightService;
     private ExpirationsProcess? _process;
     private string _sourcePath = string.Empty;
     private ExpirationsWorkbookReadOptions? _readOptions;
@@ -55,7 +60,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         IExpirationsWorkbookInspectionService? inspectionService = null,
         ExpirationsBrokerNormalizer? normalizer = null,
         TimeProvider? timeProvider = null,
-        Func<string, string>? sourceHashProvider = null)
+        Func<string, string>? sourceHashProvider = null,
+        IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null)
     {
         _catalogService = catalogService ?? throw new ArgumentNullException(nameof(catalogService));
         _associations = associations ?? throw new ArgumentNullException(nameof(associations));
@@ -67,6 +73,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         _timeProvider = timeProvider ?? TimeProvider.System;
         var hashService = new GeneratedFileHashService();
         _computeSourceSha256 = sourceHashProvider ?? hashService.ComputeSha256;
+        _nextMonthPreflightService = nextMonthPreflightService ??
+            new ExpirationsNextMonthGenerationPreflightService();
         Snapshot = EmptySnapshot();
     }
 
@@ -132,6 +140,26 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
 
     public async Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
         CancellationToken cancellationToken = default)
+        => await PrepareGenerationCoreAsync(null, null, validateNextMonth: false, cancellationToken);
+
+    public async Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
+        ExpirationsPeriod period,
+        ExpirationsPremiumColumnOptions? premiumColumnOptions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+        return await PrepareGenerationCoreAsync(
+            period,
+            premiumColumnOptions,
+            validateNextMonth: true,
+            cancellationToken);
+    }
+
+    private async Task<ExpirationsGenerationPreparationResult> PrepareGenerationCoreAsync(
+        ExpirationsPeriod? period,
+        ExpirationsPremiumColumnOptions? premiumColumnOptions,
+        bool validateNextMonth,
+        CancellationToken cancellationToken)
     {
         var snapshot = await RefreshCatalogAndReanalyzeAsync(cancellationToken);
         if (snapshot.Process is null)
@@ -158,17 +186,36 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
 
         try
         {
+            var context = new ExpirationsGenerationContext(
+                snapshot.Process.Value,
+                _sourcePath,
+                _analyzedSourceSha256,
+                sourceWorkbook,
+                analysis,
+                snapshot.Catalog);
+            if (validateNextMonth && context.Process == ExpirationsProcess.NextMonth)
+            {
+                _ = await Task.Run(
+                    () => _nextMonthPreflightService.Validate(
+                        context,
+                        period,
+                        premiumColumnOptions,
+                        cancellationToken),
+                    cancellationToken);
+            }
             return new ExpirationsGenerationPreparationResult
             {
                 Snapshot = snapshot,
-                Context = new ExpirationsGenerationContext(
-                    snapshot.Process.Value,
-                    _sourcePath,
-                    _analyzedSourceSha256,
-                    sourceWorkbook,
-                    analysis,
-                    snapshot.Catalog)
+                Context = context
             };
+        }
+        catch (ExpirationsPremiumColumnResolutionException ex)
+        {
+            return PreparationRejected(snapshot, ex.Message, ex.Resolution);
+        }
+        catch (ExpirationsGenerationException ex)
+        {
+            return PreparationRejected(snapshot, ex.Message);
         }
         catch (ArgumentException ex)
         {
@@ -447,10 +494,12 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
 
     private static ExpirationsGenerationPreparationResult PreparationRejected(
         ExpirationsAnalysisSessionSnapshot snapshot,
-        string message) => new()
+        string message,
+        ExpirationsPremiumColumnResolution? premiumColumnResolution = null) => new()
     {
         Snapshot = snapshot,
-        ErrorMessage = message
+        ErrorMessage = message,
+        PremiumColumnResolution = premiumColumnResolution
     };
 
     private ExpirationsManualOverrideResult OverrideRejected(string message) => new()

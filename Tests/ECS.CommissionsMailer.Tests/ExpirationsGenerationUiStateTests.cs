@@ -8,13 +8,23 @@ namespace ECS.CommissionsMailer.Tests;
 public sealed class ExpirationsGenerationUiStateTests
 {
     [Fact]
+    public void ExpirationsPeriodValidatesRangeAndUsesInvariantFileToken()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ExpirationsPeriod(2026, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ExpirationsPeriod(1999, 8));
+        var period = new ExpirationsPeriod(2026, 8);
+        Assert.Equal("2026-08", period.FileToken);
+        Assert.Equal("Agosto", period.SpanishMonthName);
+    }
+
+    [Fact]
     public void GenerateIsEnabledOnlyForCleanPreviousMonthAndDisabledWhileBusy()
     {
         var state = new ExpirationsWindowState(User());
         Assert.False(state.CanGenerate);
         state.ApplySnapshot(ReadySnapshot(ExpirationsProcess.PreviousMonth));
         Assert.True(state.CanGenerate);
-        Assert.Equal(Visibility.Collapsed, state.NextMonthGenerationNoteVisibility);
+        Assert.Equal(Visibility.Collapsed, state.NextMonthPeriodVisibility);
 
         state.SetBusy(true, "Generando archivo 1 de 2...");
         Assert.False(state.CanGenerate);
@@ -25,15 +35,26 @@ public sealed class ExpirationsGenerationUiStateTests
     }
 
     [Fact]
-    public void CleanNextMonthShowsInformationalNoteButNeverEnablesGeneration()
+    public void CleanNextMonthRequiresExplicitPeriodAndSuccessfulPreflight()
     {
         var state = new ExpirationsWindowState(User());
         state.ApplySnapshot(ReadySnapshot(ExpirationsProcess.NextMonth));
 
         Assert.False(state.CanGenerate);
         Assert.Equal("Análisis completo.", state.StatusText);
-        Assert.Equal(Visibility.Visible, state.NextMonthGenerationNoteVisibility);
+        Assert.Equal(Visibility.Visible, state.NextMonthPeriodVisibility);
         Assert.Contains("El análisis está completo", state.ReadyText, StringComparison.Ordinal);
+
+        state.SelectedMonthOption = state.MonthOptions.Single(option => option.Month == 8);
+        state.NextMonthYearText = "2026";
+        Assert.True(state.TryGetNextMonthPeriod(out var period));
+        Assert.Equal("2026-08", period!.FileToken);
+        Assert.False(state.CanGenerate);
+
+        state.SetGenerationReadiness(true, "Listo", false);
+        Assert.True(state.CanGenerate);
+        state.NextMonthYearText = "2027";
+        Assert.False(state.CanGenerate);
     }
 
     [Fact]
@@ -85,6 +106,32 @@ public sealed class ExpirationsGenerationUiStateTests
 
         state.SelectedProcessOption = state.ProcessOptions.Single(option => option.Value == ExpirationsProcess.NextMonth);
         Assert.False(state.CanGenerate);
+    }
+
+    [Fact]
+    public void PremiumColumnSelectionRequiresTwoDistinctHeaderColumnsAndIsSessionOnly()
+    {
+        var columns = new[]
+        {
+            new ExpirationsColumnInspection { ColumnIndex = 2, ColumnReference = "B", HeaderText = "Importe" },
+            new ExpirationsColumnInspection { ColumnIndex = 3, ColumnReference = "C", HeaderText = "Divisa" }
+        };
+        var selection = new ExpirationsPremiumColumnSelectionState(
+            "Reporte",
+            7U,
+            columns,
+            null);
+        selection.SelectedPremiumColumn = columns[0];
+        selection.SelectedCurrencyColumn = columns[0];
+        Assert.False(selection.CanAccept);
+        selection.SelectedCurrencyColumn = columns[1];
+        Assert.True(selection.CanAccept);
+
+        var state = new ExpirationsWindowState(User());
+        state.SetPremiumColumnOptions(new ExpirationsPremiumColumnOptions(2, 3));
+        Assert.Equal(2, state.PremiumColumnOptions!.PremiumColumnIndex);
+        state.ResetPremiumColumnOptions();
+        Assert.Null(state.PremiumColumnOptions);
     }
 
     private static ExpirationsAnalysisSessionSnapshot ReadySnapshot(ExpirationsProcess process) => new()

@@ -67,7 +67,7 @@ public partial class ExpirationsBrokerProfileWindow : Window
             var result = await _service.SaveAsync(State.BuildConfiguration());
             if (result.Outcome == ExpirationsBrokerConfigurationSaveOutcome.ValidationFailed)
             {
-                MessageBox.Show(result.Message, "Revise los asistentes", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(result.Message, "Revise la configuración", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             if (result.Outcome == ExpirationsBrokerConfigurationSaveOutcome.ConcurrencyConflict)
@@ -123,6 +123,7 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
     private readonly ExpirationsAssistantValidationService _validation;
     private ExpirationsBrokerConfigurationItem _persisted;
     private bool _isActive;
+    private ExpirationsNextMonthGenerationModeOption _selectedNextMonthGenerationModeOption;
     private ExpirationsAssistant? _selectedAssistant;
     private bool _isBusy;
 
@@ -131,12 +132,19 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         ExpirationsAssistantValidationService validation)
     {
         _validation = validation ?? throw new ArgumentNullException(nameof(validation));
+        NextMonthGenerationModeOptions =
+        [
+            new(ExpirationsNextMonthGenerationMode.Standard, "Estándar"),
+            new(ExpirationsNextMonthGenerationMode.SpecialDualSorted, "Especial — dos archivos ordenados")
+        ];
+        _selectedNextMonthGenerationModeOption = NextMonthGenerationModeOptions[0];
         _persisted = CloneConfiguration(configuration);
         Assistants = [];
         Load(configuration);
     }
 
     public ObservableCollection<ExpirationsAssistant> Assistants { get; }
+    public IReadOnlyList<ExpirationsNextMonthGenerationModeOption> NextMonthGenerationModeOptions { get; }
     public Guid BrokerId => _persisted.BrokerId;
     public string Name => _persisted.Name;
     public string PrimaryEmailsText => _persisted.PrimaryEmailsText;
@@ -145,6 +153,7 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         : Visibility.Visible;
     public bool IsBusy => _isBusy;
     public bool HasUnsavedChanges => _isActive != _persisted.IsActive ||
+        SelectedNextMonthGenerationModeOption.Value != _persisted.NextMonthGenerationMode ||
         !AssistantListsEqual(Assistants, _persisted.Assistants);
     public bool CanEditConfiguration => !IsBusy;
     public bool CanSave => !IsBusy;
@@ -161,6 +170,18 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         {
             if (_isActive == value) return;
             _isActive = value;
+            Notify();
+            NotifyChanges();
+        }
+    }
+
+    public ExpirationsNextMonthGenerationModeOption SelectedNextMonthGenerationModeOption
+    {
+        get => _selectedNextMonthGenerationModeOption;
+        set
+        {
+            if (Equals(_selectedNextMonthGenerationModeOption, value)) return;
+            _selectedNextMonthGenerationModeOption = value;
             Notify();
             NotifyChanges();
         }
@@ -215,6 +236,7 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         Name = _persisted.Name,
         PrimaryEmailAddresses = _persisted.PrimaryEmailAddresses.ToList(),
         IsActive = IsActive,
+        NextMonthGenerationMode = SelectedNextMonthGenerationModeOption.Value,
         Assistants = Assistants.Select(CopyAssistant).ToList(),
         HasExplicitProfile = _persisted.HasExplicitProfile,
         ProfileUpdateTime = _persisted.ProfileUpdateTime,
@@ -229,6 +251,8 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
     {
         _persisted = CloneConfiguration(configuration);
         _isActive = configuration.IsActive;
+        _selectedNextMonthGenerationModeOption = NextMonthGenerationModeOptions.Single(option =>
+            option.Value == configuration.NextMonthGenerationMode);
         ReplaceAssistants(configuration.Assistants);
         SelectedAssistant = null;
         Notify(string.Empty);
@@ -284,6 +308,7 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         Name = value.Name,
         PrimaryEmailAddresses = value.PrimaryEmailAddresses.ToList(),
         IsActive = value.IsActive,
+        NextMonthGenerationMode = value.NextMonthGenerationMode,
         Assistants = value.Assistants.Select(CopyAssistant).ToList(),
         HasExplicitProfile = value.HasExplicitProfile,
         ProfileUpdateTime = value.ProfileUpdateTime,

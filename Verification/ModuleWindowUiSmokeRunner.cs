@@ -58,6 +58,9 @@ internal static class ModuleWindowUiSmokeRunner
             var selectionDialogPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-selection-ui-smoke.png");
+            var premiumSelectionDialogPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-premium-selection-ui-smoke.png");
             var brokerManagementPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-broker-management-ui-smoke.png");
@@ -82,6 +85,9 @@ internal static class ModuleWindowUiSmokeRunner
             var nextMonthReadyPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-next-month-ready-ui-smoke.png");
+            var nextMonthNoPeriodPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-next-month-no-period-ui-smoke.png");
 
             Render(new ModuleSelectionWindow(user), selectorPath);
             Render(
@@ -118,6 +124,9 @@ internal static class ModuleWindowUiSmokeRunner
             Render(
                 new ExpirationsWorkbookSelectionWindow(Inspection()),
                 selectionDialogPath);
+            Render(
+                new ExpirationsPremiumColumnSelectionWindow(Inspection(), "Hoja2", 1U),
+                premiumSelectionDialogPath);
             var configurationItems = ConfigurationItems();
             var configurationService = new SmokeConfigurationService(configurationItems);
             Render(
@@ -155,7 +164,34 @@ internal static class ModuleWindowUiSmokeRunner
             RenderAtElement(
                 ExpirationsWindow(user, ReadySnapshot(ExpirationsProcess.NextMonth)),
                 "GenerationSection",
-                nextMonthReadyPath);
+                nextMonthNoPeriodPath);
+            var nextMonthWindow = ExpirationsWindow(user, ReadySnapshot(ExpirationsProcess.NextMonth));
+            var nextMonthState = (ExpirationsWindowState)nextMonthWindow.DataContext;
+            nextMonthState.SelectedMonthOption = nextMonthState.MonthOptions.Single(option => option.Month == 8);
+            nextMonthState.NextMonthYearText = "2026";
+            var nextMonthBatch = new ExpirationsGenerationBatch
+            {
+                OutputDirectory = @"C:\Pruebas\Vencimientos mes siguiente - 2026-08 - 20260821-120000",
+                Files =
+                [
+                    new ExpirationsGeneratedFile { BrokerId = Guid.Parse("11111111-1111-1111-1111-111111111111") },
+                    new ExpirationsGeneratedFile { BrokerId = Guid.Parse("22222222-2222-2222-2222-222222222222"), Variant = ExpirationsGeneratedFileVariant.FelixAlphabetical },
+                    new ExpirationsGeneratedFile { BrokerId = Guid.Parse("22222222-2222-2222-2222-222222222222"), Variant = ExpirationsGeneratedFileVariant.FelixExpirationDate }
+                ]
+            };
+            RenderAtElement(
+                nextMonthWindow,
+                "GenerationSection",
+                nextMonthReadyPath,
+                shownWindow =>
+                {
+                    var state = (ExpirationsWindowState)shownWindow.DataContext;
+                    state.SetGenerationReadiness(
+                        true,
+                        "Configuración especial, período y primas validados. Listo para generar.",
+                        false);
+                    state.ApplyGenerationBatch(nextMonthBatch);
+                });
             bindingListener.Flush();
             var hasBindingErrors = new FileInfo(bindingLogPath).Length > 0;
             File.WriteAllText(
@@ -169,6 +205,7 @@ internal static class ModuleWindowUiSmokeRunner
                     $"VENCIMIENTOS_PENDIENTE={expirationsPendingPath}",
                     $"DIALOGO_RESOLUCION={resolutionDialogPath}",
                     $"DIALOGO_SELECCION={selectionDialogPath}",
+                    $"DIALOGO_SELECCION_PRIMA_MONEDA={premiumSelectionDialogPath}",
                     $"CONFIGURACION_CORREDORES={brokerManagementPath}",
                     $"PERFIL_SIN_DOCUMENTO={defaultProfilePath}",
                     $"PERFIL_CONFIGURADO={configuredProfilePath}",
@@ -176,7 +213,8 @@ internal static class ModuleWindowUiSmokeRunner
                     $"PERFIL_SIN_CORREO={missingEmailProfilePath}",
                     $"GENERACION_BUSY={generationBusyPath}",
                     $"GENERACION_COMPLETADA_CON_WARNINGS={generationCompletedPath}",
-                    $"NEXT_MONTH_LISTO_SIN_GENERAR={nextMonthReadyPath}",
+                    $"NEXT_MONTH_SIN_PERIODO={nextMonthNoPeriodPath}",
+                    $"NEXT_MONTH_LISTO_NORMAL_MAS_ESPECIAL={nextMonthReadyPath}",
                     $"LOG_BINDINGS={bindingLogPath}"));
             return !hasBindingErrors;
         }
@@ -358,6 +396,18 @@ internal static class ModuleWindowUiSmokeRunner
                                 ColumnIndex = 2,
                                 ColumnReference = "B",
                                 HeaderText = "Número de Póliza"
+                            },
+                            new ExpirationsColumnInspection
+                            {
+                                ColumnIndex = 3,
+                                ColumnReference = "C",
+                                HeaderText = "Prima"
+                            },
+                            new ExpirationsColumnInspection
+                            {
+                                ColumnIndex = 4,
+                                ColumnReference = "D",
+                                HeaderText = "Moneda"
                             }
                         ]
                     }
@@ -387,6 +437,7 @@ internal static class ModuleWindowUiSmokeRunner
                 Name = "Jerrika Hernández",
                 PrimaryEmailAddresses = ["jerrika@example.test", "office@example.test"],
                 IsActive = true,
+                NextMonthGenerationMode = ExpirationsNextMonthGenerationMode.SpecialDualSorted,
                 Assistants =
                 [
                     new ExpirationsAssistant
@@ -442,6 +493,16 @@ internal static class ModuleWindowUiSmokeRunner
         public Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ExpirationsGenerationPreparationResult { Snapshot = Snapshot });
+
+        public Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
+            ExpirationsPeriod period,
+            ExpirationsPremiumColumnOptions? premiumColumnOptions,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ExpirationsGenerationPreparationResult
+            {
+                Snapshot = Snapshot,
+                ErrorMessage = "Smoke: preflight de mes siguiente pendiente."
+            });
 
         public Task<ExpirationsWorkbookInspection> InspectWorkbookAsync(
             CancellationToken cancellationToken = default) => Task.FromResult(Inspection());

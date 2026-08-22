@@ -136,6 +136,28 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
     }
 
     [Fact]
+    public void ProfileStateShowsBusinessLabelsAndPersistsSelectedNextMonthMode()
+    {
+        var state = new ExpirationsBrokerProfileState(
+            Configuration("Corredor", ["broker@example.test"]),
+            _validation);
+
+        Assert.Equal(["Estándar", "Especial — dos archivos ordenados"],
+            state.NextMonthGenerationModeOptions.Select(option => option.DisplayName));
+        state.SelectedNextMonthGenerationModeOption = state.NextMonthGenerationModeOptions.Single(option =>
+            option.Value == ExpirationsNextMonthGenerationMode.SpecialDualSorted);
+
+        Assert.True(state.HasUnsavedChanges);
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.SpecialDualSorted,
+            state.BuildConfiguration().NextMonthGenerationMode);
+        state.DiscardChanges();
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.Standard,
+            state.SelectedNextMonthGenerationModeOption.Value);
+    }
+
+    [Fact]
     public void AssistantEditorStateDefaultsActiveAndPreservesExistingId()
     {
         var create = new ExpirationsAssistantEditorState(_validation)
@@ -175,12 +197,14 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
     private static ExpirationsBrokerConfigurationItem Configuration(
         string name,
         IReadOnlyList<string> emails,
-        IReadOnlyList<ExpirationsAssistant>? assistants = null) => new()
+        IReadOnlyList<ExpirationsAssistant>? assistants = null,
+        ExpirationsNextMonthGenerationMode mode = ExpirationsNextMonthGenerationMode.Standard) => new()
     {
         BrokerId = BrokerId,
         Name = name,
         PrimaryEmailAddresses = emails,
         IsActive = true,
+        NextMonthGenerationMode = mode,
         Assistants = assistants ?? [],
         HasExplicitProfile = assistants is not null,
         ProfileUpdateTime = assistants is null ? null : "version"

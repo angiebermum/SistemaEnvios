@@ -89,7 +89,44 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
             };
         }
 
-        if (!configuration.HasExplicitProfile && configuration.IsActive && validation.Assistants.Count == 0)
+        if (!Enum.IsDefined(normalizedConfiguration.NextMonthGenerationMode))
+        {
+            const string error = "El formato de generación del mes siguiente no es válido.";
+            return new ExpirationsBrokerConfigurationSaveResult
+            {
+                Outcome = ExpirationsBrokerConfigurationSaveOutcome.ValidationFailed,
+                Configuration = normalizedConfiguration,
+                Errors = [error],
+                Message = error
+            };
+        }
+
+        if (normalizedConfiguration.NextMonthGenerationMode ==
+            ExpirationsNextMonthGenerationMode.SpecialDualSorted)
+        {
+            var profiles = await _profiles.ListAsync(cancellationToken);
+            if (profiles.Any(document =>
+                    document.Value.BrokerId != normalizedConfiguration.BrokerId &&
+                    document.Value.NextMonthGenerationMode ==
+                    ExpirationsNextMonthGenerationMode.SpecialDualSorted))
+            {
+                const string error =
+                    "Ya existe un corredor configurado con el formato especial de mes siguiente.";
+                return new ExpirationsBrokerConfigurationSaveResult
+                {
+                    Outcome = ExpirationsBrokerConfigurationSaveOutcome.ValidationFailed,
+                    Configuration = normalizedConfiguration,
+                    Errors = [error],
+                    Message = error
+                };
+            }
+        }
+
+        if (!configuration.HasExplicitProfile &&
+            configuration.IsActive &&
+            validation.Assistants.Count == 0 &&
+            normalizedConfiguration.NextMonthGenerationMode ==
+            ExpirationsNextMonthGenerationMode.Standard)
         {
             return new ExpirationsBrokerConfigurationSaveResult
             {
@@ -197,6 +234,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
     {
         BrokerId = configuration.BrokerId,
         IsActive = configuration.IsActive,
+        NextMonthGenerationMode = configuration.NextMonthGenerationMode,
         Assistants = assistants.Select(CopyAssistant).ToList(),
         CreatedAtUtc = createdAtUtc,
         UpdatedAtUtc = updatedAtUtc
@@ -213,6 +251,8 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
             Name = directory.Name,
             PrimaryEmailAddresses = directory.PrimaryEmailAddresses.ToList(),
             IsActive = profile?.IsActive ?? true,
+            NextMonthGenerationMode = profile?.NextMonthGenerationMode ??
+                                      ExpirationsNextMonthGenerationMode.Standard,
             Assistants = (profile?.Assistants ?? [])
                 .Select(CopyAssistant)
                 .OrderBy(assistant => assistant.Name, StringComparer.CurrentCultureIgnoreCase)
@@ -235,6 +275,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         Name = directory.Name,
         PrimaryEmailAddresses = directory.PrimaryEmailAddresses.ToList(),
         IsActive = source.IsActive,
+        NextMonthGenerationMode = source.NextMonthGenerationMode,
         Assistants = assistants.Select(CopyAssistant).ToList(),
         HasExplicitProfile = source.HasExplicitProfile,
         ProfileUpdateTime = source.ProfileUpdateTime,

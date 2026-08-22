@@ -16,6 +16,9 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
     private const string SourceChangedMessage =
         "El archivo seleccionado cambió después del análisis.\nAnalícelo nuevamente antes de generar.";
     private readonly IExpirationsStandardWorkbookGenerator _workbookGenerator;
+    private readonly IExpirationsNextMonthStandardWorkbookGenerator _nextMonthWorkbookGenerator;
+    private readonly IExpirationsFelixWorkbookGenerator _felixWorkbookGenerator;
+    private readonly IExpirationsNextMonthGenerationPreflightService _nextMonthPreflightService;
     private readonly ExpirationsFileNameService _fileNameService;
     private readonly GeneratedFileHashService _hashService;
     private readonly TimeProvider _timeProvider;
@@ -24,9 +27,17 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         IExpirationsStandardWorkbookGenerator? workbookGenerator = null,
         ExpirationsFileNameService? fileNameService = null,
         GeneratedFileHashService? hashService = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IExpirationsNextMonthStandardWorkbookGenerator? nextMonthWorkbookGenerator = null,
+        IExpirationsFelixWorkbookGenerator? felixWorkbookGenerator = null,
+        IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null)
     {
         _workbookGenerator = workbookGenerator ?? new ExpirationsStandardWorkbookGenerator();
+        _nextMonthWorkbookGenerator = nextMonthWorkbookGenerator ??
+            new ExpirationsNextMonthStandardWorkbookGenerator();
+        _felixWorkbookGenerator = felixWorkbookGenerator ?? new ExpirationsFelixWorkbookGenerator();
+        _nextMonthPreflightService = nextMonthPreflightService ??
+            new ExpirationsNextMonthGenerationPreflightService();
         _fileNameService = fileNameService ?? new ExpirationsFileNameService();
         _hashService = hashService ?? new GeneratedFileHashService();
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -40,21 +51,42 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Context);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.OutputParentDirectory);
-        if (request.Context.Process != ExpirationsProcess.PreviousMonth)
-        {
-            throw new ExpirationsGenerationException(
-                "La generación de Vencimientos del mes siguiente todavía no está habilitada.");
-        }
+        if (request.Context.Process is not (
+                ExpirationsProcess.PreviousMonth or ExpirationsProcess.NextMonth))
+            throw new ArgumentOutOfRangeException(nameof(request.Context.Process));
 
         var parentDirectory = Path.GetFullPath(request.OutputParentDirectory);
         if (!Directory.Exists(parentDirectory))
             throw new DirectoryNotFoundException($"La carpeta de salida no existe: '{parentDirectory}'.");
         DemandUnchangedSource(request.Context);
 
+        ExpirationsNextMonthPreflightResult? nextMonthPreflight = null;
+        if (request.Context.Process == ExpirationsProcess.NextMonth)
+        {
+            nextMonthPreflight = await Task.Run(
+                () => _nextMonthPreflightService.Validate(
+                    request.Context,
+                    request.Period,
+                    request.PremiumColumnOptions,
+                    cancellationToken),
+                cancellationToken);
+            DemandUnchangedSource(request.Context);
+        }
+
         var targets = BuildTargets(request.Context);
-        var fileNames = _fileNameService.CreateFileNames(
-            request.Context.Process,
-            targets.Select(target => target.Broker).ToList());
+        var previousMonthFileNames = request.Context.Process == ExpirationsProcess.PreviousMonth
+            ? _fileNameService.CreateFileNames(
+                request.Context.Process,
+                targets.Select(target => target.Broker).ToList())
+            : null;
+        var nextMonthFileNames = request.Context.Process == ExpirationsProcess.NextMonth
+            ? _fileNameService.CreateNextMonthFileNames(
+                request.Period!,
+                targets.Select(target => new ExpirationsGeneratedFileNameRequest(
+                    target.Broker.BrokerId,
+                    target.Broker.Name,
+                    target.Variant)).ToList())
+            : null;
         var batchId = Guid.NewGuid();
         var stagingRoot = Path.Combine(parentDirectory, $".ECS-expirations-generation-{batchId:N}");
         var stagedDirectory = Path.Combine(stagingRoot, "staged");
@@ -68,28 +100,34 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                 cancellationToken.ThrowIfCancellationRequested();
                 var target = targets[index];
                 progress?.Report(new ExpirationsGenerationProgress(index + 1, targets.Count, target.Broker.Name));
-                var outputPath = Path.Combine(stagedDirectory, fileNames[target.Broker.BrokerId]);
-                var materialization = new ExpirationsStandardWorkbookGenerationRequest(
-                    request.Context.SourceWorkbookPath,
+                var fileName = request.Context.Process == ExpirationsProcess.PreviousMonth
+                    ? previousMonthFileNames![target.Broker.BrokerId]
+                    : nextMonthFileNames![new ExpirationsGeneratedFileNameKey(
+                        target.Broker.BrokerId,
+                        target.Variant)];
+                var outputPath = Path.Combine(stagedDirectory, fileName);
+                await GenerateTargetAsync(
+                    request,
+                    target,
                     outputPath,
-                    request.Context.SourceWorkbook.WorksheetName,
-                    request.Context.SourceWorkbook.HeaderRowNumber,
-                    target.RowNumbers);
-                await Task.Run(
-                    () => _workbookGenerator.Generate(materialization, cancellationToken),
+                    nextMonthPreflight,
                     cancellationToken);
                 var warnings = BuildEmailWarnings(target.Broker);
                 stagedFiles.Add(new StagedFile(
                     target.Broker,
                     outputPath,
                     target.RowNumbers,
+                    target.Variant,
                     _hashService.ComputeSha256(outputPath),
                     warnings));
             }
 
             cancellationToken.ThrowIfCancellationRequested();
             DemandUnchangedSource(request.Context);
-            var finalDirectory = GetUniqueFinalDirectory(parentDirectory, request.Context.Process);
+            var finalDirectory = GetUniqueFinalDirectory(
+                parentDirectory,
+                request.Context.Process,
+                request.Period);
             Directory.Move(stagedDirectory, finalDirectory);
             TryDeleteDirectory(stagingRoot);
 
@@ -98,6 +136,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                 BrokerId = file.Broker.BrokerId,
                 BrokerName = file.Broker.Name,
                 OutputPath = Path.Combine(finalDirectory, Path.GetFileName(file.StagedPath)),
+                Variant = file.Variant,
                 RowCount = file.RowNumbers.Count,
                 Sha256 = file.Sha256,
                 SourceRowNumbers = file.RowNumbers,
@@ -122,6 +161,59 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         }
     }
 
+    private async Task GenerateTargetAsync(
+        ExpirationsGenerationRequest request,
+        GenerationTarget target,
+        string outputPath,
+        ExpirationsNextMonthPreflightResult? nextMonthPreflight,
+        CancellationToken cancellationToken)
+    {
+        if (request.Context.Process == ExpirationsProcess.PreviousMonth)
+        {
+            var materialization = new ExpirationsStandardWorkbookGenerationRequest(
+                request.Context.SourceWorkbookPath,
+                outputPath,
+                request.Context.SourceWorkbook.WorksheetName,
+                request.Context.SourceWorkbook.HeaderRowNumber,
+                target.RowNumbers);
+            await Task.Run(
+                () => _workbookGenerator.Generate(materialization, cancellationToken),
+                cancellationToken);
+            return;
+        }
+
+        if (target.Variant == ExpirationsGeneratedFileVariant.Standard)
+        {
+            var materialization = new ExpirationsNextMonthStandardWorkbookGenerationRequest(
+                request.Context.SourceWorkbookPath,
+                outputPath,
+                request.Context.SourceWorkbook.WorksheetName,
+                request.Context.SourceWorkbook.HeaderRowNumber,
+                target.RowNumbers,
+                request.PremiumColumnOptions);
+            await Task.Run(
+                () => _nextMonthWorkbookGenerator.Generate(materialization, cancellationToken),
+                cancellationToken);
+            return;
+        }
+
+        var felixPlan = nextMonthPreflight?.FelixPlan ??
+            throw new ExpirationsGenerationException("El preflight no preparó las filas del formato especial.");
+        var variant = target.Variant switch
+        {
+            ExpirationsGeneratedFileVariant.FelixAlphabetical =>
+                ExpirationsFelixWorkbookVariant.Alphabetical,
+            ExpirationsGeneratedFileVariant.FelixExpirationDate =>
+                ExpirationsFelixWorkbookVariant.ExpirationDate,
+            _ => throw new ArgumentOutOfRangeException(nameof(target.Variant))
+        };
+        await Task.Run(
+            () => _felixWorkbookGenerator.Generate(
+                new ExpirationsFelixWorkbookGenerationRequest(outputPath, felixPlan, variant),
+                cancellationToken),
+            cancellationToken);
+    }
+
     private void DemandUnchangedSource(ExpirationsGenerationContext context)
     {
         var currentHash = _hashService.ComputeSha256(context.SourceWorkbookPath);
@@ -135,13 +227,40 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
             .GroupBy(item => item.BrokerId)
             .ToDictionary(group => group.Key, group => group.Single());
         return context.Analysis.ResolvedRowNumbersByBroker
-            .Select(item => new GenerationTarget(
+            .SelectMany(item => BuildBrokerTargets(
+                context.Process,
                 catalog[item.Key],
                 item.Value.Distinct().Order().ToArray()))
             .Where(target => target.RowNumbers.Count > 0)
             .OrderBy(target => target.Broker.Name, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(target => target.Broker.BrokerId)
+            .ThenBy(target => target.Variant)
             .ToList();
+    }
+
+    private static IEnumerable<GenerationTarget> BuildBrokerTargets(
+        ExpirationsProcess process,
+        ExpirationsBrokerCatalogItem broker,
+        IReadOnlyList<uint> rowNumbers)
+    {
+        if (process == ExpirationsProcess.PreviousMonth ||
+            broker.NextMonthGenerationMode == ExpirationsNextMonthGenerationMode.Standard)
+        {
+            yield return new GenerationTarget(
+                broker,
+                rowNumbers,
+                ExpirationsGeneratedFileVariant.Standard);
+            yield break;
+        }
+
+        yield return new GenerationTarget(
+            broker,
+            rowNumbers,
+            ExpirationsGeneratedFileVariant.FelixAlphabetical);
+        yield return new GenerationTarget(
+            broker,
+            rowNumbers,
+            ExpirationsGeneratedFileVariant.FelixExpirationDate);
     }
 
     private static IReadOnlyList<string> BuildEmailWarnings(ExpirationsBrokerCatalogItem broker)
@@ -154,9 +273,15 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         ];
     }
 
-    private string GetUniqueFinalDirectory(string parentDirectory, ExpirationsProcess process)
+    private string GetUniqueFinalDirectory(
+        string parentDirectory,
+        ExpirationsProcess process,
+        ExpirationsPeriod? period)
     {
-        var baseName = _fileNameService.CreateBatchDirectoryName(process, _timeProvider.GetLocalNow());
+        var baseName = _fileNameService.CreateBatchDirectoryName(
+            process,
+            _timeProvider.GetLocalNow(),
+            period);
         for (var suffix = 0; suffix < 10_000; suffix++)
         {
             var name = suffix == 0 ? baseName : $"{baseName} - {suffix + 1}";
@@ -182,12 +307,14 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
 
     private sealed record GenerationTarget(
         ExpirationsBrokerCatalogItem Broker,
-        IReadOnlyList<uint> RowNumbers);
+        IReadOnlyList<uint> RowNumbers,
+        ExpirationsGeneratedFileVariant Variant);
 
     private sealed record StagedFile(
         ExpirationsBrokerCatalogItem Broker,
         string StagedPath,
         IReadOnlyList<uint> RowNumbers,
+        ExpirationsGeneratedFileVariant Variant,
         string Sha256,
         IReadOnlyList<string> Warnings);
 }

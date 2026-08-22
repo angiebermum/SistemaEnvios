@@ -25,6 +25,9 @@ public partial class ExpirationsBrokerManagementWindow : Window
         RoutingAdministrationButton.Visibility = routingAdministration is null
             ? Visibility.Collapsed
             : Visibility.Visible;
+        ViewExclusionsButton.Visibility = routingAdministration is null
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
     public bool HasSavedChanges { get; private set; }
@@ -41,7 +44,13 @@ public partial class ExpirationsBrokerManagementWindow : Window
         State.SetBusy(true, "Cargando corredores...");
         try
         {
-            State.SetItems(await _service.ListAsync());
+            var brokersTask = _service.ListAsync();
+            var exclusionsTask = _routingAdministration?.ListExclusionsAsync();
+            if (exclusionsTask is not null)
+                await Task.WhenAll(brokersTask, exclusionsTask);
+            State.SetItems(await brokersTask);
+            if (exclusionsTask is not null)
+                State.SetExclusionCount((await exclusionsTask).Count(item => item.Exclusion.IsActive));
         }
         catch (Exception ex)
         {
@@ -69,6 +78,26 @@ public partial class ExpirationsBrokerManagementWindow : Window
     }
 
     private void ToggleInactive_Click(object sender, RoutedEventArgs e) => State.ToggleInactiveVisibility();
+
+    private async void ViewExclusions_Click(object sender, RoutedEventArgs e)
+    {
+        if (_routingAdministration is null)
+            return;
+        var window = new ExpirationsExclusionsWindow(_routingAdministration) { Owner = this };
+        _ = window.ShowDialog();
+        HasSavedChanges |= window.HasSavedChanges;
+        if (!window.HasSavedChanges)
+            return;
+        try
+        {
+            var exclusions = await _routingAdministration.ListExclusionsAsync();
+            State.SetExclusionCount(exclusions.Count(item => item.Exclusion.IsActive));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Vencimientos", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     private void RoutingAdministration_Click(object sender, RoutedEventArgs e)
     {
@@ -102,10 +131,13 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
     public string BusyText => _busyText;
     public Visibility BusyVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;
     public bool CanConfigure => !IsBusy && SelectedItem is not null;
+    public bool CanAdministerAssociations => !IsBusy && SelectedItem is not null;
     public int InactiveCount => _allItems.Count(item => !item.IsActive);
+    public int ExclusionCount { get; private set; }
+    public string ExclusionsButtonText => $"Ver excluidos ({ExclusionCount})";
     public bool ShowInactive => _showInactive;
     public string InactiveButtonText => ShowInactive
-        ? "Ocultar inactivos"
+        ? "Ver todos"
         : $"Ver inactivos ({InactiveCount})";
 
     public string SearchText
@@ -129,6 +161,7 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
             _selectedItem = value;
             Notify();
             Notify(nameof(CanConfigure));
+            Notify(nameof(CanAdministerAssociations));
         }
     }
 
@@ -150,6 +183,13 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
         Notify(nameof(ShowInactive));
         Notify(nameof(InactiveButtonText));
         ApplyFilter();
+    }
+
+    public void SetExclusionCount(int value)
+    {
+        ExclusionCount = Math.Max(0, value);
+        Notify(nameof(ExclusionCount));
+        Notify(nameof(ExclusionsButtonText));
     }
 
     public void Replace(ExpirationsBrokerConfigurationItem item)
@@ -178,13 +218,14 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
         Notify(nameof(BusyText));
         Notify(nameof(BusyVisibility));
         Notify(nameof(CanConfigure));
+        Notify(nameof(CanAdministerAssociations));
     }
 
     private void ApplyFilter()
     {
         var selectedId = SelectedItem?.BrokerId;
         var term = SearchText.Trim();
-        var filtered = _allItems.Where(item => (item.IsActive || ShowInactive) &&
+        var filtered = _allItems.Where(item => (ShowInactive ? !item.IsActive : item.IsActive) &&
             (term.Length == 0 ||
              item.Name.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
              item.PrimaryEmailAddresses.Any(email =>

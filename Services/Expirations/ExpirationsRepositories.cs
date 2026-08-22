@@ -85,6 +85,10 @@ public interface IExpirationsBrokerAssociationRepository
         ExpirationsBrokerAssociation value,
         string expectedUpdateTime,
         CancellationToken cancellationToken = default);
+    Task DeleteAsync(
+        Guid associationId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class ExpirationsBrokerAssociationRepository(IFirestoreRestClient client)
@@ -112,6 +116,12 @@ public sealed class ExpirationsBrokerAssociationRepository(IFirestoreRestClient 
         string expectedUpdateTime,
         CancellationToken cancellationToken = default) =>
         _repository.UpdateAsync(value.Id.ToString("D"), value, expectedUpdateTime, cancellationToken);
+
+    public Task DeleteAsync(
+        Guid associationId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        _repository.DeleteAsync(associationId.ToString("D"), expectedUpdateTime, cancellationToken);
 }
 
 public interface IExpirationsExclusionRepository

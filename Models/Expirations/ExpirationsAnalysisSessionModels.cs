@@ -142,10 +142,11 @@ public sealed class ExpirationsAssociationAdministrationItem
     public string KindText => Association.Kind switch
     {
         ExpirationsAssociationKind.Name => "Nombre",
-        ExpirationsAssociationKind.Alias => "Alias / nombre alternativo",
+        ExpirationsAssociationKind.Alias => "Alias",
         ExpirationsAssociationKind.Code => "Código",
         _ => Association.Kind.ToString()
     };
+    public string OriginText => "Asociación confirmada";
     public string StatusText => Association.IsActive ? "Activa" : "Inactiva";
 }
 

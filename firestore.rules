@@ -240,7 +240,7 @@ service cloud.firestore {
       allow create, update: if canUseExpirations() &&
         validExpirationsAssociationShape(associationId) &&
         exists(/databases/$(database)/documents/brokers/$(request.resource.data.brokerId));
-      allow delete: if false;
+      allow delete: if canUseExpirations();
     }
 
     match /modules/vencimientos/exclusions/{exclusionId} {

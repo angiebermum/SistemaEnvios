@@ -302,19 +302,6 @@ public partial class ExpirationsWindow : Window
         });
     }
 
-    private void ViewExcluded_Click(object sender, RoutedEventArgs e)
-    {
-        var values = _coordinator.Snapshot.ExcludedValues;
-        if (values.Count == 0)
-            return;
-        MessageBox.Show(
-            string.Join(Environment.NewLine, values.Select(item =>
-                $"{item.RawValue} — {item.RowCount} fila(s) — {item.StatusText}")),
-            "Valores excluidos del análisis",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
-    }
-
     private async void ConfigureBrokers_Click(object sender, RoutedEventArgs e)
     {
         var management = new ExpirationsBrokerManagementWindow(
@@ -965,7 +952,6 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public bool CanAnalyze => !IsBusy && SelectedProcessOption is not null && SourcePath.Length > 0;
     public bool CanResolve => !IsBusy && SelectedPendingIssue?.CanResolve == true;
     public bool CanExclude => !IsBusy && SelectedPendingIssue?.CanResolve == true;
-    public bool CanViewExcluded => !IsBusy && ExcludedCount > 0;
     public bool CanSelectPremiumColumns => !IsBusy &&
         _snapshot.Process == ExpirationsProcess.NextMonth && _snapshot.ReadResult?.Workbook is not null;
     public bool CanGenerate => !IsBusy &&
@@ -1033,7 +1019,6 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public int ResolvedRows => _snapshot.Analysis?.ResolvedRows ?? 0;
     public int PendingRows => _snapshot.Analysis?.RowsWithBlockingIssues ?? 0;
     public int ExcludedCount => _snapshot.Analysis?.ExcludedComponents ?? 0;
-    public string ViewExcludedButtonText => $"Ver excluidos ({ExcludedCount})";
     public int DestinationCount => PreviewItems.Count;
     public int CatalogCount => _snapshot.Catalog.Count(item => item.IsActive);
     public string BrokerSummaryText =>

@@ -8,6 +8,7 @@ public sealed class ExpirationsDataFoundationTests
 {
     private static readonly Guid BrokerOne = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid BrokerTwo = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid FelixBroker = Guid.Parse("6059c919-7198-45b9-a2c3-c6eab96a1503");
     private static readonly DateTimeOffset Timestamp =
         new(2026, 8, 10, 12, 0, 0, TimeSpan.Zero);
 
@@ -69,6 +70,22 @@ public sealed class ExpirationsDataFoundationTests
         var item = Assert.Single(catalog.Items);
         Assert.True(item.IsActive);
         Assert.Empty(item.Assistants);
+    }
+
+    [Fact]
+    public async Task CatalogPersistentlyInitializesRealFelixBrokerAsNextMonthSpecialOnlyOnce()
+    {
+        var profiles = new FakeProfileRepository([]);
+        var service = new ExpirationsBrokerCatalogService(
+            new FakeDirectoryRepository([Directory(FelixBroker, "Felix Lara", "felix@example.test")]),
+            profiles);
+
+        var first = Assert.Single((await service.LoadAsync(TestContext.Current.CancellationToken)).Items);
+        var second = Assert.Single((await service.LoadAsync(TestContext.Current.CancellationToken)).Items);
+
+        Assert.Equal(ExpirationsNextMonthGenerationMode.SpecialDualSorted, first.NextMonthGenerationMode);
+        Assert.Equal(ExpirationsNextMonthGenerationMode.SpecialDualSorted, second.NextMonthGenerationMode);
+        Assert.Single(profiles.Documents);
     }
 
     [Fact]
@@ -254,7 +271,7 @@ public sealed class ExpirationsDataFoundationTests
     {
         AssertPublicMethods<IExpirationsBrokerDirectoryRepository>("GetAsync", "ListAsync");
         AssertPublicMethods<IExpirationsBrokerProfileRepository>("GetAsync", "ListAsync", "CreateAsync", "UpdateAsync");
-        AssertPublicMethods<IExpirationsBrokerAssociationRepository>("GetAsync", "ListAsync", "CreateAsync", "UpdateAsync");
+        AssertPublicMethods<IExpirationsBrokerAssociationRepository>("GetAsync", "ListAsync", "CreateAsync", "UpdateAsync", "DeleteAsync");
         AssertPublicMethods<IExpirationsProcessSettingsRepository>("GetAsync", "CreateAsync", "UpdateAsync");
     }
 

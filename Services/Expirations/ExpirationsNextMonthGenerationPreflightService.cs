@@ -19,7 +19,8 @@ public sealed class ExpirationsNextMonthGenerationPreflightService(
     : IExpirationsNextMonthGenerationPreflightService
 {
     public const string MissingSpecialConfigurationMessage =
-        "Configure el corredor que utiliza el formato especial de mes siguiente antes de generar.";
+        "No hay un corredor configurado con el formato especial de mes siguiente. " +
+        "Revise la configuración de corredores antes de generar.";
 
     private readonly IExpirationsPremiumColumnsService _premiumColumnsService =
         premiumColumnsService ?? new ExpirationsPremiumColumnsService();

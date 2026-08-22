@@ -517,11 +517,36 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         Assert.Single(result.Snapshot.ManualOverrides);
     }
 
+    [Theory]
+    [InlineData(ExpirationsNextMonthGenerationPreflightService.MissingSpecialConfigurationMessage)]
+    [InlineData("Existe más de un corredor configurado con el formato especial de mes siguiente.")]
+    public async Task NextMonthSpecialConfigurationFailureReturnsBlockedPreparationWithoutEscapingException(
+        string message)
+    {
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(45, "Broker A"))),
+            new FakeAssociationRepository([]),
+            [Broker(BrokerA, "Broker A")],
+            nextMonthPreflightService: new RejectingPreflightService(message));
+        coordinator.SelectProcess(ExpirationsProcess.NextMonth);
+        coordinator.SelectFile("next-month-preflight.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        var result = await coordinator.PrepareGenerationAsync(
+            new ExpirationsPeriod(2026, 9),
+            null,
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.CanGenerate);
+        Assert.Equal(message, result.ErrorMessage);
+    }
+
     private static ExpirationsAnalysisCoordinator Coordinator(
         IExpirationsWorkbookReader reader,
         FakeAssociationRepository associations,
         IReadOnlyList<ExpirationsBrokerCatalogItem> brokers,
-        FakeExclusionRepository? exclusions = null)
+        FakeExclusionRepository? exclusions = null,
+        IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null)
     {
         var directory = new FakeDirectoryRepository(brokers.Select(item => new ExpirationsBrokerDirectoryEntry
         {
@@ -545,6 +570,7 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             inspectionService: new FakeInspectionService(),
             timeProvider: new FixedTimeProvider(Now),
             sourceHashProvider: _ => "stable-hash",
+            nextMonthPreflightService: nextMonthPreflightService,
             exclusions: exclusions);
     }
 
@@ -718,6 +744,11 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             Documents[index] = stored;
             return Task.FromResult(stored);
         }
+
+        public Task DeleteAsync(
+            Guid associationId,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class FakeExclusionRepository(
@@ -767,5 +798,16 @@ public sealed class ExpirationsAnalysisCoordinatorTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class RejectingPreflightService(string message)
+        : IExpirationsNextMonthGenerationPreflightService
+    {
+        public ExpirationsNextMonthPreflightResult Validate(
+            ExpirationsGenerationContext context,
+            ExpirationsPeriod? period,
+            ExpirationsPremiumColumnOptions? premiumColumnOptions = null,
+            CancellationToken cancellationToken = default) =>
+            throw new ExpirationsGenerationException(message);
     }
 }

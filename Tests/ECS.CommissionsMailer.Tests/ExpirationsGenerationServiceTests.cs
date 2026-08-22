@@ -106,6 +106,28 @@ public sealed class ExpirationsGenerationServiceTests
         Assert.Empty(Directory.EnumerateDirectories(directory.Path));
     }
 
+    [Fact]
+    public async Task PreviousMonthIgnoresNextMonthSpecialModeAndGeneratesOneStandardFile()
+    {
+        using var directory = new ExpirationsGenerationTestDirectory();
+        var source = Path.Combine(directory.Path, "previous-special-setting.xlsx");
+        ExpirationsGenerationTestWorkbook.Create(source);
+        var broker = Broker(Ana, "Félix Lara");
+        broker.NextMonthGenerationMode = ExpirationsNextMonthGenerationMode.SpecialDualSorted;
+        var context = ExpirationsGenerationTestWorkbook.Context(
+            source,
+            ExpirationsProcess.PreviousMonth,
+            [broker],
+            new Dictionary<Guid, IReadOnlyList<uint>> { [Ana] = [8] });
+
+        var batch = await new ExpirationsGenerationService().GenerateAsync(
+            new ExpirationsGenerationRequest(context, directory.Path),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var file = Assert.Single(batch.Files);
+        Assert.Equal(ExpirationsGeneratedFileVariant.Standard, file.Variant);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]

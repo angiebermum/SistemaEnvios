@@ -227,8 +227,6 @@
                     IsEnabled="{Binding CanConfigureBrokers}" VerticalAlignment="Bottom" Margin="14,0,0,0" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right"
                         VerticalAlignment="Bottom" Margin="14,0,0,4">
-                <Button Content="{Binding ViewExcludedButtonText}" Click="ViewExcluded_Click"
-                        IsEnabled="{Binding CanViewExcluded}" Style="{StaticResource CompactButtonStyle}" />
                 <TextBlock Text="{Binding BrokerSummaryText}" Style="{StaticResource MutedTextStyle}"
                            VerticalAlignment="Center" />
             </StackPanel>

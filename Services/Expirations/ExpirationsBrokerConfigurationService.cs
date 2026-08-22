@@ -43,6 +43,17 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         var profileDocuments = (await profilesTask)
             .GroupBy(document => document.Value.BrokerId)
             .ToDictionary(group => group.Key, group => group.Last());
+        var felixDirectory = (await directoryTask)
+            .Select(document => document.Value)
+            .FirstOrDefault(value => value.BrokerId == ExpirationsBrokerProfileDefaults.FelixLaraBrokerId);
+        var felixProfile = await ExpirationsBrokerProfileDefaults.EnsureAsync(
+            felixDirectory,
+            profileDocuments.GetValueOrDefault(ExpirationsBrokerProfileDefaults.FelixLaraBrokerId),
+            _profiles,
+            _timeProvider,
+            cancellationToken);
+        if (felixProfile is not null)
+            profileDocuments[ExpirationsBrokerProfileDefaults.FelixLaraBrokerId] = felixProfile;
 
         return (await directoryTask)
             .Select(document => Resolve(
@@ -61,7 +72,15 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         var profileTask = _profiles.GetAsync(brokerId, cancellationToken);
         await Task.WhenAll(directoryTask, profileTask);
         var directory = await directoryTask;
-        return directory is null ? null : Resolve(directory.Value, await profileTask);
+        if (directory is null)
+            return null;
+        var profile = await ExpirationsBrokerProfileDefaults.EnsureAsync(
+            directory.Value,
+            await profileTask,
+            _profiles,
+            _timeProvider,
+            cancellationToken);
+        return Resolve(directory.Value, profile);
     }
 
     public async Task<ExpirationsBrokerConfigurationSaveResult> SaveAsync(
@@ -126,7 +145,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
             configuration.IsActive &&
             validation.Assistants.Count == 0 &&
             normalizedConfiguration.NextMonthGenerationMode ==
-            ExpirationsNextMonthGenerationMode.Standard)
+            ExpirationsBrokerProfileDefaults.InitialNextMonthMode(configuration.BrokerId))
         {
             return new ExpirationsBrokerConfigurationSaveResult
             {
@@ -252,7 +271,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
             PrimaryEmailAddresses = directory.PrimaryEmailAddresses.ToList(),
             IsActive = profile?.IsActive ?? true,
             NextMonthGenerationMode = profile?.NextMonthGenerationMode ??
-                                      ExpirationsNextMonthGenerationMode.Standard,
+                                      ExpirationsBrokerProfileDefaults.InitialNextMonthMode(directory.BrokerId),
             Assistants = (profile?.Assistants ?? [])
                 .Select(CopyAssistant)
                 .OrderBy(assistant => assistant.Name, StringComparer.CurrentCultureIgnoreCase)

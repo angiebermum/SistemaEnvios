@@ -9,6 +9,17 @@ public interface IExpirationsRoutingAdministrationService
         CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ExpirationsExclusionAdministrationItem>> ListExclusionsAsync(
         CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> CreateAssociationAsync(
+        Guid brokerId,
+        ExpirationsAssociationKind kind,
+        string value,
+        CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> EditAssociationAsync(
+        Guid associationId,
+        ExpirationsAssociationKind kind,
+        string value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
     Task<ExpirationsRoutingAdministrationResult> SetAssociationActiveAsync(
         Guid associationId,
         bool isActive,
@@ -17,6 +28,10 @@ public interface IExpirationsRoutingAdministrationService
     Task<ExpirationsRoutingAdministrationResult> ReassignAsync(
         Guid associationId,
         Guid destinationBrokerId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> DeleteAssociationAsync(
+        Guid associationId,
         string expectedUpdateTime,
         CancellationToken cancellationToken = default);
     Task<ExpirationsRoutingAdministrationResult> SetExclusionActiveAsync(
@@ -85,6 +100,89 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         .ThenBy(item => item.Exclusion.Id)
         .ToList();
 
+    public async Task<ExpirationsRoutingAdministrationResult> CreateAssociationAsync(
+        Guid brokerId,
+        ExpirationsAssociationKind kind,
+        string value,
+        CancellationToken cancellationToken = default)
+    {
+        var validation = ValidateAssociationInput(kind, value);
+        if (validation is not null)
+            return validation;
+        var broker = await _brokers.GetAsync(brokerId, cancellationToken);
+        if (broker is null || !broker.IsActive)
+        {
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Rejected,
+                "El corredor seleccionado no existe o está inactivo en Vencimientos.");
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        var association = new ExpirationsBrokerAssociation
+        {
+            Id = Guid.NewGuid(),
+            BrokerId = brokerId,
+            Kind = kind,
+            Value = value.Trim(),
+            NormalizedValue = _normalizer.Normalize(value),
+            IsActive = true,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+        if (association.NormalizedValue.Length == 0)
+            return Result(ExpirationsRoutingAdministrationOutcome.Rejected, "Digite un valor identificable.");
+        var conflict = await ValidateAssociationActivationAsync(association, association.Id, cancellationToken);
+        if (conflict is not null)
+            return conflict;
+
+        try
+        {
+            await _associations.CreateAsync(association, cancellationToken);
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Updated,
+                "La asociación fue guardada.");
+        }
+        catch (FirestoreRestException ex) when (ex.Kind == FirestoreFailureKind.Conflict)
+        {
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Conflict,
+                "La asociación fue creada desde otro equipo. Se recargarán los datos.");
+        }
+    }
+
+    public async Task<ExpirationsRoutingAdministrationResult> EditAssociationAsync(
+        Guid associationId,
+        ExpirationsAssociationKind kind,
+        string value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default)
+    {
+        var validation = ValidateAssociationInput(kind, value);
+        if (validation is not null)
+            return validation;
+        var stored = await _associations.GetAsync(associationId, cancellationToken);
+        if (stored is null)
+            return Result(ExpirationsRoutingAdministrationOutcome.NotFound, "La asociación ya no existe.");
+        if (!string.Equals(stored.UpdateTime, expectedUpdateTime, StringComparison.Ordinal))
+            return Concurrency();
+
+        var candidate = Copy(stored.Value);
+        candidate.Kind = kind;
+        candidate.Value = value.Trim();
+        candidate.NormalizedValue = _normalizer.Normalize(value);
+        if (candidate.NormalizedValue.Length == 0)
+            return Result(ExpirationsRoutingAdministrationOutcome.Rejected, "Digite un valor identificable.");
+        var conflict = await ValidateAssociationActivationAsync(candidate, associationId, cancellationToken);
+        if (conflict is not null)
+            return conflict;
+        candidate.UpdatedAtUtc = _timeProvider.GetUtcNow();
+        return await UpdateAssociationAsync(
+            candidate,
+            expectedUpdateTime,
+            "La asociación fue actualizada.",
+            cancellationToken);
+    }
+
     public async Task<ExpirationsRoutingAdministrationResult> SetAssociationActiveAsync(
         Guid associationId,
         bool isActive,
@@ -109,7 +207,11 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         var updated = Copy(stored.Value);
         updated.IsActive = isActive;
         updated.UpdatedAtUtc = _timeProvider.GetUtcNow();
-        return await UpdateAssociationAsync(updated, expectedUpdateTime, cancellationToken);
+        return await UpdateAssociationAsync(
+            updated,
+            expectedUpdateTime,
+            isActive ? "La asociación fue reactivada." : "La asociación fue inactivada.",
+            cancellationToken);
     }
 
     public async Task<ExpirationsRoutingAdministrationResult> ReassignAsync(
@@ -136,15 +238,39 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
 
         var candidate = Copy(stored.Value);
         candidate.BrokerId = destinationBrokerId;
-        if (candidate.IsActive)
-        {
-            var conflict = await ValidateAssociationActivationAsync(candidate, associationId, cancellationToken);
-            if (conflict is not null)
-                return conflict;
-        }
+        var conflict = await ValidateAssociationActivationAsync(candidate, associationId, cancellationToken);
+        if (conflict is not null)
+            return conflict;
 
         candidate.UpdatedAtUtc = _timeProvider.GetUtcNow();
-        return await UpdateAssociationAsync(candidate, expectedUpdateTime, cancellationToken);
+        return await UpdateAssociationAsync(
+            candidate,
+            expectedUpdateTime,
+            "La asociación fue reasignada.",
+            cancellationToken);
+    }
+
+    public async Task<ExpirationsRoutingAdministrationResult> DeleteAssociationAsync(
+        Guid associationId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default)
+    {
+        var stored = await _associations.GetAsync(associationId, cancellationToken);
+        if (stored is null)
+            return Result(ExpirationsRoutingAdministrationOutcome.NotFound, "La asociación ya no existe.");
+        if (!string.Equals(stored.UpdateTime, expectedUpdateTime, StringComparison.Ordinal))
+            return Concurrency();
+        try
+        {
+            await _associations.DeleteAsync(associationId, expectedUpdateTime, cancellationToken);
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Updated,
+                "La asociación fue eliminada.");
+        }
+        catch (FirestoreConcurrencyException)
+        {
+            return Concurrency();
+        }
     }
 
     public async Task<ExpirationsRoutingAdministrationResult> SetExclusionActiveAsync(
@@ -209,9 +335,11 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             Normalize(document.Value.NormalizedValue, document.Value.Value) == normalized);
         if (associationConflict is not null)
         {
+            var broker = await _brokers.GetAsync(associationConflict.Value.BrokerId, cancellationToken);
             return Result(
                 ExpirationsRoutingAdministrationOutcome.Conflict,
-                "Ya existe otra asociación activa para el mismo valor. Corrija el conflicto antes de continuar.");
+                $"{candidate.Value.Trim()} ya está asociado a " +
+                $"{broker?.Name ?? associationConflict.Value.BrokerId.ToString("D")}.");
         }
         if ((await exclusionsTask).Any(document =>
                 document.Value.IsActive &&
@@ -219,7 +347,26 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         {
             return Result(
                 ExpirationsRoutingAdministrationOutcome.Conflict,
-                "Este valor está marcado como No distribuir. Desactive o corrija la exclusión primero.");
+                $"{candidate.Value.Trim()} está excluido. Desactive la exclusión antes de asociarlo.");
+        }
+        return null;
+    }
+
+    private static ExpirationsRoutingAdministrationResult? ValidateAssociationInput(
+        ExpirationsAssociationKind kind,
+        string value)
+    {
+        if (!Enum.IsDefined(kind))
+        {
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Rejected,
+                "Seleccione un tipo de asociación válido.");
+        }
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Rejected,
+                "Digite el valor que identifica al corredor.");
         }
         return null;
     }
@@ -227,6 +374,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
     private async Task<ExpirationsRoutingAdministrationResult> UpdateAssociationAsync(
         ExpirationsBrokerAssociation association,
         string expectedUpdateTime,
+        string successMessage,
         CancellationToken cancellationToken)
     {
         try
@@ -234,7 +382,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             await _associations.UpdateAsync(association, expectedUpdateTime, cancellationToken);
             return Result(
                 ExpirationsRoutingAdministrationOutcome.Updated,
-                association.IsActive ? "La asociación fue actualizada." : "La asociación fue desactivada.");
+                successMessage);
         }
         catch (FirestoreConcurrencyException)
         {

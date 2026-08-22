@@ -4,8 +4,11 @@ namespace ECS.CommissionsMailer.Services.Expirations;
 
 public sealed class ExpirationsBrokerCatalogService(
     IExpirationsBrokerDirectoryRepository directory,
-    IExpirationsBrokerProfileRepository profiles)
+    IExpirationsBrokerProfileRepository profiles,
+    TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     public async Task<ExpirationsBrokerCatalog> LoadAsync(CancellationToken cancellationToken = default)
     {
         var directoryTask = directory.ListAsync(cancellationToken);
@@ -13,7 +16,20 @@ public sealed class ExpirationsBrokerCatalogService(
         await Task.WhenAll(directoryTask, profilesTask);
 
         var brokerEntries = await directoryTask;
-        var profileDocuments = await profilesTask;
+        var profileDocuments = (await profilesTask).ToList();
+        var felixDirectory = brokerEntries
+            .Select(document => document.Value)
+            .FirstOrDefault(value => value.BrokerId == ExpirationsBrokerProfileDefaults.FelixLaraBrokerId);
+        var felixProfile = await ExpirationsBrokerProfileDefaults.EnsureAsync(
+            felixDirectory,
+            profileDocuments.FirstOrDefault(document =>
+                document.Value.BrokerId == ExpirationsBrokerProfileDefaults.FelixLaraBrokerId),
+            profiles,
+            _timeProvider,
+            cancellationToken);
+        if (felixProfile is not null && profileDocuments.All(document =>
+                document.Value.BrokerId != ExpirationsBrokerProfileDefaults.FelixLaraBrokerId))
+            profileDocuments.Add(felixProfile);
         var profilesByBroker = profileDocuments
             .Select(document => document.Value)
             .GroupBy(profile => profile.BrokerId)
@@ -43,7 +59,7 @@ public sealed class ExpirationsBrokerCatalogService(
         PrimaryEmailAddresses = [.. broker.PrimaryEmailAddresses],
         IsActive = profile?.IsActive ?? true,
         NextMonthGenerationMode = profile?.NextMonthGenerationMode ??
-            ExpirationsNextMonthGenerationMode.Standard,
+            ExpirationsBrokerProfileDefaults.InitialNextMonthMode(broker.BrokerId),
         Assistants = profile?.Assistants.Select(CopyAssistant).ToList() ?? []
     };
 

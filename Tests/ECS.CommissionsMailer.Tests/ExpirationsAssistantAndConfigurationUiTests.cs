@@ -103,9 +103,15 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
         Assert.Equal(1, state.InactiveCount);
         Assert.Equal("Ver inactivos (1)", state.InactiveButtonText);
         state.ToggleInactiveVisibility();
-        Assert.Equal(2, state.VisibleItems.Count);
-        Assert.Contains(state.VisibleItems, item => item.StatusText == "Inactivo");
-        Assert.Equal("Ocultar inactivos", state.InactiveButtonText);
+        Assert.Equal("Inactivo", Assert.Single(state.VisibleItems).Name);
+        Assert.All(state.VisibleItems, item => Assert.False(item.IsActive));
+        Assert.Equal("Ver todos", state.InactiveButtonText);
+        state.ToggleInactiveVisibility();
+        Assert.Equal("Activo", Assert.Single(state.VisibleItems).Name);
+        Assert.All(state.VisibleItems, item => Assert.True(item.IsActive));
+        Assert.Equal("Ver inactivos (1)", state.InactiveButtonText);
+        state.SetExclusionCount(3);
+        Assert.Equal("Ver excluidos (3)", state.ExclusionsButtonText);
     }
 
     [Fact]

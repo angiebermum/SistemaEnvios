@@ -75,6 +75,12 @@ internal static class ModuleWindowUiSmokeRunner
             var routingAdministrationPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-routing-administration-ui-smoke.png");
+            var exclusionsPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-exclusions-ui-smoke.png");
+            var associationEditorPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-association-editor-ui-smoke.png");
             var defaultProfilePath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-default-profile-ui-smoke.png");
@@ -166,14 +172,17 @@ internal static class ModuleWindowUiSmokeRunner
                 premiumSelectionDialogPath);
             var configurationItems = ConfigurationItems();
             var configurationService = new SmokeConfigurationService(configurationItems);
+            var routingService = new SmokeRoutingAdministrationService(configurationItems);
             Render(
-                new ExpirationsBrokerManagementWindow(configurationService),
+                new ExpirationsBrokerManagementWindow(configurationService, routingService),
                 brokerManagementPath);
             Render(
                 new ExpirationsRoutingAdministrationWindow(
-                    new SmokeRoutingAdministrationService(configurationItems),
+                    routingService,
                     configurationService),
                 routingAdministrationPath);
+            Render(new ExpirationsExclusionsWindow(routingService), exclusionsPath);
+            Render(new ExpirationsAssociationEditorWindow(configurationItems[0]), associationEditorPath);
             Render(
                 new ExpirationsBrokerProfileWindow(configurationService, configurationItems[0]),
                 defaultProfilePath);
@@ -385,7 +394,9 @@ internal static class ModuleWindowUiSmokeRunner
                     $"DIALOGO_SELECCION={selectionDialogPath}",
                     $"DIALOGO_SELECCION_PRIMA_MONEDA={premiumSelectionDialogPath}",
                     $"CONFIGURACION_CORREDORES={brokerManagementPath}",
-                    $"ADMINISTRACION_ROUTING={routingAdministrationPath}",
+                    $"ADMINISTRACION_ASOCIACIONES={routingAdministrationPath}",
+                    $"EXCLUSIONES_VENCIMIENTOS={exclusionsPath}",
+                    $"EDITOR_ASOCIACION={associationEditorPath}",
                     $"PERFIL_SIN_DOCUMENTO={defaultProfilePath}",
                     $"PERFIL_CONFIGURADO={configuredProfilePath}",
                     $"EDITOR_ASISTENTE={assistantEditorPath}",
@@ -1012,8 +1023,20 @@ internal static class ModuleWindowUiSmokeRunner
             Guid associationId, bool isActive, string expectedUpdateTime,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+        public Task<ExpirationsRoutingAdministrationResult> CreateAssociationAsync(
+            Guid brokerId, ExpirationsAssociationKind kind, string value,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ExpirationsRoutingAdministrationResult> EditAssociationAsync(
+            Guid associationId, ExpirationsAssociationKind kind, string value, string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public Task<ExpirationsRoutingAdministrationResult> ReassignAsync(
             Guid associationId, Guid destinationBrokerId, string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ExpirationsRoutingAdministrationResult> DeleteAssociationAsync(
+            Guid associationId, string expectedUpdateTime,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public Task<ExpirationsRoutingAdministrationResult> SetExclusionActiveAsync(

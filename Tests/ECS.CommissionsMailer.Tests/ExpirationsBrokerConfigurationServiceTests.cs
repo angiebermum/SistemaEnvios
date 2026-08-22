@@ -9,6 +9,7 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
 {
     private static readonly Guid BrokerId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid OtherBrokerId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid FelixBrokerId = Guid.Parse("6059c919-7198-45b9-a2c3-c6eab96a1503");
     private static readonly DateTimeOffset Created = new(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
     private static readonly DateTimeOffset Now = new(2026, 8, 21, 18, 0, 0, TimeSpan.Zero);
 
@@ -231,8 +232,59 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
             profiles.Documents.Single().Value.NextMonthGenerationMode);
     }
 
-    private static ExpirationsBrokerConfigurationService Service(FakeProfileRepository profiles) => new(
-        new FakeDirectoryRepository([Directory()]),
+    [Fact]
+    public async Task FelixWithoutExplicitProfileIsInitializedPersistentlyAsSpecial()
+    {
+        var profiles = new FakeProfileRepository([]);
+        var service = Service(profiles, Directory(FelixBrokerId, "Felix Lara"));
+
+        var item = Assert.Single(await service.ListAsync(TestContext.Current.CancellationToken));
+
+        Assert.True(item.HasExplicitProfile);
+        Assert.Equal(ExpirationsNextMonthGenerationMode.SpecialDualSorted, item.NextMonthGenerationMode);
+        var created = Assert.Single(profiles.Created);
+        Assert.Equal(FelixBrokerId, created.BrokerId);
+        Assert.Equal(ExpirationsNextMonthGenerationMode.SpecialDualSorted, created.NextMonthGenerationMode);
+    }
+
+    [Fact]
+    public async Task FelixManualStandardOverrideIsPersistedAndNeverResetToSpecial()
+    {
+        var profiles = new FakeProfileRepository([]);
+        var service = Service(profiles, Directory(FelixBrokerId, "Felix Lara"));
+        var initial = Assert.Single(await service.ListAsync(TestContext.Current.CancellationToken));
+
+        var result = await service.SaveAsync(
+            With(initial, mode: ExpirationsNextMonthGenerationMode.Standard),
+            TestContext.Current.CancellationToken);
+        var reloaded = Assert.Single(await service.ListAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(ExpirationsBrokerConfigurationSaveOutcome.Updated, result.Outcome);
+        Assert.Equal(ExpirationsNextMonthGenerationMode.Standard, reloaded.NextMonthGenerationMode);
+        Assert.Single(profiles.Created);
+        Assert.Single(profiles.Updated);
+    }
+
+    [Fact]
+    public async Task ExistingExplicitFelixStandardProfileIsNotOverwritten()
+    {
+        var profile = Profile(true);
+        profile.BrokerId = FelixBrokerId;
+        profile.NextMonthGenerationMode = ExpirationsNextMonthGenerationMode.Standard;
+        var profiles = new FakeProfileRepository([Stored(profile, "felix-explicit")]);
+        var service = Service(profiles, Directory(FelixBrokerId, "Felix Lara"));
+
+        var item = Assert.Single(await service.ListAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(ExpirationsNextMonthGenerationMode.Standard, item.NextMonthGenerationMode);
+        Assert.Equal(0, profiles.CreateCalls);
+        Assert.Empty(profiles.Updated);
+    }
+
+    private static ExpirationsBrokerConfigurationService Service(
+        FakeProfileRepository profiles,
+        ExpirationsBrokerDirectoryEntry? directory = null) => new(
+        new FakeDirectoryRepository([directory ?? Directory()]),
         profiles,
         timeProvider: new FixedTimeProvider(Now));
 
@@ -265,6 +317,13 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
         BrokerId = BrokerId,
         Name = "Nombre maestro",
         PrimaryEmailAddresses = ["master@example.test", "second@example.test"]
+    };
+
+    private static ExpirationsBrokerDirectoryEntry Directory(Guid brokerId, string name) => new()
+    {
+        BrokerId = brokerId,
+        Name = name,
+        PrimaryEmailAddresses = ["master@example.test"]
     };
 
     private static ExpirationsBrokerProfile Profile(bool active) => new()

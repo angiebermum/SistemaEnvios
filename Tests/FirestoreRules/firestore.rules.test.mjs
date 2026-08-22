@@ -285,7 +285,7 @@ test('brokerProfiles: no permite crear perfil para broker inexistente', async ()
     expirationsBrokerProfile(missingBroker)));
 });
 
-test('associations: Vencimientos permite read/create/update pero no delete', async () => {
+test('associations: Vencimientos permite read/create/update/delete', async () => {
   const db = environment.authenticatedContext('expirations').firestore();
   const associationId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
   await assertSucceeds(getDoc(doc(db, `modules/vencimientos/associations/${existingAssociation}`)));
@@ -295,7 +295,7 @@ test('associations: Vencimientos permite read/create/update pero no delete', asy
   await assertSucceeds(updateDoc(
     doc(db, `modules/vencimientos/associations/${existingAssociation}`),
     { isActive: false, updatedAtUtc: new Date('2026-08-10T01:00:00Z') }));
-  await assertFails(deleteDoc(doc(db, `modules/vencimientos/associations/${existingAssociation}`)));
+  await assertSucceeds(deleteDoc(doc(db, `modules/vencimientos/associations/${existingAssociation}`)));
 });
 
 test('associations: normalizedValue repetido se permite para brokers distintos', async () => {

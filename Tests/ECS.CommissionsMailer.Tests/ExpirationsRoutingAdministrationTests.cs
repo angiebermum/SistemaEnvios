@@ -2,6 +2,8 @@ using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Firestore;
 using ECS.CommissionsMailer.Models.Expirations;
 using ECS.CommissionsMailer.Services.Expirations;
 using ECS.CommissionsMailer.Views;
+using System.Runtime.CompilerServices;
+using System.Windows;
 
 namespace ECS.CommissionsMailer.Tests;
 
@@ -131,6 +133,12 @@ public sealed class ExpirationsRoutingAdministrationTests
             ExclusionId, true, "e-1", TestContext.Current.CancellationToken)).WasPersisted);
         Assert.Equal(ExpirationsBrokerResolutionStatus.Excluded,
             Resolver(associations, exclusions).Resolve(Component("Essential")).Status);
+        var reactivationBlocked = await service.SetAssociationActiveAsync(
+            AssociationId,
+            true,
+            Assert.Single(associations.Documents).UpdateTime,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(ExpirationsRoutingAdministrationOutcome.Conflict, reactivationBlocked.Outcome);
 
         var exclusionVersion = Assert.Single(exclusions.Documents).UpdateTime;
         Assert.True((await service.SetExclusionActiveAsync(
@@ -164,7 +172,7 @@ public sealed class ExpirationsRoutingAdministrationTests
             BrokerConfiguration(ShortBroker, first.BrokerName, first.BrokerPrimaryEmail),
             BrokerConfiguration(LongBroker, second.BrokerName, second.BrokerPrimaryEmail)
         };
-        state.SetData([first, second], [], configurations, null);
+        state.SetData([first, second], configurations, null);
 
         foreach (var query in new[] { "Fernando Cabada", "Alias", "Corvisier", "fernando.corvisier@" })
         {
@@ -176,6 +184,166 @@ public sealed class ExpirationsRoutingAdministrationTests
         Assert.Equal(LongBroker, Assert.Single(state.VisibleAssociations).Association.BrokerId);
     }
 
+    [Fact]
+    public void SelectedBrokerAlwaysShowsReadOnlyMasterIdentityAndAllAdditionalAssociationStates()
+    {
+        var active = new ExpirationsAssociationAdministrationItem
+        {
+            Association = Association(ShortBroker, "FC-01"),
+            BrokerName = "Fernando Cabada",
+            BrokerPrimaryEmail = "short@example.test"
+        };
+        var inactiveAssociation = Association(ShortBroker, "Fernando alternativo");
+        inactiveAssociation.Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        inactiveAssociation.IsActive = false;
+        var inactive = new ExpirationsAssociationAdministrationItem
+        {
+            Association = inactiveAssociation,
+            BrokerName = "Fernando Cabada",
+            BrokerPrimaryEmail = "short@example.test"
+        };
+        var configurations = new[]
+        {
+            BrokerConfiguration(ShortBroker, "Fernando Cabada", "short@example.test"),
+            BrokerConfiguration(LongBroker, "Sin asociaciones", "none@example.test")
+        };
+        var state = new ExpirationsRoutingAdministrationState();
+
+        state.SetData([active, inactive], configurations, ShortBroker);
+
+        Assert.Equal("Fernando Cabada", state.SelectedBrokerName);
+        Assert.Equal("short@example.test", state.SelectedBrokerEmail);
+        Assert.Equal("Activo", state.SelectedBrokerStatus);
+        Assert.Equal(Visibility.Visible, state.BrokerIdentityVisibility);
+        Assert.Equal(2, state.VisibleAssociations.Count);
+        Assert.Contains(state.VisibleAssociations, item => item.StatusText == "Activa");
+        Assert.Contains(state.VisibleAssociations, item => item.StatusText == "Inactiva");
+        state.SelectedBrokerFilter = state.BrokerFilters.Single(item => item.BrokerId == LongBroker);
+        Assert.Empty(state.VisibleAssociations);
+        Assert.Equal("Sin asociaciones", state.SelectedBrokerName);
+        Assert.Equal(Visibility.Visible, state.NoAssociationsVisibility);
+        Assert.Null(typeof(ExpirationsRoutingAdministrationState).GetProperty(nameof(state.SelectedBrokerName))!.SetMethod);
+    }
+
+    [Fact]
+    public async Task AssociationCanBeAddedEditedReassignedAndDeletedPreservingIdentityFields()
+    {
+        var associations = new FakeAssociationRepository([]);
+        var service = Service(
+            associations,
+            new FakeExclusionRepository([]),
+            new FakeConfigurationService(
+                BrokerConfiguration(ShortBroker, "Fernando Cabada", "short@example.test"),
+                BrokerConfiguration(LongBroker, "Fernando Cabada Corvisier", "long@example.test")));
+
+        var added = await service.CreateAssociationAsync(
+            ShortBroker,
+            ExpirationsAssociationKind.Code,
+            " FCC - 52 ",
+            TestContext.Current.CancellationToken);
+        Assert.True(added.WasPersisted);
+        var created = Assert.Single(associations.Documents);
+        Assert.Equal("FCC - 52", created.Value.Value);
+        Assert.Equal(ExpirationsAssociationKind.Code, created.Value.Kind);
+        var createdAt = created.Value.CreatedAtUtc;
+
+        var edited = await service.EditAssociationAsync(
+            created.Value.Id,
+            ExpirationsAssociationKind.Alias,
+            "Fernando Cabada/FCC - 52",
+            created.UpdateTime,
+            TestContext.Current.CancellationToken);
+        Assert.True(edited.WasPersisted);
+        var editedDocument = Assert.Single(associations.Documents);
+        Assert.Equal(createdAt, editedDocument.Value.CreatedAtUtc);
+        Assert.Equal(ExpirationsAssociationKind.Alias, editedDocument.Value.Kind);
+
+        var reassigned = await service.ReassignAsync(
+            editedDocument.Value.Id,
+            LongBroker,
+            editedDocument.UpdateTime,
+            TestContext.Current.CancellationToken);
+        Assert.True(reassigned.WasPersisted);
+        var reassignedDocument = Assert.Single(associations.Documents);
+        Assert.Equal(LongBroker, reassignedDocument.Value.BrokerId);
+        Assert.Equal(createdAt, reassignedDocument.Value.CreatedAtUtc);
+
+        var deleted = await service.DeleteAssociationAsync(
+            reassignedDocument.Value.Id,
+            reassignedDocument.UpdateTime,
+            TestContext.Current.CancellationToken);
+        Assert.True(deleted.WasPersisted);
+        Assert.Empty(associations.Documents);
+    }
+
+    [Fact]
+    public async Task AddEditReassignAndReactivateRejectNormalizedAssociationOrExclusionConflicts()
+    {
+        var existing = Association(ShortBroker, "FCC - 52");
+        var editable = Association(LongBroker, "FCC / 52");
+        editable.Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        editable.IsActive = false;
+        var associations = new FakeAssociationRepository([
+            Stored(existing, "a-1"),
+            Stored(editable, "a-2")
+        ]);
+        var exclusions = new FakeExclusionRepository([
+            Stored(Exclusion("EXCLUIDO", active: true), "e-1")
+        ]);
+        var service = Service(
+            associations,
+            exclusions,
+            new FakeConfigurationService(
+                BrokerConfiguration(ShortBroker, "Fernando Cabada", "short@example.test"),
+                BrokerConfiguration(LongBroker, "Fernando Cabada Corvisier", "long@example.test")));
+
+        var duplicate = await service.CreateAssociationAsync(
+            LongBroker, ExpirationsAssociationKind.Code, "fcc 52", TestContext.Current.CancellationToken);
+        var excluded = await service.EditAssociationAsync(
+            editable.Id, ExpirationsAssociationKind.Alias, "excluido", "a-2", TestContext.Current.CancellationToken);
+        var reactivateConflict = await service.EditAssociationAsync(
+            editable.Id, ExpirationsAssociationKind.Alias, "fcc-52", "a-2", TestContext.Current.CancellationToken);
+        var reassignConflict = await service.ReassignAsync(
+            editable.Id, ShortBroker, "a-2", TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsRoutingAdministrationOutcome.Conflict, duplicate.Outcome);
+        Assert.Contains("Fernando Cabada", duplicate.Message, StringComparison.Ordinal);
+        Assert.Equal(ExpirationsRoutingAdministrationOutcome.Conflict, excluded.Outcome);
+        Assert.Equal(ExpirationsRoutingAdministrationOutcome.Conflict, reactivateConflict.Outcome);
+        Assert.Equal(ExpirationsRoutingAdministrationOutcome.Conflict, reassignConflict.Outcome);
+        Assert.Equal(2, associations.Documents.Count);
+    }
+
+    [Fact]
+    public void ExclusionsStateListsAllValuesAndSearchesIndependentlyOfAnyBroker()
+    {
+        var state = new ExpirationsExclusionsState();
+        state.SetItems([
+            new ExpirationsExclusionAdministrationItem { Exclusion = Exclusion("Essential ECS", true) },
+            new ExpirationsExclusionAdministrationItem { Exclusion = Exclusion("Histórico", false) }
+        ]);
+
+        Assert.Equal(2, state.VisibleItems.Count);
+        state.SearchText = "essential";
+        Assert.Equal("Essential ECS", Assert.Single(state.VisibleItems).Exclusion.Value);
+    }
+
+    [Fact]
+    public void ExpirationsUiKeepsExclusionsOutOfMainAndAssociationWindows()
+    {
+        var main = File.ReadAllText(SourceFile("Views", "ExpirationsWindow.xaml"));
+        var management = File.ReadAllText(SourceFile("Views", "ExpirationsBrokerManagementWindow.xaml"));
+        var associations = File.ReadAllText(SourceFile("Views", "ExpirationsRoutingAdministrationWindow.xaml"));
+
+        Assert.DoesNotContain("ViewExcluded_Click", main, StringComparison.Ordinal);
+        Assert.Contains("ViewExclusions_Click", management, StringComparison.Ordinal);
+        Assert.Contains("Administrar asociaciones", management, StringComparison.Ordinal);
+        Assert.Contains("Administración de asociaciones — Vencimientos", associations, StringComparison.Ordinal);
+        Assert.DoesNotContain("Administración de routing", associations, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("exclus", associations, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TabControl", associations, StringComparison.Ordinal);
+    }
+
     private static ExpirationsRoutingAdministrationService Service(
         FakeAssociationRepository associations,
         FakeExclusionRepository exclusions,
@@ -184,6 +352,15 @@ public sealed class ExpirationsRoutingAdministrationTests
         exclusions,
         brokers,
         timeProvider: new FixedTimeProvider(UpdatedAt.AddHours(1)));
+
+    private static string SourceFile(
+        string directory,
+        string fileName,
+        [CallerFilePath] string sourceFilePath = "")
+    {
+        var root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFilePath)!, "..", ".."));
+        return Path.Combine(root, directory, fileName);
+    }
 
     private static ExpirationsBrokerResolver Resolver(
         FakeAssociationRepository associations,
@@ -270,8 +447,12 @@ public sealed class ExpirationsRoutingAdministrationTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerAssociation>>>(Documents.ToList());
         public Task<FirestoreStoredDocument<ExpirationsBrokerAssociation>> CreateAsync(
-            ExpirationsBrokerAssociation value, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            ExpirationsBrokerAssociation value, CancellationToken cancellationToken = default)
+        {
+            var stored = Stored(value, $"a-{++_version}");
+            Documents.Add(stored);
+            return Task.FromResult(stored);
+        }
         public Task<FirestoreStoredDocument<ExpirationsBrokerAssociation>> UpdateAsync(
             ExpirationsBrokerAssociation value,
             string expectedUpdateTime,
@@ -283,6 +464,17 @@ public sealed class ExpirationsRoutingAdministrationTests
             var stored = Stored(value, $"a-{++_version}");
             Documents[index] = stored;
             return Task.FromResult(stored);
+        }
+        public Task DeleteAsync(
+            Guid associationId,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default)
+        {
+            var index = Documents.FindIndex(document => document.Value.Id == associationId);
+            if (index < 0 || Documents[index].UpdateTime != expectedUpdateTime)
+                throw new FirestoreConcurrencyException($"associations/{associationId:D}", expectedUpdateTime);
+            Documents.RemoveAt(index);
+            return Task.CompletedTask;
         }
     }
 

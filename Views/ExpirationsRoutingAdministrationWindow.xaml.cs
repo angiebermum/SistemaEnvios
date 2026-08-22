@@ -10,17 +10,17 @@ namespace ECS.CommissionsMailer.Views;
 
 public partial class ExpirationsRoutingAdministrationWindow : Window
 {
-    private readonly IExpirationsRoutingAdministrationService _routing;
+    private readonly IExpirationsRoutingAdministrationService _associations;
     private readonly IExpirationsBrokerConfigurationService _brokers;
     private readonly Guid? _initialBrokerId;
     internal readonly ExpirationsRoutingAdministrationState State = new();
 
     public ExpirationsRoutingAdministrationWindow(
-        IExpirationsRoutingAdministrationService routing,
+        IExpirationsRoutingAdministrationService associations,
         IExpirationsBrokerConfigurationService brokers,
         Guid? initialBrokerId = null)
     {
-        _routing = routing ?? throw new ArgumentNullException(nameof(routing));
+        _associations = associations ?? throw new ArgumentNullException(nameof(associations));
         _brokers = brokers ?? throw new ArgumentNullException(nameof(brokers));
         _initialBrokerId = initialBrokerId;
         InitializeComponent();
@@ -37,23 +37,21 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
 
     private async Task LoadAsync(bool selectInitialBroker = false)
     {
-        State.SetBusy(true, "Cargando asociaciones y exclusiones...");
+        State.SetBusy(true, "Cargando asociaciones...");
         try
         {
-            var associationsTask = _routing.ListAssociationsAsync();
-            var exclusionsTask = _routing.ListExclusionsAsync();
+            var associationsTask = _associations.ListAssociationsAsync();
             var brokersTask = _brokers.ListAsync();
-            await Task.WhenAll(associationsTask, exclusionsTask, brokersTask);
+            await Task.WhenAll(associationsTask, brokersTask);
             State.SetData(
                 await associationsTask,
-                await exclusionsTask,
                 await brokersTask,
                 selectInitialBroker ? _initialBrokerId : State.SelectedBrokerFilter?.BrokerId);
         }
         catch (Exception ex)
         {
             MessageBox.Show(
-                $"No fue posible cargar la administración de routing.\n\n{ex.Message}",
+                $"No fue posible cargar la administración de asociaciones.\n\n{ex.Message}",
                 "Vencimientos",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
@@ -62,6 +60,34 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
         {
             State.SetBusy(false);
         }
+    }
+
+    private async void AddAssociation_Click(object sender, RoutedEventArgs e)
+    {
+        if (State.SelectedBroker is not { } broker)
+            return;
+        var editor = new ExpirationsAssociationEditorWindow(broker) { Owner = this };
+        if (editor.ShowDialog() != true || editor.AssociationInput is not { } input)
+            return;
+        await RunMutationAsync(() => _associations.CreateAssociationAsync(
+            broker.BrokerId,
+            input.Kind,
+            input.Value));
+    }
+
+    private async void EditAssociation_Click(object sender, RoutedEventArgs e)
+    {
+        if (State.SelectedAssociation is not { } selected ||
+            State.GetBroker(selected.Association.BrokerId) is not { } broker)
+            return;
+        var editor = new ExpirationsAssociationEditorWindow(broker, selected.Association) { Owner = this };
+        if (editor.ShowDialog() != true || editor.AssociationInput is not { } input)
+            return;
+        await RunMutationAsync(() => _associations.EditAssociationAsync(
+            selected.Association.Id,
+            input.Kind,
+            input.Value,
+            selected.UpdateTime));
     }
 
     private async void DeactivateAssociation_Click(object sender, RoutedEventArgs e) =>
@@ -75,14 +101,30 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
         if (State.SelectedAssociation is not { } selected)
             return;
         if (MessageBox.Show(
-                $"¿Desea {(isActive ? "reactivar" : "desactivar")} la asociación '{selected.Association.Value}'?",
-                "Asociaciones de Vencimientos",
+                $"¿Desea {(isActive ? "reactivar" : "inactivar")} la asociación '{selected.Association.Value}'?",
+                "Asociaciones de vencimientos",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
-        await RunMutationAsync(() => _routing.SetAssociationActiveAsync(
+        await RunMutationAsync(() => _associations.SetAssociationActiveAsync(
             selected.Association.Id,
             isActive,
+            selected.UpdateTime));
+    }
+
+    private async void DeleteAssociation_Click(object sender, RoutedEventArgs e)
+    {
+        if (State.SelectedAssociation is not { } selected)
+            return;
+        if (MessageBox.Show(
+                "Esta asociación dejará de existir y no podrá utilizarse para identificar al corredor. " +
+                "¿Desea continuar?",
+                "Eliminar asociación",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
+        await RunMutationAsync(() => _associations.DeleteAssociationAsync(
+            selected.Association.Id,
             selected.UpdateTime));
     }
 
@@ -92,7 +134,7 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
             State.SelectedDestinationBroker is not { } destination)
             return;
         var confirmation =
-            $"El valor {selected.Association.Value} dejará de estar asociado a " +
+            $"El valor \"{selected.Association.Value}\" dejará de estar asociado a " +
             $"{selected.BrokerName} y pasará a {destination.DisplayText}.\n\n¿Desea continuar?";
         if (MessageBox.Show(
                 confirmation,
@@ -100,31 +142,9 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return;
-        await RunMutationAsync(() => _routing.ReassignAsync(
+        await RunMutationAsync(() => _associations.ReassignAsync(
             selected.Association.Id,
             destination.BrokerId,
-            selected.UpdateTime));
-    }
-
-    private async void DeactivateExclusion_Click(object sender, RoutedEventArgs e) =>
-        await ChangeExclusionStateAsync(false);
-
-    private async void ReactivateExclusion_Click(object sender, RoutedEventArgs e) =>
-        await ChangeExclusionStateAsync(true);
-
-    private async Task ChangeExclusionStateAsync(bool isActive)
-    {
-        if (State.SelectedExclusion is not { } selected)
-            return;
-        if (MessageBox.Show(
-                $"¿Desea {(isActive ? "reactivar" : "desactivar")} la exclusión '{selected.Exclusion.Value}'?",
-                "No corresponde distribución",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question) != MessageBoxResult.Yes)
-            return;
-        await RunMutationAsync(() => _routing.SetExclusionActiveAsync(
-            selected.Exclusion.Id,
-            isActive,
             selected.UpdateTime));
     }
 
@@ -158,29 +178,40 @@ internal sealed record ExpirationsBrokerFilterOption(Guid? BrokerId, string Disp
 internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyChanged
 {
     private readonly List<ExpirationsAssociationAdministrationItem> _allAssociations = [];
-    private readonly List<ExpirationsExclusionAdministrationItem> _allExclusions = [];
+    private readonly List<ExpirationsBrokerConfigurationItem> _brokers = [];
     private string _associationSearchText = string.Empty;
-    private string _exclusionSearchText = string.Empty;
     private ExpirationsBrokerFilterOption? _selectedBrokerFilter;
     private ExpirationsAssociationAdministrationItem? _selectedAssociation;
-    private ExpirationsExclusionAdministrationItem? _selectedExclusion;
     private ExpirationsBrokerChoice? _selectedDestinationBroker;
     private bool _isBusy;
     private string _busyText = string.Empty;
 
     public ObservableCollection<ExpirationsAssociationAdministrationItem> VisibleAssociations { get; } = [];
-    public ObservableCollection<ExpirationsExclusionAdministrationItem> VisibleExclusions { get; } = [];
     public ObservableCollection<ExpirationsBrokerFilterOption> BrokerFilters { get; } = [];
     public ObservableCollection<ExpirationsBrokerChoice> DestinationBrokers { get; } = [];
     public bool HasLoaded { get; private set; }
     public bool IsUiEnabled => !_isBusy;
     public string BusyText => _busyText;
     public Visibility BusyVisibility => _isBusy ? Visibility.Visible : Visibility.Collapsed;
+    public ExpirationsBrokerConfigurationItem? SelectedBroker =>
+        _brokers.FirstOrDefault(item => item.BrokerId == SelectedBrokerFilter?.BrokerId);
+    public string SelectedBrokerName => SelectedBroker?.Name ?? string.Empty;
+    public string SelectedBrokerEmail => SelectedBroker?.PrimaryEmailAddresses
+        .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "Sin correo principal";
+    public string SelectedBrokerStatus => SelectedBroker?.StatusText ?? string.Empty;
+    public Visibility BrokerIdentityVisibility => SelectedBroker is null ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility NoAssociationsVisibility => SelectedBroker is not null &&
+        !_allAssociations.Any(item => item.Association.BrokerId == SelectedBroker.BrokerId)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    public bool CanAddAssociation => !_isBusy && SelectedBroker?.IsActive == true;
+    public bool CanEditAssociation => !_isBusy && SelectedAssociation is not null;
+    public bool CanDeleteAssociation => !_isBusy && SelectedAssociation is not null;
     public bool CanDeactivateAssociation => !_isBusy && SelectedAssociation?.Association.IsActive == true;
     public bool CanReactivateAssociation => !_isBusy && SelectedAssociation?.Association.IsActive == false;
-    public bool CanReassign => !_isBusy && SelectedAssociation is not null && SelectedDestinationBroker is not null;
-    public bool CanDeactivateExclusion => !_isBusy && SelectedExclusion?.Exclusion.IsActive == true;
-    public bool CanReactivateExclusion => !_isBusy && SelectedExclusion?.Exclusion.IsActive == false;
+    public bool CanReassign => !_isBusy && SelectedAssociation is not null &&
+        SelectedDestinationBroker is not null &&
+        SelectedDestinationBroker.BrokerId != SelectedAssociation.Association.BrokerId;
 
     public string AssociationSearchText
     {
@@ -188,16 +219,15 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
         set { if (Set(ref _associationSearchText, value ?? string.Empty)) ApplyAssociationFilter(); }
     }
 
-    public string ExclusionSearchText
-    {
-        get => _exclusionSearchText;
-        set { if (Set(ref _exclusionSearchText, value ?? string.Empty)) ApplyExclusionFilter(); }
-    }
-
     public ExpirationsBrokerFilterOption? SelectedBrokerFilter
     {
         get => _selectedBrokerFilter;
-        set { if (Set(ref _selectedBrokerFilter, value)) ApplyAssociationFilter(); }
+        set
+        {
+            if (!Set(ref _selectedBrokerFilter, value)) return;
+            NotifyBrokerIdentity();
+            ApplyAssociationFilter();
+        }
     }
 
     public ExpirationsAssociationAdministrationItem? SelectedAssociation
@@ -206,20 +236,7 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
         set
         {
             if (!Set(ref _selectedAssociation, value)) return;
-            Notify(nameof(CanDeactivateAssociation));
-            Notify(nameof(CanReactivateAssociation));
-            Notify(nameof(CanReassign));
-        }
-    }
-
-    public ExpirationsExclusionAdministrationItem? SelectedExclusion
-    {
-        get => _selectedExclusion;
-        set
-        {
-            if (!Set(ref _selectedExclusion, value)) return;
-            Notify(nameof(CanDeactivateExclusion));
-            Notify(nameof(CanReactivateExclusion));
+            NotifySelectionActions();
         }
     }
 
@@ -229,21 +246,26 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
         set { if (Set(ref _selectedDestinationBroker, value)) Notify(nameof(CanReassign)); }
     }
 
+    public ExpirationsBrokerConfigurationItem? GetBroker(Guid brokerId) =>
+        _brokers.FirstOrDefault(item => item.BrokerId == brokerId);
+
     public void SetData(
         IEnumerable<ExpirationsAssociationAdministrationItem> associations,
-        IEnumerable<ExpirationsExclusionAdministrationItem> exclusions,
         IEnumerable<ExpirationsBrokerConfigurationItem> brokers,
         Guid? selectedBrokerId)
     {
         _allAssociations.Clear();
-        _allAssociations.AddRange(associations);
-        _allExclusions.Clear();
-        _allExclusions.AddRange(exclusions);
-        var brokerList = brokers.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        _allAssociations.AddRange(associations
+            .OrderBy(item => item.Association.Value, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(item => item.Association.Id));
+        _brokers.Clear();
+        _brokers.AddRange(brokers
+            .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(item => item.BrokerId));
         BrokerFilters.Clear();
         BrokerFilters.Add(new ExpirationsBrokerFilterOption(null, "Todos los corredores"));
         DestinationBrokers.Clear();
-        foreach (var broker in brokerList)
+        foreach (var broker in _brokers)
         {
             var email = broker.PrimaryEmailAddresses.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
             BrokerFilters.Add(new ExpirationsBrokerFilterOption(
@@ -254,11 +276,9 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
         }
         _selectedBrokerFilter = BrokerFilters.FirstOrDefault(item => item.BrokerId == selectedBrokerId) ?? BrokerFilters[0];
         _selectedAssociation = null;
-        _selectedExclusion = null;
         _selectedDestinationBroker = null;
         HasLoaded = true;
         ApplyAssociationFilter();
-        ApplyExclusionFilter();
         Notify(string.Empty);
     }
 
@@ -283,17 +303,27 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
                       item.BrokerPrimaryEmail.Contains(term, StringComparison.OrdinalIgnoreCase))))
             VisibleAssociations.Add(item);
         SelectedAssociation = null;
+        Notify(nameof(NoAssociationsVisibility));
     }
 
-    private void ApplyExclusionFilter()
+    private void NotifyBrokerIdentity()
     {
-        var term = ExclusionSearchText.Trim();
-        VisibleExclusions.Clear();
-        foreach (var item in _allExclusions.Where(item =>
-                     term.Length == 0 ||
-                     item.Exclusion.Value.Contains(term, StringComparison.CurrentCultureIgnoreCase)))
-            VisibleExclusions.Add(item);
-        SelectedExclusion = null;
+        Notify(nameof(SelectedBroker));
+        Notify(nameof(SelectedBrokerName));
+        Notify(nameof(SelectedBrokerEmail));
+        Notify(nameof(SelectedBrokerStatus));
+        Notify(nameof(BrokerIdentityVisibility));
+        Notify(nameof(NoAssociationsVisibility));
+        Notify(nameof(CanAddAssociation));
+    }
+
+    private void NotifySelectionActions()
+    {
+        Notify(nameof(CanEditAssociation));
+        Notify(nameof(CanDeleteAssociation));
+        Notify(nameof(CanDeactivateAssociation));
+        Notify(nameof(CanReactivateAssociation));
+        Notify(nameof(CanReassign));
     }
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

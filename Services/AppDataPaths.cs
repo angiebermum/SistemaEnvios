@@ -15,6 +15,7 @@ public sealed class AppDataPaths
         OutlookPreferencesFile = Path.Combine(RootDirectory, "outlook-preferences.json");
         ProtectedRefreshTokenFile = Path.Combine(RootDirectory, "firebase-refresh-token.dat");
         LocalWorkspaceStateFile = Path.Combine(RootDirectory, "local-workspace.json");
+        ExpirationsLocalSettingsFile = Path.Combine(RootDirectory, "vencimientos-local.json");
         FirestoreRuntimeStateFile = Path.Combine(RootDirectory, "firestore-runtime-state.json");
         FirestoreShadowReportsDirectory = Path.Combine(RootDirectory, "firestore-shadow-reports");
         FirestoreCutoverReportsDirectory = Path.Combine(RootDirectory, "firestore-cutover-reports");
@@ -23,6 +24,7 @@ public sealed class AppDataPaths
         SentAttachmentsDirectory = Path.Combine(RootDirectory, "ArchivosEnviados");
         AssetsDirectory = Path.Combine(RootDirectory, "Assets");
         SignatureDirectory = Path.Combine(AssetsDirectory, "Firma");
+        ExpirationsSignatureDirectory = Path.Combine(AssetsDirectory, "FirmaVencimientos");
         BackupsDirectory = Path.Combine(RootDirectory, "Backups");
         TemporaryEditsDirectory = Path.Combine(RootDirectory, "TempEdits");
         TemporaryViewsDirectory = Path.Combine(RootDirectory, "TempView");
@@ -38,6 +40,7 @@ public sealed class AppDataPaths
     public string OutlookPreferencesFile { get; }
     public string ProtectedRefreshTokenFile { get; }
     public string LocalWorkspaceStateFile { get; }
+    public string ExpirationsLocalSettingsFile { get; }
     public string FirestoreRuntimeStateFile { get; }
     public string FirestoreShadowReportsDirectory { get; }
     public string FirestoreCutoverReportsDirectory { get; }
@@ -46,6 +49,7 @@ public sealed class AppDataPaths
     public string SentAttachmentsDirectory { get; }
     public string AssetsDirectory { get; }
     public string SignatureDirectory { get; }
+    public string ExpirationsSignatureDirectory { get; }
     public string BackupsDirectory { get; }
     public string TemporaryEditsDirectory { get; }
     public string TemporaryViewsDirectory { get; }
@@ -56,6 +60,7 @@ public sealed class AppDataPaths
         Directory.CreateDirectory(LogsDirectory);
         Directory.CreateDirectory(SentAttachmentsDirectory);
         Directory.CreateDirectory(SignatureDirectory);
+        Directory.CreateDirectory(ExpirationsSignatureDirectory);
         Directory.CreateDirectory(BackupsDirectory);
         Directory.CreateDirectory(TemporaryEditsDirectory);
     }

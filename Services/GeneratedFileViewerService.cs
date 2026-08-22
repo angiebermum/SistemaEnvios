@@ -205,6 +205,36 @@ public sealed class GeneratedFileViewerService
         }
     }
 
+    public GeneratedFileOpenResult OpenAssociated(
+        string path,
+        string brokerName,
+        IEnumerable<string> associatedPaths)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(brokerName);
+        ArgumentNullException.ThrowIfNull(associatedPaths);
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return Reject(path, GeneratedFileOpenStatus.MissingPath, "la ruta está vacía");
+            if (!Path.IsPathFullyQualified(path))
+                return Reject(path, GeneratedFileOpenStatus.NonAbsolutePath, "la ruta no es absoluta");
+            if (!File.Exists(path))
+                return Reject(path, GeneratedFileOpenStatus.FileNotFound, "el archivo no existe");
+            if (!HasXlsxExtension(path))
+                return Reject(path, GeneratedFileOpenStatus.UnsupportedExtension, "la extensión no es .xlsx");
+            if (!ContainsPath(associatedPaths, path))
+                return Reject(path, GeneratedFileOpenStatus.NotAssociated, "la ruta ya no pertenece al batch actual");
+            return OpenTemporaryCopy(Path.GetFullPath(path), brokerName);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(
+                $"No fue posible preparar el archivo de Vencimientos '{path}' para '{brokerName}'.",
+                ex);
+            return new GeneratedFileOpenResult(GeneratedFileOpenStatus.TemporaryCopyFailed);
+        }
+    }
+
     public void CleanupTemporaryViewCopies()
     {
         try

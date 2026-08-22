@@ -59,6 +59,9 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                <TextBlock Text="{Binding ReviewText}" TextWrapping="Wrap" Foreground="#9A3412"
+                                           FontWeight="SemiBold" Margin="0,7,0,0"
+                                           Visibility="{Binding ReviewVisibility}" />
                                 <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap" FontWeight="SemiBold"
                                            Margin="0,8,0,0" Visibility="{Binding ResultVisibility}" />
                             </StackPanel>

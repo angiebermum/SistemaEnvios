@@ -60,6 +60,8 @@ public partial class ExpirationsBrokerManagementWindow : Window
         State.Replace(editor.SavedConfiguration);
         HasSavedChanges |= editor.WasPersisted;
     }
+
+    private void ToggleInactive_Click(object sender, RoutedEventArgs e) => State.ToggleInactiveVisibility();
 }
 
 internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
@@ -69,13 +71,20 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
     private ExpirationsBrokerConfigurationItem? _selectedItem;
     private bool _isBusy;
     private string _busyText = string.Empty;
+    private bool _showInactive;
 
     public ObservableCollection<ExpirationsBrokerConfigurationItem> VisibleItems { get; } = [];
     public bool HasLoaded { get; private set; }
     public bool IsBusy => _isBusy;
+    public bool IsUiEnabled => !IsBusy;
     public string BusyText => _busyText;
     public Visibility BusyVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;
     public bool CanConfigure => !IsBusy && SelectedItem is not null;
+    public int InactiveCount => _allItems.Count(item => !item.IsActive);
+    public bool ShowInactive => _showInactive;
+    public string InactiveButtonText => ShowInactive
+        ? "Ocultar inactivos"
+        : $"Ver inactivos ({InactiveCount})";
 
     public string SearchText
     {
@@ -113,6 +122,14 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
         ApplyFilter();
     }
 
+    public void ToggleInactiveVisibility()
+    {
+        _showInactive = !_showInactive;
+        Notify(nameof(ShowInactive));
+        Notify(nameof(InactiveButtonText));
+        ApplyFilter();
+    }
+
     public void Replace(ExpirationsBrokerConfigurationItem item)
     {
         var index = _allItems.FindIndex(value => value.BrokerId == item.BrokerId);
@@ -135,6 +152,7 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
         if (text is not null)
             _busyText = text;
         Notify(nameof(IsBusy));
+        Notify(nameof(IsUiEnabled));
         Notify(nameof(BusyText));
         Notify(nameof(BusyVisibility));
         Notify(nameof(CanConfigure));
@@ -144,16 +162,19 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
     {
         var selectedId = SelectedItem?.BrokerId;
         var term = SearchText.Trim();
-        var filtered = _allItems.Where(item => term.Length == 0 ||
-            item.Name.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
-            item.PrimaryEmailAddresses.Any(email =>
-                email.Contains(term, StringComparison.OrdinalIgnoreCase)));
+        var filtered = _allItems.Where(item => (item.IsActive || ShowInactive) &&
+            (term.Length == 0 ||
+             item.Name.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
+             item.PrimaryEmailAddresses.Any(email =>
+                 email.Contains(term, StringComparison.OrdinalIgnoreCase))));
         VisibleItems.Clear();
         foreach (var item in filtered)
             VisibleItems.Add(item);
         SelectedItem = selectedId is null
             ? null
             : VisibleItems.FirstOrDefault(item => item.BrokerId == selectedId.Value);
+        Notify(nameof(InactiveCount));
+        Notify(nameof(InactiveButtonText));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

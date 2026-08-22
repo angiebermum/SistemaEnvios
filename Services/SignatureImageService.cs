@@ -28,18 +28,22 @@ public sealed class SignatureImageService
         ".png", ".jpg", ".jpeg"
     };
 
-    private readonly AppDataPaths _paths;
+    private readonly string _signatureDirectory;
 
-    public SignatureImageService(AppDataPaths paths) => _paths = paths;
+    public SignatureImageService(AppDataPaths paths, string? signatureDirectory = null)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        _signatureDirectory = signatureDirectory ?? paths.SignatureDirectory;
+    }
 
     public string Import(string sourcePath)
     {
         var source = ValidateFile(sourcePath);
-        Directory.CreateDirectory(_paths.SignatureDirectory);
+        Directory.CreateDirectory(_signatureDirectory);
         var extension = Path.GetExtension(source.Path).ToLowerInvariant();
         var fileName = $"firma-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}{extension}";
-        var destinationPath = Path.Combine(_paths.SignatureDirectory, fileName);
-        var temporaryPath = Path.Combine(_paths.SignatureDirectory, $".{fileName}.tmp");
+        var destinationPath = Path.Combine(_signatureDirectory, fileName);
+        var temporaryPath = Path.Combine(_signatureDirectory, $".{fileName}.tmp");
         try
         {
             File.Copy(source.Path, temporaryPath, false);
@@ -93,7 +97,7 @@ public sealed class SignatureImageService
         }
 
         var candidate = Path.GetFullPath(path);
-        var managedRoot = Path.GetFullPath(_paths.SignatureDirectory)
+        var managedRoot = Path.GetFullPath(_signatureDirectory)
             .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (candidate.StartsWith(managedRoot, StringComparison.OrdinalIgnoreCase))
         {

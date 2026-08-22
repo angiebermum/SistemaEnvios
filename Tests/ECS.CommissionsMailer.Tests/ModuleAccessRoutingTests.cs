@@ -112,6 +112,69 @@ public sealed class ModuleAccessRoutingTests
     }
 
     [Fact]
+    public void BothPermissionsShowModuleSwitch()
+    {
+        var user = User(
+            canUseCommissions: true,
+            canUseExpirations: true);
+        var state = new ExpirationsWindowState(user);
+
+        Assert.True(ModuleAccessResolver.CanSwitchModules(user));
+        Assert.Equal(Visibility.Visible, state.SwitchModuleVisibility);
+        Assert.True(state.CanSwitchModule);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void SinglePermissionHidesModuleSwitch(bool commissions, bool expirations)
+    {
+        var user = User(canUseCommissions: commissions, canUseExpirations: expirations);
+        Assert.False(ModuleAccessResolver.CanSwitchModules(user));
+        if (!expirations)
+        {
+            Assert.False(ModuleAccessResolver.Resolve(user).RequiresSelection);
+            return;
+        }
+
+        var state = new ExpirationsWindowState(user);
+        Assert.Equal(Visibility.Collapsed, state.SwitchModuleVisibility);
+        Assert.False(state.CanSwitchModule);
+    }
+
+    [Fact]
+    public void ModuleSwitchPreservesCurrentUserAndDoesNotRequestLogout()
+    {
+        var user = User(canUseCommissions: true, canUseExpirations: true);
+        var state = new ExpirationsWindowState(user);
+        var switchRequests = 0;
+        var logoutRequests = 0;
+        state.ModuleSwitchRequested += (_, _) => switchRequests++;
+        state.LogoutRequested += (_, _) => logoutRequests++;
+
+        Assert.True(state.RequestModuleSwitch());
+
+        Assert.Same(user, state.CurrentUser);
+        Assert.Equal(1, switchRequests);
+        Assert.Equal(0, logoutRequests);
+    }
+
+    [Fact]
+    public void BusyBlocksModuleSwitch()
+    {
+        var state = new ExpirationsWindowState(User(
+            canUseCommissions: true,
+            canUseExpirations: true));
+        var requests = 0;
+        state.ModuleSwitchRequested += (_, _) => requests++;
+        state.SetBusy(true, "Generando...");
+
+        Assert.False(state.RequestModuleSwitch());
+        Assert.False(state.CanSwitchModule);
+        Assert.Equal(0, requests);
+    }
+
+    [Fact]
     public void JsonOnlyContinuesRoutingToCommissions()
     {
         Assert.Equal(ApplicationModule.Commissions, ModuleAccessResolver.ResolveJsonOnly());

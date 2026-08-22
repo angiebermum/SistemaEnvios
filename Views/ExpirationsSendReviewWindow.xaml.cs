@@ -218,6 +218,11 @@ internal sealed class ExpirationsSendReviewItem : INotifyPropertyChanged
         ToText = string.Join("; ", request.ToRecipients);
         CcText = request.CcRecipients.Count == 0 ? "Sin CC" : string.Join("; ", request.CcRecipients);
         AttachmentNames = request.AttachmentPaths.Select(Path.GetFileName).ToList();
+        ReviewText = request.RequiresReview
+            ? string.IsNullOrWhiteSpace(request.ReviewNote)
+                ? "Este correo requiere revisión."
+                : request.ReviewNote
+            : string.Empty;
     }
 
     public Guid RequestId { get; }
@@ -225,6 +230,8 @@ internal sealed class ExpirationsSendReviewItem : INotifyPropertyChanged
     public string ToText { get; }
     public string CcText { get; }
     public IReadOnlyList<string?> AttachmentNames { get; }
+    public string ReviewText { get; }
+    public Visibility ReviewVisibility => ReviewText.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     public string ResultText => _resultText;
     public Visibility ResultVisibility => _resultText.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 

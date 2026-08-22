@@ -134,6 +134,47 @@ public sealed class ExpirationsGenerationUiStateTests
         Assert.Null(state.PremiumColumnOptions);
     }
 
+    [Fact]
+    public void NewSendClearsTransientStateAndPreservesEditableConfiguration()
+    {
+        var state = new ExpirationsWindowState(User());
+        state.LoadEmailSettings(new ExpirationsEmailSettingsSnapshot(
+            ExpirationsProcess.NextMonth,
+            new ExpirationsProcessSettings
+            {
+                DefaultSubject = "Asunto guardado",
+                DefaultMessage = "Mensaje guardado",
+                CommonCcAddresses = ["cc@example.test"]
+            },
+            "version-1"));
+        state.LoadPersistedSignature(@"C:\FirmaVencimientos\firma.png", null, "Firma local configurada.");
+        state.ApplySnapshot(ReadySnapshot(ExpirationsProcess.NextMonth));
+        state.SelectedMonthOption = state.MonthOptions.Single(option => option.Month == 8);
+        state.NextMonthYearText = "2026";
+        state.SetPremiumColumnOptions(new ExpirationsPremiumColumnOptions(2, 3));
+        state.ApplyGenerationBatch(new ExpirationsGenerationBatch
+        {
+            Files = [new ExpirationsGeneratedFile()]
+        });
+
+        state.ResetTransientState(new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = ExpirationsProcess.NextMonth
+        });
+
+        Assert.Equal(string.Empty, state.SourcePath);
+        Assert.Equal(0, state.GeneratedFileCount);
+        Assert.Null(state.SelectedMonthOption);
+        Assert.Equal(string.Empty, state.NextMonthYearText);
+        Assert.Null(state.PremiumColumnOptions);
+        Assert.Equal("Asunto guardado", state.Subject);
+        Assert.Equal("Mensaje guardado", state.Message);
+        Assert.Equal("cc@example.test", state.CommonCcText);
+        Assert.Equal(@"C:\FirmaVencimientos\firma.png", state.SignatureImagePath);
+        Assert.True(state.CanOpenSendHistory);
+        Assert.False(state.HasEditableChanges);
+    }
+
     private static ExpirationsAnalysisSessionSnapshot ReadySnapshot(ExpirationsProcess process) => new()
     {
         Process = process,

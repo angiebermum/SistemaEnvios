@@ -136,13 +136,16 @@ public partial class App : Application
         FileLogger logger,
         bool isUiSmokeTest,
         TextWriterTraceListener? bindingListener,
-        bool runCutoverPreflight = false)
+        bool runCutoverPreflight = false,
+        AuthenticatedModuleContext? authenticatedContext = null,
+        ApplicationModule? requestedModule = null)
     {
-        var options = FirebaseClientOptions.Load(paths.FirebaseRuntimeConfigurationFile);
+        var options = authenticatedContext?.Options ?? FirebaseClientOptions.Load(paths.FirebaseRuntimeConfigurationFile);
         logger.Info($"RuntimeDataMode={options.RuntimeDataMode}.");
         IRuntimeDataService runtimeData;
-        IFirebaseAuthenticationService? authentication = null;
-        IAppUserRepository? appUsers = null;
+        IFirebaseAuthenticationService? authentication = authenticatedContext?.Authentication;
+        IAppUserRepository? appUsers = authenticatedContext?.AppUsers;
+        var moduleContext = authenticatedContext;
 
         if (options.RuntimeDataMode == RuntimeDataMode.JsonOnly)
         {
@@ -151,79 +154,66 @@ public partial class App : Application
                 throw new InvalidOperationException(
                     "El Cutover Preflight requiere RuntimeDataMode=FirestoreShadowRead para autenticar y leer Firestore.");
             }
+            if (requestedModule == ApplicationModule.Expirations)
+                throw new InvalidOperationException("Vencimientos requiere el runtime autenticado de Firebase.");
             runtimeData = new JsonOnlyRuntimeDataService(paths, logger);
         }
         else
         {
             options.ValidateForAuthenticatedMode();
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-            var clientLog = new FirebaseClientLogAdapter(logger);
-            authentication = new FirebaseAuthenticationService(
-                httpClient,
-                options,
-                new ProtectedRefreshTokenStore(paths.ProtectedRefreshTokenFile),
-                clientLog);
+            ApplicationModule selectedModule;
+            if (moduleContext is null)
+            {
+                var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                var clientLog = new FirebaseClientLogAdapter(logger);
+                authentication = new FirebaseAuthenticationService(
+                    httpClient,
+                    options,
+                    new ProtectedRefreshTokenStore(paths.ProtectedRefreshTokenFile),
+                    clientLog);
 
-            FirebaseUserSession? session = null;
-            try
-            {
-                session = await authentication.RestoreSessionAsync();
-            }
-            catch (FirebaseAuthenticationException ex) when (
-                ex.Failure is FirebaseAuthenticationFailure.SessionExpired or FirebaseAuthenticationFailure.InvalidCredentials)
-            {
-                logger.Info("No se recuperó una sesión Firebase válida; se mostrará el login.");
-            }
-
-            if (session is null)
-            {
-                var login = new LoginWindow(authentication);
-                if (login.ShowDialog() != true)
-                {
-                    Shutdown();
-                    return;
-                }
-                session = login.Session!;
-            }
-
-            var firestoreClient = new FirestoreRestClient(httpClient, options, (IFirebaseTokenProvider)authentication, clientLog);
-            appUsers = new AppUserRepository(firestoreClient);
-            var profile = await appUsers.GetAsync(session.Uid);
-            ModuleAccessResolution moduleResolution;
-            try
-            {
-                if (runCutoverPreflight)
-                {
-                    AppUserAuthorization.DemandCommissionsAccess(profile?.Value);
-                    moduleResolution = new ModuleAccessResolution(ApplicationModule.Commissions, RequiresSelection: false);
-                }
-                else
-                {
-                    moduleResolution = ModuleAccessResolver.Resolve(profile?.Value);
-                }
-            }
-            catch
-            {
-                await authentication.SignOutAsync();
-                throw;
-            }
-
-            var selectedModule = moduleResolution.DirectModule;
-            if (moduleResolution.RequiresSelection)
-            {
-                var selector = new ModuleSelectionWindow(profile!.Value);
-                _ = selector.ShowDialog();
-                if (selector.LogoutRequested)
-                {
-                    await authentication.SignOutAsync();
-                    await ShowRuntimeWindowAsync(paths, logger, isUiSmokeTest, bindingListener);
-                    return;
-                }
-
+                FirebaseUserSession? session = null;
                 try
                 {
-                    selectedModule = ModuleAccessResolver.ValidateSelection(profile.Value, selector.SelectedModule);
+                    session = await authentication.RestoreSessionAsync();
+                }
+                catch (FirebaseAuthenticationException ex) when (
+                    ex.Failure is FirebaseAuthenticationFailure.SessionExpired or FirebaseAuthenticationFailure.InvalidCredentials)
+                {
+                    logger.Info("No se recuperó una sesión Firebase válida; se mostrará el login.");
+                }
+
+                if (session is null)
+                {
+                    var login = new LoginWindow(authentication);
+                    if (login.ShowDialog() != true)
+                    {
+                        Shutdown();
+                        return;
+                    }
+                    session = login.Session!;
+                }
+
+                var firestoreClient = new FirestoreRestClient(
+                    httpClient,
+                    options,
+                    (IFirebaseTokenProvider)authentication,
+                    clientLog);
+                appUsers = new AppUserRepository(firestoreClient);
+                var profile = await appUsers.GetAsync(session.Uid);
+                ModuleAccessResolution moduleResolution;
+                try
+                {
+                    if (runCutoverPreflight)
+                    {
+                        AppUserAuthorization.DemandCommissionsAccess(profile?.Value);
+                        moduleResolution = new ModuleAccessResolution(ApplicationModule.Commissions, RequiresSelection: false);
+                    }
+                    else
+                    {
+                        moduleResolution = ModuleAccessResolver.Resolve(profile?.Value);
+                    }
                 }
                 catch
                 {
@@ -231,31 +221,59 @@ public partial class App : Application
                     throw;
                 }
 
-                if (selectedModule is null)
+                ApplicationModule? initialModule = requestedModule ?? moduleResolution.DirectModule;
+                if (requestedModule is null && moduleResolution.RequiresSelection)
                 {
-                    DisposeBindingListener(bindingListener);
-                    Shutdown();
-                    return;
+                    var selector = new ModuleSelectionWindow(profile!.Value);
+                    _ = selector.ShowDialog();
+                    if (selector.LogoutRequested)
+                    {
+                        await authentication.SignOutAsync();
+                        await ShowRuntimeWindowAsync(paths, logger, isUiSmokeTest, bindingListener);
+                        return;
+                    }
+                    initialModule = ModuleAccessResolver.ValidateSelection(profile.Value, selector.SelectedModule);
+                    if (initialModule is null)
+                    {
+                        DisposeBindingListener(bindingListener);
+                        Shutdown();
+                        return;
+                    }
                 }
+
+                selectedModule = initialModule ?? throw new InvalidOperationException("No se seleccionó un módulo.");
+                try
+                {
+                    ModuleAccessResolver.DemandModuleAccess(profile!.Value, selectedModule);
+                }
+                catch
+                {
+                    await authentication.SignOutAsync();
+                    throw;
+                }
+                moduleContext = new AuthenticatedModuleContext(
+                    options,
+                    authentication,
+                    firestoreClient,
+                    appUsers,
+                    profile.Value);
+            }
+            else
+            {
+                selectedModule = requestedModule ?? throw new InvalidOperationException(
+                    "La navegación autenticada requiere indicar el módulo destino.");
+                ModuleAccessResolver.DemandModuleAccess(moduleContext.CurrentUser, selectedModule);
+                authentication = moduleContext.Authentication;
+                appUsers = moduleContext.AppUsers;
             }
 
-            try
+            if (!ModuleAccessResolver.UsesCommissionsRuntime(selectedModule))
             {
-                ModuleAccessResolver.DemandModuleAccess(profile!.Value, selectedModule!.Value);
-            }
-            catch
-            {
-                await authentication.SignOutAsync();
-                throw;
-            }
-
-            if (!ModuleAccessResolver.UsesCommissionsRuntime(selectedModule.Value))
-            {
-                var directoryRepository = new ExpirationsBrokerDirectoryRepository(firestoreClient);
-                var profileRepository = new ExpirationsBrokerProfileRepository(firestoreClient);
-                var associationRepository = new ExpirationsBrokerAssociationRepository(firestoreClient);
-                var settingsRepository = new ExpirationsProcessSettingsRepository(firestoreClient);
-                var sendHistoryRepository = new ExpirationsSendHistoryRepository(firestoreClient);
+                var directoryRepository = new ExpirationsBrokerDirectoryRepository(moduleContext.FirestoreClient);
+                var profileRepository = new ExpirationsBrokerProfileRepository(moduleContext.FirestoreClient);
+                var associationRepository = new ExpirationsBrokerAssociationRepository(moduleContext.FirestoreClient);
+                var settingsRepository = new ExpirationsProcessSettingsRepository(moduleContext.FirestoreClient);
+                var sendHistoryRepository = new ExpirationsSendHistoryRepository(moduleContext.FirestoreClient);
                 var catalogService = new ExpirationsBrokerCatalogService(
                     directoryRepository,
                     profileRepository);
@@ -276,9 +294,7 @@ public partial class App : Application
                     logger,
                     isUiSmokeTest,
                     bindingListener,
-                    authentication,
-                    appUsers,
-                    profile.Value,
+                    moduleContext,
                     coordinator,
                     configurationService,
                     generationService,
@@ -291,7 +307,7 @@ public partial class App : Application
 
             var json = new JsonOnlyRuntimeDataService(paths, logger);
             var legacySnapshot = await json.LoadAsync();
-            var comparison = new FirestoreComparisonService(firestoreClient, paths, logger);
+            var comparison = new FirestoreComparisonService(moduleContext.FirestoreClient, paths, logger);
             var runtimeState = options.RuntimeDataMode == RuntimeDataMode.FirestorePrimary
                 ? new FirestoreRuntimeStateStore(paths, logger).Load()
                 : null;
@@ -319,7 +335,7 @@ public partial class App : Application
 
             if (options.RuntimeDataMode == RuntimeDataMode.FirestoreShadowRead)
             {
-                runtimeData = new ShadowReadRuntimeDataService(json, comparison, profile!.Value);
+                runtimeData = new ShadowReadRuntimeDataService(json, comparison, moduleContext.CurrentUser);
             }
             else
             {
@@ -333,7 +349,7 @@ public partial class App : Application
                 }
 
                 runtimeData = new FirestorePrimaryRuntimeDataService(
-                    firestoreClient, profile!.Value, legacySnapshot, paths, logger);
+                    moduleContext.FirestoreClient, moduleContext.CurrentUser, legacySnapshot, paths, logger);
             }
         }
 
@@ -367,6 +383,32 @@ public partial class App : Application
                     }
                 });
             };
+            if (moduleContext is not null)
+            {
+                mainWindow.ModuleSwitchRequested += (_, _) =>
+                {
+                    restarting = true;
+                    _ = Dispatcher.BeginInvoke(async () =>
+                    {
+                        try
+                        {
+                            await ShowRuntimeWindowAsync(
+                                paths,
+                                logger,
+                                isUiSmokeTest,
+                                null,
+                                authenticatedContext: moduleContext,
+                                requestedModule: ApplicationModule.Expirations);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.Error("No fue posible cambiar al módulo de Vencimientos.", ex);
+                            MessageBox.Show(ex.Message, "Cambiar módulo", MessageBoxButton.OK, MessageBoxImage.Error);
+                            Shutdown(1);
+                        }
+                    });
+                };
+            }
         }
 
         mainWindow.Closed += (_, _) =>
@@ -388,9 +430,7 @@ public partial class App : Application
         FileLogger logger,
         bool isUiSmokeTest,
         TextWriterTraceListener? bindingListener,
-        IFirebaseAuthenticationService authentication,
-        IAppUserRepository appUsers,
-        AppUser currentUser,
+        AuthenticatedModuleContext moduleContext,
         IExpirationsAnalysisCoordinator coordinator,
         IExpirationsBrokerConfigurationService configurationService,
         IExpirationsGenerationService generationService,
@@ -400,15 +440,17 @@ public partial class App : Application
         IExpirationsSendHistoryRepository sendHistory)
     {
         var expirationsWindow = new ExpirationsWindow(
-            currentUser,
-            appUsers,
+            moduleContext.CurrentUser,
+            moduleContext.AppUsers,
             coordinator,
             configurationService,
             generationService,
             emailSettingsService,
             sendPreparationService,
             outlookSender,
-            sendHistory);
+            sendHistory,
+            paths,
+            logger);
         MainWindow = expirationsWindow;
         var restarting = false;
         expirationsWindow.LogoutRequested += (_, _) =>
@@ -418,13 +460,37 @@ public partial class App : Application
             {
                 try
                 {
-                    await authentication.SignOutAsync();
+                    await moduleContext.Authentication.SignOutAsync();
                     await ShowRuntimeWindowAsync(paths, logger, isUiSmokeTest, null);
                 }
                 catch (Exception ex)
                 {
                     logger.Error("No fue posible volver al login después del logout.", ex);
                     MessageBox.Show(ex.Message, "ECS Envío de Correos", MessageBoxButton.OK, MessageBoxImage.Error);
+                    Shutdown(1);
+                }
+            });
+        };
+
+        expirationsWindow.ModuleSwitchRequested += (_, _) =>
+        {
+            restarting = true;
+            _ = Dispatcher.BeginInvoke(async () =>
+            {
+                try
+                {
+                    await ShowRuntimeWindowAsync(
+                        paths,
+                        logger,
+                        isUiSmokeTest,
+                        null,
+                        authenticatedContext: moduleContext,
+                        requestedModule: ApplicationModule.Commissions);
+                }
+                catch (Exception ex)
+                {
+                    logger.Error("No fue posible cambiar al módulo de Comisiones.", ex);
+                    MessageBox.Show(ex.Message, "Cambiar módulo", MessageBoxButton.OK, MessageBoxImage.Error);
                     Shutdown(1);
                 }
             });
@@ -446,4 +512,11 @@ public partial class App : Application
         PresentationTraceSources.DataBindingSource.Listeners.Remove(bindingListener);
         bindingListener.Dispose();
     }
+
+    private sealed record AuthenticatedModuleContext(
+        FirebaseClientOptions Options,
+        IFirebaseAuthenticationService Authentication,
+        IFirestoreRestClient FirestoreClient,
+        IAppUserRepository AppUsers,
+        AppUser CurrentUser);
 }

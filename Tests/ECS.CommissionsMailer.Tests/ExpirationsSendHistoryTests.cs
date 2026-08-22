@@ -517,7 +517,7 @@ public sealed class ExpirationsSendHistoryTests
             var generated = definitions.Select((definition, index) =>
             {
                 var path = Path.Combine(directory, definition.Item2);
-                File.WriteAllText(path, $"archivo-{index}");
+                ExpirationsUatCompletionTests.CreateValidWorkbook(path, $"archivo-{index}");
                 return new ExpirationsGeneratedFile
                 {
                     BrokerId = definition.Item1,

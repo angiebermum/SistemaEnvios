@@ -142,15 +142,19 @@ service cloud.firestore {
         attachment.fileName.size() > 0 &&
         attachment.sha256 is string &&
         attachment.sha256.matches('^[0-9a-fA-F]{64}$') &&
-        attachment.variant in ['Standard', 'FelixAlphabetical', 'FelixExpirationDate'];
+        attachment.variant in ['Standard', 'FelixAlphabetical', 'FelixExpirationDate', 'Manual'];
     }
 
     function validExpirationsAttachments(attachments) {
       return attachments is list &&
         attachments.size() >= 1 &&
-        attachments.size() <= 2 &&
+        attachments.size() <= 6 &&
         validExpirationsAttachment(attachments[0]) &&
-        (attachments.size() == 1 || validExpirationsAttachment(attachments[1]));
+        (attachments.size() < 2 || validExpirationsAttachment(attachments[1])) &&
+        (attachments.size() < 3 || validExpirationsAttachment(attachments[2])) &&
+        (attachments.size() < 4 || validExpirationsAttachment(attachments[3])) &&
+        (attachments.size() < 5 || validExpirationsAttachment(attachments[4])) &&
+        (attachments.size() < 6 || validExpirationsAttachment(attachments[5]));
     }
 
     function validExpirationsSendItemShape(itemId) {

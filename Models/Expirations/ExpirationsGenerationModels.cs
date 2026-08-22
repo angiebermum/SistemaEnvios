@@ -94,13 +94,16 @@ public sealed class ExpirationsGeneratedFile
     public string Sha256 { get; init; } = string.Empty;
     public IReadOnlyList<uint> SourceRowNumbers { get; init; } = [];
     public IReadOnlyList<string> Warnings { get; init; } = [];
+    public bool IsManuallyEdited { get; init; }
+    public bool RequiresReview { get; init; }
 }
 
 public enum ExpirationsGeneratedFileVariant
 {
     Standard,
     FelixAlphabetical,
-    FelixExpirationDate
+    FelixExpirationDate,
+    Manual
 }
 
 public sealed class ExpirationsGenerationPreparationResult

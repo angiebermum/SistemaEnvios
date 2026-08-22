@@ -387,6 +387,43 @@ test('historial Vencimientos: resultados terminados son inmutables y no hay dele
   await assertFails(deleteDoc(doc(db, operationPath)));
 });
 
+test('historial Vencimientos: acepta Manual y hasta seis adjuntos válidos', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  const operationId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  const itemId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const operationPath = `modules/vencimientos/sendOperations/${operationId}`;
+  await assertSucceeds(setDoc(doc(db, operationPath), sendOperation(operationId)));
+  const attachments = Array.from({ length: 6 }, (_, index) => ({
+    fileName: `adjunto-${index + 1}.xlsx`,
+    sha256: (index % 2 === 0 ? 'a' : 'b').repeat(64),
+    variant: index === 0 ? 'Standard' : 'Manual'
+  }));
+  const itemPath = `${operationPath}/items/${itemId}`;
+  await assertSucceeds(setDoc(doc(db, itemPath), sendItem(itemId, {
+    attachments
+  })));
+  await assertSucceeds(updateDoc(doc(db, itemPath), {
+    status: 'Succeeded',
+    errorMessage: ''
+  }));
+});
+
+test('historial Vencimientos: rechaza más de seis adjuntos', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  const operationId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  const itemId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  const operationPath = `modules/vencimientos/sendOperations/${operationId}`;
+  await assertSucceeds(setDoc(doc(db, operationPath), sendOperation(operationId)));
+  const attachments = Array.from({ length: 7 }, (_, index) => ({
+    fileName: `adjunto-${index + 1}.xlsx`,
+    sha256: 'c'.repeat(64),
+    variant: index === 0 ? 'Standard' : 'Manual'
+  }));
+  await assertFails(setDoc(doc(db, `${operationPath}/items/${itemId}`), sendItem(itemId, {
+    attachments
+  })));
+});
+
 test('historial Vencimientos: rechaza shapes, estados y cambios de snapshot inválidos', async () => {
   const db = environment.authenticatedContext('expirations').firestore();
   const operationId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';

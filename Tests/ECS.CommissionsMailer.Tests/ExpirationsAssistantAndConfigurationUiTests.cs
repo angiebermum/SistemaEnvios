@@ -85,6 +85,30 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
     }
 
     [Fact]
+    public void ManagementSeparatesActiveAndInactiveExpirationsProfiles()
+    {
+        var state = new ExpirationsBrokerManagementState();
+        state.SetItems([
+            Configuration("Activo", ["active@example.test"]),
+            new ExpirationsBrokerConfigurationItem
+            {
+                BrokerId = Guid.NewGuid(),
+                Name = "Inactivo",
+                PrimaryEmailAddresses = ["inactive@example.test"],
+                IsActive = false
+            }
+        ]);
+
+        Assert.Equal("Activo", Assert.Single(state.VisibleItems).Name);
+        Assert.Equal(1, state.InactiveCount);
+        Assert.Equal("Ver inactivos (1)", state.InactiveButtonText);
+        state.ToggleInactiveVisibility();
+        Assert.Equal(2, state.VisibleItems.Count);
+        Assert.Contains(state.VisibleItems, item => item.StatusText == "Inactivo");
+        Assert.Equal("Ocultar inactivos", state.InactiveButtonText);
+    }
+
+    [Fact]
     public void ProfileStateTracksCountsLocalChangesToggleAndDiscard()
     {
         var active = Assistant("Ana", "ana@example.test", true);

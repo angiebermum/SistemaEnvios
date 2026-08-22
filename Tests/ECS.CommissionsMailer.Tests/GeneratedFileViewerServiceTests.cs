@@ -302,6 +302,26 @@ public sealed class GeneratedFileViewerServiceTests
     }
 
     [Fact]
+    public void ExpirationsAssociatedWorkbookOpensOnlyAControlledTemporaryCopy()
+    {
+        using var scope = new TestDirectory();
+        var path = scope.File("expirations.xlsx");
+        ExpirationsUatCompletionTests.CreateValidWorkbook(path);
+        var originalHash = new GeneratedFileHashService().ComputeSha256(path);
+        var launcher = new RecordingProcessLauncher();
+        var service = CreateService(scope, launcher);
+
+        var result = service.OpenAssociated(path, "Corredor Vencimientos", [path]);
+
+        Assert.True(result.Succeeded);
+        var temporaryPath = Assert.Single(launcher.Requests).FileName;
+        Assert.NotEqual(path, temporaryPath);
+        Assert.Equal(result.OpenedPath, temporaryPath);
+        Assert.Equal(originalHash, new GeneratedFileHashService().ComputeSha256(path));
+        Assert.Equal(File.ReadAllBytes(path), File.ReadAllBytes(temporaryPath));
+    }
+
+    [Fact]
     public void EditingViewCopyDoesNotTriggerGeneratedOriginalHashWarning()
     {
         using var scope = new TestDirectory();

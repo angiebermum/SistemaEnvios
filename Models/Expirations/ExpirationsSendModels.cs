@@ -48,6 +48,7 @@ public sealed class ExpirationsSendPreparationResult
     public ExpirationsProcessSettings? Settings { get; init; }
     public IReadOnlyList<EmailSendRequest> Requests { get; init; } = [];
     public IReadOnlyList<ExpirationsPreparedSendItem> PreparedItems { get; init; } = [];
+    public IReadOnlySet<Guid> EligibleBrokerIds { get; init; } = new HashSet<Guid>();
     public Guid? RetryOfOperationId { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
     public IReadOnlyList<string> Warnings { get; init; } = [];

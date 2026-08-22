@@ -30,9 +30,12 @@
                 <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                          ToolTip="Buscar por corredor o correo" Margin="0,5,0,0" />
             </StackPanel>
-            <TextBlock Grid.Column="1" Text="{Binding BusyText}" Style="{StaticResource CaptionTextStyle}"
-                       VerticalAlignment="Center" Margin="14,0,0,0"
-                       Visibility="{Binding BusyVisibility}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                <Button Content="{Binding InactiveButtonText}" Click="ToggleInactive_Click"
+                        Style="{StaticResource CompactButtonStyle}" IsEnabled="{Binding IsUiEnabled}" />
+                <TextBlock Text="{Binding BusyText}" Style="{StaticResource CaptionTextStyle}"
+                           VerticalAlignment="Center" Visibility="{Binding BusyVisibility}" />
+            </StackPanel>
         </Grid>
 
         <DataGrid Grid.Row="2" ItemsSource="{Binding VisibleItems}"

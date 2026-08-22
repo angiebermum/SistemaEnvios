@@ -11,10 +11,14 @@ public sealed class ExpirationsRetryPreparationService
         "Uno o más archivos originales cambiaron (SHA-256 no coincide). El reintento está bloqueado.";
 
     private readonly GeneratedFileHashService _hashService;
+    private readonly string? _signatureImagePath;
 
-    public ExpirationsRetryPreparationService(GeneratedFileHashService? hashService = null)
+    public ExpirationsRetryPreparationService(
+        GeneratedFileHashService? hashService = null,
+        string? signatureImagePath = null)
     {
         _hashService = hashService ?? new GeneratedFileHashService();
+        _signatureImagePath = signatureImagePath;
     }
 
     public ExpirationsRetryPreparationResult Prepare(
@@ -46,6 +50,7 @@ public sealed class ExpirationsRetryPreparationService
         {
             ValidateRecipients(item, errors);
             var resolved = new List<ExpirationsPreparedAttachment>();
+            var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var attachment in item.Attachments)
             {
                 var candidates = currentBatch?.Files.Where(file =>
@@ -64,9 +69,18 @@ public sealed class ExpirationsRetryPreparationService
 
                 var file = candidates[0];
                 if (!string.Equals(file.Sha256, attachment.Sha256, StringComparison.OrdinalIgnoreCase) ||
-                    !File.Exists(file.OutputPath))
+                    !File.Exists(file.OutputPath) ||
+                    !Path.GetExtension(file.OutputPath).Equals(".xlsx", StringComparison.OrdinalIgnoreCase) ||
+                    !IsInsideBatch(file.OutputPath, currentBatch!.OutputDirectory) ||
+                    !ExpirationsBatchFileAssociationService.IsValidWorkbook(file.OutputPath))
                 {
                     hashChanged = true;
+                    continue;
+                }
+                var fullPath = Path.GetFullPath(file.OutputPath);
+                if (!seenPaths.Add(fullPath))
+                {
+                    unresolved = true;
                     continue;
                 }
                 try
@@ -85,7 +99,7 @@ public sealed class ExpirationsRetryPreparationService
                 }
 
                 resolved.Add(new ExpirationsPreparedAttachment(
-                    Path.GetFullPath(file.OutputPath),
+                    fullPath,
                     attachment.FileName,
                     attachment.Sha256,
                     attachment.Variant));
@@ -102,6 +116,7 @@ public sealed class ExpirationsRetryPreparationService
                 Subject = operation.Subject,
                 Body = operation.Body,
                 AttachmentPaths = resolved.Select(attachment => attachment.Path).ToList(),
+                SignatureImagePath = _signatureImagePath,
                 ReviewConfirmed = true
             };
             requests.Add(request);
@@ -156,6 +171,25 @@ public sealed class ExpirationsRetryPreparationService
         {
             if (!EmailValidationService.TryNormalizeAddress(address, out _))
                 errors.Add($"El snapshot de {item.BrokerName} contiene el correo inválido '{address}'.");
+        }
+    }
+
+    private static bool IsInsideBatch(string path, string outputDirectory)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            var directory = Path.GetFullPath(outputDirectory);
+            var relative = Path.GetRelativePath(directory, fullPath);
+            return relative.Length > 0 &&
+                   !Path.IsPathRooted(relative) &&
+                   !relative.Equals("..", StringComparison.Ordinal) &&
+                   !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+                   !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
         }
     }
 }

@@ -1,10 +1,17 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Data;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authorization;
+using ECS.CommissionsMailer.Models;
 using ECS.CommissionsMailer.Models.Expirations;
+using ECS.CommissionsMailer.Services;
 using ECS.CommissionsMailer.Services.Expirations;
 using Microsoft.Win32;
 using MessageBox = ECS.CommissionsMailer.Views.AppDialog;
@@ -21,7 +28,13 @@ public partial class ExpirationsWindow : Window
     private readonly ExpirationsSendPreparationService _sendPreparationService;
     private readonly IExpirationsOutlookSender _outlookSender;
     private readonly IExpirationsSendHistoryRepository _sendHistory;
+    private readonly IExpirationsLocalSettingsService _localSettingsService;
+    private readonly SignatureImageService _signatureService;
+    private readonly GeneratedFileViewerService _generatedFileViewerService;
+    private readonly AssociatedWorkbookEditService _associatedWorkbookEditService;
+    private readonly ExpirationsBatchFileAssociationService _batchFileAssociationService;
     private readonly ExpirationsWindowState _state;
+    private readonly FileLogger _logger;
     private int _readinessVersion;
     private CancellationTokenSource? _readinessCancellation;
 
@@ -34,7 +47,10 @@ public partial class ExpirationsWindow : Window
         IExpirationsEmailSettingsService emailSettingsService,
         ExpirationsSendPreparationService sendPreparationService,
         IExpirationsOutlookSender outlookSender,
-        IExpirationsSendHistoryRepository sendHistory)
+        IExpirationsSendHistoryRepository sendHistory,
+        AppDataPaths paths,
+        FileLogger logger,
+        IExpirationsLocalSettingsService? localSettingsService = null)
     {
         ArgumentNullException.ThrowIfNull(appUsers);
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -44,11 +60,23 @@ public partial class ExpirationsWindow : Window
         _sendPreparationService = sendPreparationService ?? throw new ArgumentNullException(nameof(sendPreparationService));
         _outlookSender = outlookSender ?? throw new ArgumentNullException(nameof(outlookSender));
         _sendHistory = sendHistory ?? throw new ArgumentNullException(nameof(sendHistory));
+        ArgumentNullException.ThrowIfNull(paths);
+        ArgumentNullException.ThrowIfNull(logger);
+        _localSettingsService = localSettingsService ?? new ExpirationsLocalSettingsService(paths, logger);
+        _signatureService = new SignatureImageService(paths, paths.ExpirationsSignatureDirectory);
+        _generatedFileViewerService = new GeneratedFileViewerService(
+            new GeneratedFileProcessLauncher(), paths, logger);
+        _associatedWorkbookEditService = new AssociatedWorkbookEditService(paths, logger);
+        _batchFileAssociationService = new ExpirationsBatchFileAssociationService();
+        _logger = logger;
         _state = new ExpirationsWindowState(currentUser);
         _appUsers = appUsers;
         InitializeComponent();
         DataContext = _state;
+        if (_coordinator.Snapshot.Process is null)
+            _coordinator.SelectProcess(ExpirationsProcess.PreviousMonth);
         _state.ApplySnapshot(_coordinator.Snapshot);
+        LoadLocalSignature();
     }
 
     public event EventHandler? LogoutRequested
@@ -57,10 +85,82 @@ public partial class ExpirationsWindow : Window
         remove => _state.LogoutRequested -= value;
     }
 
+    public event EventHandler? ModuleSwitchRequested
+    {
+        add => _state.ModuleSwitchRequested += value;
+        remove => _state.ModuleSwitchRequested -= value;
+    }
+
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_state.IsInitialLoadComplete)
+            return;
+
+        await RunBusyAsync("Cargando datos de Vencimientos...", async () =>
+        {
+            await LoadEmailSettingsAsync();
+            _state.ApplySnapshot(await _coordinator.RefreshCatalogAndReanalyzeAsync());
+            _state.ApplyOutlook(await _outlookSender.CheckAvailabilityAsync());
+            _state.MarkInitialLoadComplete();
+        });
+    }
+
+    private async void ConnectOutlook_Click(object sender, RoutedEventArgs e)
+    {
+        await RunBusyAsync("Conectando con Outlook...", async () =>
+        {
+            var connection = await _outlookSender.CheckAvailabilityAsync();
+            _state.ApplyOutlook(connection);
+            MessageBox.Show(
+                connection.Message,
+                "Conexión con Outlook",
+                MessageBoxButton.OK,
+                connection.Available ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        });
+    }
+
+    private void OutlookAccount_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_state.IsRefreshingOutlookAccounts || _state.SelectedOutlookAccountEmail is not { Length: > 0 } account)
+            return;
+        try
+        {
+            _state.ApplyOutlookSelection(_outlookSender.SelectSendingAccount(account));
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("No fue posible seleccionar la cuenta de Outlook para Vencimientos.", ex);
+            _state.ApplyOutlookSelectionFailure("No fue posible seleccionar la cuenta de envío.");
+            MessageBox.Show(ex.Message, "Cuenta de Outlook", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void ProcessComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
+        if (_state.IsProcessSelectionChanging)
+            return;
+        var previous = e.RemovedItems.OfType<ExpirationsProcessOption>().FirstOrDefault();
+        if (_state.HasEditableChanges && previous is not null)
+        {
+            var choice = MessageBox.Show(
+                "Hay cambios pendientes en la plantilla o firma. ¿Desea guardarlos antes de cambiar de proceso?",
+                "Cambiar proceso",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Question);
+            if (choice == MessageBoxResult.Cancel)
+            {
+                _state.RestoreProcessSelection(previous);
+                return;
+            }
+            if (choice == MessageBoxResult.Yes && !await SaveEditableConfigurationAsync(showSuccessMessage: false))
+            {
+                _state.RestoreProcessSelection(previous);
+                return;
+            }
+        }
         _coordinator.SelectProcess(_state.SelectedProcessOption?.Value);
         _state.ApplySnapshot(_coordinator.Snapshot);
+        await LoadEmailSettingsAsync();
         await EvaluateNextMonthReadinessAsync();
     }
 
@@ -188,17 +288,224 @@ public partial class ExpirationsWindow : Window
         });
     }
 
-    private async void ConfigureEmail_Click(object sender, RoutedEventArgs e)
+    private async Task LoadEmailSettingsAsync()
     {
         if (_state.SelectedProcessOption?.Value is not { } process)
             return;
-        var settings = new ExpirationsEmailSettingsWindow(_emailSettingsService, process) { Owner = this };
-        _ = settings.ShowDialog();
-        if (!settings.HasSavedChanges)
-            return;
+        _state.LoadEmailSettings(await _emailSettingsService.LoadAsync(process));
+    }
 
+    private async Task<bool> SaveEditableConfigurationAsync(bool showSuccessMessage)
+    {
+        if (!_state.HasEditableChanges)
+        {
+            if (showSuccessMessage)
+                MessageBox.Show("Sin cambios pendientes.", "Guardar", MessageBoxButton.OK, MessageBoxImage.Information);
+            return true;
+        }
+        if (_state.EmailSettingsSnapshot is not { } snapshot)
+            return false;
+
+        var result = _state.HasEmailSettingsChanges
+            ? await _emailSettingsService.SaveAsync(
+                snapshot,
+                _state.Subject,
+                _state.Message,
+                _state.CommonCcText)
+            : new ExpirationsEmailSettingsSaveResult
+            {
+                Outcome = ExpirationsEmailSettingsSaveOutcome.Updated,
+                Snapshot = snapshot,
+                Message = "La configuración local fue guardada."
+            };
+        if (result.Outcome == ExpirationsEmailSettingsSaveOutcome.ValidationFailed)
+        {
+            MessageBox.Show(result.Message, "Revise la configuración", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+        if (result.Outcome == ExpirationsEmailSettingsSaveOutcome.ConcurrencyConflict)
+        {
+            _state.LoadEmailSettings(result.Snapshot);
+            MessageBox.Show(result.Message, "Configuración actualizada", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
+        var previousSignaturePath = _state.PersistedSignatureImagePath;
+        _localSettingsService.Save(new ExpirationsLocalSettings
+        {
+            SignatureImagePath = _state.SignatureImagePath
+        });
+        _state.MarkEditableConfigurationSaved(result.Snapshot);
+        if (!PathsEqual(previousSignaturePath, _state.SignatureImagePath))
+            _signatureService.DeleteIfManaged(previousSignaturePath);
         _state.InvalidateSendPreview();
         await EvaluateSendPreflightAsync();
+        if (showSuccessMessage)
+            MessageBox.Show("La configuración de Vencimientos fue guardada.", "Guardar", MessageBoxButton.OK, MessageBoxImage.Information);
+        return true;
+    }
+
+    private async void Save_Click(object sender, RoutedEventArgs e)
+    {
+        await RunBusyAsync("Guardando configuración...", async () =>
+            _ = await SaveEditableConfigurationAsync(showSuccessMessage: true));
+    }
+
+    private async void NewSend_Click(object sender, RoutedEventArgs e)
+    {
+        if (_state.HasActivePreparation && MessageBox.Show(
+                "¿Desea iniciar un nuevo envío?\nSe limpiará la preparación actual, pero no se eliminarán configuraciones, archivos generados ni historial.",
+                "Nuevo envío",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        await RunBusyAsync("Iniciando una nueva preparación...", async () =>
+        {
+            var process = _state.SelectedProcessOption?.Value;
+            _coordinator.ResetPreparation();
+            _coordinator.SelectProcess(process);
+            _state.ResetTransientState(_coordinator.Snapshot);
+            _state.ApplySnapshot(await _coordinator.RefreshCatalogAndReanalyzeAsync());
+            await Task.CompletedTask;
+        });
+    }
+
+    private async void ReloadData_Click(object sender, RoutedEventArgs e)
+    {
+        if ((_state.HasEditableChanges || _state.HasActivePreparation) && MessageBox.Show(
+                "Se recargarán corredores, perfiles, asistentes, asociaciones y la plantilla del proceso. El archivo y análisis se conservarán, pero un lote generado actual deberá reconstruirse. ¿Desea continuar?",
+                "Recargar datos",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        await RunBusyAsync("Recargando datos...", async () =>
+        {
+            _state.ApplySnapshot(await _coordinator.RefreshCatalogAndReanalyzeAsync());
+            await LoadEmailSettingsAsync();
+            await EvaluateNextMonthReadinessAsync();
+        });
+    }
+
+    private void SelectSignature_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Seleccionar firma de Vencimientos",
+            Filter = "Imágenes (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        try
+        {
+            var managedPath = _signatureService.Import(dialog.FileName);
+            _state.SetSignature(managedPath, _signatureService.LoadPreview(managedPath), "Firma lista para guardar.");
+        }
+        catch (SignatureImageException ex)
+        {
+            MessageBox.Show(ex.Message, "Firma de Vencimientos", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void RemoveSignature_Click(object sender, RoutedEventArgs e) =>
+        _state.SetSignature(null, null, "La firma se quitará al guardar.");
+
+    private void OpenSourceFile_Click(object sender, RoutedEventArgs e) => OpenPath(_state.SourcePath);
+
+    private void OpenSourceFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var directory = Path.GetDirectoryName(_state.SourcePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            OpenPath(directory);
+    }
+
+    private void ViewGeneratedFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ExpirationsBrokerRow { CanManageFiles: true } row)
+            return;
+        IReadOnlyList<ExpirationsGeneratedFile> LoadFiles() =>
+            (_state.GenerationBatch?.Files ?? [])
+            .Where(file => file.BrokerId == row.BrokerId)
+            .ToList();
+        void PersistReplacement(ExpirationsGeneratedFile file, string sha256)
+        {
+            if (_state.GenerationBatch is { } batch)
+            {
+                _state.ReplaceGenerationBatch(
+                    _batchFileAssociationService.UpdateAuthorizedReplacement(batch, file, sha256));
+            }
+        }
+        void Unlink(ExpirationsGeneratedFile file)
+        {
+            if (_state.GenerationBatch is { } batch)
+                _state.ReplaceGenerationBatch(_batchFileAssociationService.Remove(batch, file));
+        }
+        ExpirationsManualFileAddResult AddManual(string sourcePath)
+        {
+            if (_state.GenerationBatch is not { } batch)
+                return new ExpirationsManualFileAddResult(new ExpirationsGenerationBatch(), null,
+                    "Primero genere un batch de Vencimientos.");
+            var result = _batchFileAssociationService.AddManual(batch, row.BrokerId, row.BrokerName, sourcePath);
+            if (result.Succeeded)
+                _state.ReplaceGenerationBatch(result.Batch);
+            return result;
+        }
+
+        new ExpirationsGeneratedFilesWindow(
+            row.BrokerName,
+            LoadFiles,
+            _generatedFileViewerService,
+            _associatedWorkbookEditService,
+            PersistReplacement,
+            Unlink,
+            AddManual,
+            async () => { _ = await EvaluateSendPreflightAsync(); })
+        {
+            Owner = this
+        }.ShowDialog();
+    }
+
+    private static void OpenPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || (!File.Exists(path) && !Directory.Exists(path)))
+            return;
+        Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            return string.IsNullOrWhiteSpace(left) && string.IsNullOrWhiteSpace(right);
+        try
+        {
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void LoadLocalSignature()
+    {
+        var path = _localSettingsService.Load().SignatureImagePath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            _state.LoadPersistedSignature(null, null, "No hay una firma configurada.");
+            return;
+        }
+        try
+        {
+            _state.LoadPersistedSignature(path, _signatureService.LoadPreview(path), "Firma local configurada.");
+        }
+        catch (SignatureImageException ex)
+        {
+            _state.LoadPersistedSignature(null, null, $"Firma no disponible: {ex.Message}");
+        }
     }
 
     private async void NextMonthPeriod_Changed(object sender, RoutedEventArgs e)
@@ -348,17 +655,27 @@ public partial class ExpirationsWindow : Window
         });
     }
 
-    private async void ReviewAndSend_Click(object sender, RoutedEventArgs e)
+    private async void SendSelected_Click(object sender, RoutedEventArgs e) =>
+        await SendBrokersAsync(_state.SelectedBrokerIds.ToList());
+
+    private async void SendAll_Click(object sender, RoutedEventArgs e) =>
+        await SendBrokersAsync(_state.EligibleBrokerIds.ToList());
+
+    private async Task SendBrokersAsync(IReadOnlyCollection<Guid> brokerIds)
     {
         await RunBusyAsync("Validando el lote antes de abrir Outlook...", async () =>
         {
-            var preparation = await EvaluateSendPreflightAsync();
-            if (preparation?.CanSend != true)
+            if (_state.GenerationBatch is not { } batch)
+                return;
+            var preparation = await _sendPreparationService.PrepareSelectedAsync(
+                batch,
+                brokerIds,
+                _state.SignatureImagePath);
+            if (!preparation.CanSend)
             {
+                _ = await EvaluateSendPreflightAsync();
                 MessageBox.Show(
-                    preparation is null
-                        ? "No existe un lote generado para revisar."
-                        : string.Join(Environment.NewLine, preparation.Errors),
+                    string.Join(Environment.NewLine, preparation.Errors),
                     "Preflight de Vencimientos",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -376,7 +693,7 @@ public partial class ExpirationsWindow : Window
     {
         var history = new ExpirationsSendHistoryWindow(
             _sendHistory,
-            new ExpirationsRetryPreparationService(),
+            new ExpirationsRetryPreparationService(signatureImagePath: _state.SignatureImagePath),
             _state.GenerationBatch,
             _outlookSender)
         {
@@ -392,7 +709,7 @@ public partial class ExpirationsWindow : Window
         ExpirationsSendPreparationResult preparation;
         try
         {
-            preparation = await _sendPreparationService.PrepareAsync(batch);
+            preparation = await _sendPreparationService.PrepareAsync(batch, _state.SignatureImagePath);
         }
         catch (Exception ex)
         {
@@ -408,13 +725,7 @@ public partial class ExpirationsWindow : Window
 
     private void OpenGeneratedFolder_Click(object sender, RoutedEventArgs e)
     {
-        if (_state.GeneratedOutputDirectory.Length == 0 || !Directory.Exists(_state.GeneratedOutputDirectory))
-            return;
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = _state.GeneratedOutputDirectory,
-            UseShellExecute = true
-        });
+        OpenPath(_state.GeneratedOutputDirectory);
     }
 
     private async Task RunBusyAsync(string status, Func<Task> operation)
@@ -451,8 +762,43 @@ public partial class ExpirationsWindow : Window
         }
     }
 
-    private void Logout_Click(object sender, RoutedEventArgs e)
+    private async void SwitchModule_Click(object sender, RoutedEventArgs e)
     {
+        if (!_state.CanSwitchModule)
+        {
+            MessageBox.Show(
+                _state.IsBusy
+                    ? "Espere a que finalice la operación actual antes de cambiar de módulo."
+                    : "El usuario actual no tiene acceso a ambos módulos.",
+                "Cambiar módulo",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+        if (_state.HasActivePreparation && MessageBox.Show(
+                "La preparación actual de Vencimientos existe solo en memoria. Al cambiar a Comisiones se conservarán configuraciones, archivos generados e historial, pero deberá iniciar nuevamente esta preparación al regresar. ¿Desea continuar?",
+                "Cambiar módulo",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        await RunBusyAsync("Guardando antes de cambiar de módulo...", async () =>
+        {
+            if (!await SaveEditableConfigurationAsync(showSuccessMessage: false))
+                return;
+            if (_state.RequestModuleSwitch(allowWhileNavigationBusy: true))
+                Close();
+        });
+    }
+
+    private async void Logout_Click(object sender, RoutedEventArgs e)
+    {
+        if (_state.IsBusy)
+        {
+            MessageBox.Show("Espere a que finalice la operación actual antes de cerrar sesión.",
+                "Cerrar sesión", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         if (MessageBox.Show(
                 "¿Desea cerrar la sesión de Firebase en este equipo?",
                 "Cerrar sesión",
@@ -460,18 +806,30 @@ public partial class ExpirationsWindow : Window
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
 
-        _state.RequestLogout();
-        Close();
+        await RunBusyAsync("Guardando antes de cerrar sesión...", async () =>
+        {
+            if (!await SaveEditableConfigurationAsync(showSuccessMessage: false))
+                return;
+            _state.RequestLogout();
+            Close();
+        });
     }
 }
 
 internal sealed class ExpirationsWindowState : INotifyPropertyChanged
 {
+    private readonly ObservableCollection<ExpirationsBrokerRow> _brokerRows = [];
+    private readonly ICollectionView _brokerRowsView;
+    private readonly HashSet<Guid> _eligibleBrokerIds = [];
+    private readonly HashSet<Guid> _selectedBrokerIds = [];
+    private readonly Dictionary<Guid, ExpirationsSendResultItem> _sendStatuses = [];
     private ExpirationsProcessOption? _selectedProcessOption;
     private ExpirationsAnalysisSessionSnapshot _snapshot = new();
     private ExpirationsPendingIssue? _selectedPendingIssue;
     private bool _isBusy;
-    private string _operationStatusText = string.Empty;
+    private bool _isProcessSelectionChanging;
+    private bool _isInitialLoadComplete;
+    private string _operationStatusText = "Listo.";
     private ExpirationsGenerationBatch? _generationBatch;
     private ExpirationsSendPreparationResult? _sendPreparation;
     private ExpirationsSendExecutionResult? _sendResult;
@@ -481,6 +839,24 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     private bool _nextMonthGenerationReady;
     private bool _premiumColumnSelectionRequired;
     private string _generationReadinessText = "Seleccione un mes y año para validar la generación.";
+    private ExpirationsEmailSettingsSnapshot? _emailSettingsSnapshot;
+    private string _subject = string.Empty;
+    private string _message = string.Empty;
+    private string _commonCcText = string.Empty;
+    private string _persistedSubject = string.Empty;
+    private string _persistedMessage = string.Empty;
+    private string _persistedCommonCcText = string.Empty;
+    private string? _signatureImagePath;
+    private string? _persistedSignatureImagePath;
+    private BitmapSource? _signaturePreview;
+    private string _signatureStateText = "No hay una firma configurada.";
+    private string _searchText = string.Empty;
+    private string _outlookStatusText = "Comprobando Outlook...";
+    private Brush _outlookStatusBrush = Brushes.Goldenrod;
+    private string? _selectedOutlookAccountEmail;
+    private bool _isRefreshingOutlookAccounts;
+    private bool _resetSelectionOnNextPreparation;
+    private bool _isBulkSelectionUpdate;
 
     public ExpirationsWindowState(AppUser currentUser)
     {
@@ -488,12 +864,8 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         CurrentUser = currentUser;
         ProcessOptions =
         [
-            new ExpirationsProcessOption(
-                ExpirationsProcess.PreviousMonth,
-                "Pendientes del mes anterior"),
-            new ExpirationsProcessOption(
-                ExpirationsProcess.NextMonth,
-                "Vencimientos del mes siguiente")
+            new ExpirationsProcessOption(ExpirationsProcess.PreviousMonth, "Pendientes del mes anterior"),
+            new ExpirationsProcessOption(ExpirationsProcess.NextMonth, "Vencimientos del mes siguiente")
         ];
         MonthOptions = Enumerable.Range(1, 12)
             .Select(month => new ExpirationsMonthOption(
@@ -501,71 +873,129 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
                 CultureInfo.GetCultureInfo("es-CR").TextInfo.ToTitleCase(
                     CultureInfo.GetCultureInfo("es-CR").DateTimeFormat.GetMonthName(month))))
             .ToArray();
+        _brokerRowsView = CollectionViewSource.GetDefaultView(_brokerRows);
+        _brokerRowsView.Filter = FilterBrokerRow;
     }
 
     public AppUser CurrentUser { get; }
     public IReadOnlyList<ExpirationsProcessOption> ProcessOptions { get; }
     public IReadOnlyList<ExpirationsMonthOption> MonthOptions { get; }
+    public ICollectionView BrokerRowsView => _brokerRowsView;
+    public ObservableCollection<string> OutlookAccounts { get; } = [];
+    public ExpirationsEmailSettingsSnapshot? EmailSettingsSnapshot => _emailSettingsSnapshot;
     public string SignedInUserText => $"{CurrentUser.DisplayName} · {CurrentUser.Email}";
-    public Visibility AdminAccessVisibility =>
-        CurrentUser.IsActive && CurrentUser.Role == AppUserRole.Admin
+    public string ApplicationVersionText
+    {
+        get
+        {
+            var informationalVersion = typeof(ExpirationsWindow).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion;
+            var version = string.IsNullOrWhiteSpace(informationalVersion)
+                ? typeof(ExpirationsWindow).Assembly.GetName().Version?.ToString(3) ?? "desconocida"
+                : informationalVersion.Split('+', 2)[0];
+            return $"Versión {version}";
+        }
+    }
+    public Visibility AdminAccessVisibility => CurrentUser.IsActive && CurrentUser.Role == AppUserRole.Admin
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public Visibility SwitchModuleVisibility => ModuleAccessResolver.CanSwitchModules(CurrentUser)
             ? Visibility.Visible
             : Visibility.Collapsed;
+    public bool IsInitialLoadComplete => _isInitialLoadComplete;
+    public bool IsProcessSelectionChanging => _isProcessSelectionChanging;
     public string SourcePath => _snapshot.SourcePath;
+    public string SourceFileName => SourcePath.Length == 0 ? "Ningún archivo seleccionado" : Path.GetFileName(SourcePath);
     public bool IsBusy => _isBusy;
     public bool CanSelectFile => !IsBusy;
     public bool CanConfigureBrokers => !IsBusy;
     public bool CanConfigureEmail => !IsBusy && SelectedProcessOption is not null;
     public bool CanOpenSendHistory => !IsBusy;
+    public bool CanOpenSourceFile => !IsBusy && File.Exists(SourcePath);
+    public bool CanOpenSourceFolder => !IsBusy && Directory.Exists(Path.GetDirectoryName(SourcePath));
+    public bool CanOpenGeneratedFolder => !IsBusy && Directory.Exists(GeneratedOutputDirectory);
     public bool CanAnalyze => !IsBusy && SelectedProcessOption is not null && SourcePath.Length > 0;
     public bool CanResolve => !IsBusy && SelectedPendingIssue?.CanResolve == true;
     public bool CanSelectPremiumColumns => !IsBusy &&
-        _snapshot.Process == ExpirationsProcess.NextMonth &&
-        _snapshot.ReadResult?.Workbook is not null;
+        _snapshot.Process == ExpirationsProcess.NextMonth && _snapshot.ReadResult?.Workbook is not null;
     public bool CanGenerate => !IsBusy &&
         _snapshot.Analysis is { CanGenerate: true, TotalRows: > 0 } &&
         _snapshot.Distribution.Count > 0 &&
         (_snapshot.Process == ExpirationsProcess.PreviousMonth ||
          (_snapshot.Process == ExpirationsProcess.NextMonth && _nextMonthGenerationReady));
-    public bool CanReviewAndSend => !IsBusy && _generationBatch is not null && _sendPreparation?.CanSend == true;
+    public bool CanReviewAndSend => CanSendAll;
+    public bool CanSendSelected => !IsBusy && _generationBatch is not null &&
+        _sendPreparation is not null && _selectedBrokerIds.Count > 0;
+    public bool CanSendAll => !IsBusy && _generationBatch is not null &&
+        _sendPreparation is not null && _eligibleBrokerIds.Count > 0;
+    public bool CanSwitchModule => !IsBusy && SwitchModuleVisibility == Visibility.Visible;
+    public bool CanSave => !IsBusy && _emailSettingsSnapshot is not null && HasEditableChanges;
+    public bool HasActivePreparation => SourcePath.Length > 0 || _snapshot.Analysis is not null ||
+        _generationBatch is not null || _sendResult is not null;
+    public bool HasEditableChanges =>
+        HasEmailSettingsChanges ||
+        !PathValuesEqual(_signatureImagePath, _persistedSignatureImagePath);
+    public bool HasEmailSettingsChanges =>
+        !string.Equals(_subject, _persistedSubject, StringComparison.Ordinal) ||
+        !string.Equals(_message, _persistedMessage, StringComparison.Ordinal) ||
+        !string.Equals(_commonCcText, _persistedCommonCcText, StringComparison.Ordinal);
     public Visibility BusyVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;
+    public bool IsRefreshingOutlookAccounts => _isRefreshingOutlookAccounts;
+    public string OutlookStatusText => _outlookStatusText;
+    public Brush OutlookStatusBrush => _outlookStatusBrush;
+    public IReadOnlyCollection<Guid> EligibleBrokerIds => _eligibleBrokerIds;
+    public IReadOnlyCollection<Guid> SelectedBrokerIds => _selectedBrokerIds;
+    public bool? AreAllEligibleSelected
+    {
+        get
+        {
+            if (_eligibleBrokerIds.Count == 0 || _selectedBrokerIds.Count == 0)
+                return false;
+            return _selectedBrokerIds.Count == _eligibleBrokerIds.Count ? true : null;
+        }
+        set => SelectAllEligible(value == true);
+    }
     public string OperationStatusText => _operationStatusText;
-    public Visibility ResultVisibility =>
-        _snapshot.Analysis is not null || _snapshot.ReadResult is not null
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-    public Visibility AnalysisVisibility =>
-        _snapshot.Analysis is not null ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility PendingVisibility =>
-        PendingItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility ReadyVisibility =>
-        _snapshot.Analysis is not null && PendingItems.Count == 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+    public Visibility ResultVisibility => _snapshot.Analysis is not null || _snapshot.ReadResult is not null
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public Visibility AnalysisVisibility => _snapshot.Analysis is not null ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility PendingVisibility => PendingItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ReadyVisibility => _snapshot.Analysis is not null && PendingItems.Count == 0
+        ? Visibility.Visible
+        : Visibility.Collapsed;
     public Visibility GenerationVisibility => AnalysisVisibility;
-    public Visibility GenerationResultVisibility =>
-        _generationBatch is null ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility GenerationResultVisibility => _generationBatch is null ? Visibility.Collapsed : Visibility.Visible;
     public Visibility SendResultVisibility => _sendResult is null ? Visibility.Collapsed : Visibility.Visible;
-    public Visibility NextMonthPeriodVisibility =>
-        SelectedProcessOption?.Value == ExpirationsProcess.NextMonth
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-    public Visibility PremiumColumnSelectionVisibility =>
-        _premiumColumnSelectionRequired ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility NextMonthPeriodVisibility => SelectedProcessOption?.Value == ExpirationsProcess.NextMonth
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public Visibility PremiumColumnSelectionVisibility => _premiumColumnSelectionRequired
+        ? Visibility.Visible
+        : Visibility.Collapsed;
     public string GenerationReadinessText => _generationReadinessText;
     public int TotalRows => _snapshot.Analysis?.TotalRows ?? 0;
     public int ResolvedRows => _snapshot.Analysis?.ResolvedRows ?? 0;
     public int PendingRows => _snapshot.Analysis?.RowsWithBlockingIssues ?? 0;
     public int DestinationCount => PreviewItems.Count;
+    public int CatalogCount => _snapshot.Catalog.Count(item => item.IsActive);
+    public string BrokerSummaryText =>
+        $"Corredores: {CatalogCount}  ·  Participan: {DestinationCount}  ·  Con pendientes: {PendingRows}  ·  Generados: {GeneratedBrokerCount}";
     public IReadOnlyList<ExpirationsDistributionPreviewItem> PreviewItems => _snapshot.Distribution;
     public IReadOnlyList<ExpirationsPendingIssue> PendingItems => _snapshot.PendingIssues;
+    public string ReportStatusText => _sendResult is not null ? "Enviado" :
+        _generationBatch is not null ? "Generado" :
+        _snapshot.Analysis is { CanGenerate: true } ? "Listo" :
+        _snapshot.Analysis is not null && PendingItems.Count > 0 ? "Con pendientes" :
+        _snapshot.ReadResult is not null ? "Analizado" : "Sin analizar";
     public string StatusText => _snapshot.Analysis switch
     {
         { CanGenerate: true } => "Análisis completo.",
         { } when PendingItems.Count == 1 => "El análisis tiene 1 elemento pendiente de revisión.",
         { } => $"El análisis tiene {PendingItems.Count} elementos pendientes de revisión.",
         _ when _snapshot.RequiresWorkbookSelection => "No se identificó automáticamente la columna Corredor.",
-        _ => "No fue posible completar el análisis."
+        _ => "Seleccione y analice el reporte general."
     };
     public string StatusDetailText => _snapshot.Analysis?.CanGenerate == true
         ? _snapshot.Process == ExpirationsProcess.PreviousMonth
@@ -573,7 +1003,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             : "Todas las pólizas tienen un corredor identificado."
         : _snapshot.Messages.Count > 0
             ? string.Join(" ", _snapshot.Messages)
-            : "Revise los elementos pendientes antes de continuar.";
+            : "La tabla muestra el catálogo activo de Vencimientos.";
     public string ReadyText => _snapshot.Process == ExpirationsProcess.PreviousMonth
         ? "El análisis está completo y listo para la generación."
         : "El análisis está completo.";
@@ -587,20 +1017,116 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         null => "Genere los archivos antes de preparar el envío.",
         _ when _sendPreparation is null => "El preview de envío debe reconstruirse.",
-        _ when _sendPreparation.CanSend =>
-            $"Preflight completo: {_sendPreparation.Requests.Count} correo(s) listo(s) para revisión.",
+        _ when _sendPreparation.CanSend => $"Preflight completo: {_sendPreparation.Requests.Count} correo(s) listo(s) para revisión.",
         _ => string.Join(Environment.NewLine, _sendPreparation.Errors)
     };
     public string SendSummaryText => _sendResult is null
         ? string.Empty
         : $"Enviados correctamente: {_sendResult.SuccessfulCount} · Fallidos: {_sendResult.FailedCount}" +
           (_sendResult.UnknownCount > 0 ? $" · No confirmados: {_sendResult.UnknownCount}" : string.Empty) +
-          (_sendResult.HistoryWarning.Length > 0
-              ? $"{Environment.NewLine}{_sendResult.HistoryWarning}"
-              : string.Empty);
+          (_sendResult.HistoryWarning.Length > 0 ? $"{Environment.NewLine}{_sendResult.HistoryWarning}" : string.Empty);
     public IReadOnlyList<ExpirationsSendResultItem> SendResultItems => _sendResult?.Items ?? [];
     public ExpirationsPremiumColumnOptions? PremiumColumnOptions => _premiumColumnOptions;
     internal ExpirationsGenerationBatch? GenerationBatch => _generationBatch;
+
+    public string Subject
+    {
+        get => _subject;
+        set => SetEditableField(ref _subject, value ?? string.Empty);
+    }
+
+    public string Message
+    {
+        get => _message;
+        set => SetEditableField(ref _message, value ?? string.Empty);
+    }
+
+    public string CommonCcText
+    {
+        get => _commonCcText;
+        set => SetEditableField(ref _commonCcText, value ?? string.Empty);
+    }
+
+    public string? SignatureImagePath => _signatureImagePath;
+    public string? PersistedSignatureImagePath => _persistedSignatureImagePath;
+    public BitmapSource? SignaturePreview => _signaturePreview;
+    public string SignatureFileName => string.IsNullOrWhiteSpace(_signatureImagePath)
+        ? "Sin imagen"
+        : Path.GetFileName(_signatureImagePath);
+    public string SignatureStateText => _signatureStateText;
+    public bool HasConfiguredSignature => !string.IsNullOrWhiteSpace(_signatureImagePath);
+    public Visibility SignaturePreviewVisibility => _signaturePreview is null ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility SignatureEmptyVisibility => _signaturePreview is null ? Visibility.Visible : Visibility.Collapsed;
+    public string SignatureSelectButtonText => HasConfiguredSignature ? "Cambiar imagen" : "Seleccionar imagen";
+
+    public string? SelectedOutlookAccountEmail
+    {
+        get => _selectedOutlookAccountEmail;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            if (string.Equals(_selectedOutlookAccountEmail, normalized, StringComparison.OrdinalIgnoreCase))
+                return;
+            _selectedOutlookAccountEmail = normalized;
+            Notify();
+        }
+    }
+
+    public void ApplyOutlook(OutlookConnectionInfo connection)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        _isRefreshingOutlookAccounts = true;
+        try
+        {
+            OutlookAccounts.Clear();
+            foreach (var account in (connection.AccountEmailAddresses ?? [])
+                         .Where(value => !string.IsNullOrWhiteSpace(value))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                OutlookAccounts.Add(account.Trim());
+            }
+            _selectedOutlookAccountEmail = connection.EmailAddress;
+            _outlookStatusText = connection.Message;
+            _outlookStatusBrush = !connection.Available
+                ? Brushes.IndianRed
+                : connection.EmailAddress is null
+                    ? Brushes.Goldenrod
+                    : Brushes.SeaGreen;
+        }
+        finally
+        {
+            _isRefreshingOutlookAccounts = false;
+            NotifyAllState();
+        }
+    }
+
+    public void ApplyOutlookSelection(string account)
+    {
+        _selectedOutlookAccountEmail = account;
+        _outlookStatusText = $"Cuenta de envío seleccionada: {account}.";
+        _outlookStatusBrush = Brushes.SeaGreen;
+        NotifyAllState();
+    }
+
+    public void ApplyOutlookSelectionFailure(string message)
+    {
+        _selectedOutlookAccountEmail = null;
+        _outlookStatusText = message;
+        _outlookStatusBrush = Brushes.IndianRed;
+        NotifyAllState();
+    }
+
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            if (string.Equals(_searchText, value, StringComparison.Ordinal)) return;
+            _searchText = value ?? string.Empty;
+            _brokerRowsView.Refresh();
+            Notify();
+        }
+    }
 
     public ExpirationsMonthOption? SelectedMonthOption
     {
@@ -640,8 +1166,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             _selectedPendingIssue = null;
             _generationBatch = null;
             ClearSendState();
-            InvalidateGenerationReadiness(
-                "Seleccione un mes y año para validar la configuración especial y las primas.");
+            InvalidateGenerationReadiness("Seleccione un mes y año para validar la configuración especial y las primas.");
             Notify();
             NotifyAllState();
         }
@@ -660,9 +1185,75 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     }
 
     public event EventHandler? LogoutRequested;
+    public event EventHandler? ModuleSwitchRequested;
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public void RequestLogout() => LogoutRequested?.Invoke(this, EventArgs.Empty);
+
+    public bool RequestModuleSwitch(bool allowWhileNavigationBusy = false)
+    {
+        if (SwitchModuleVisibility != Visibility.Visible || (IsBusy && !allowWhileNavigationBusy))
+            return false;
+        ModuleSwitchRequested?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
+    public void MarkInitialLoadComplete()
+    {
+        _isInitialLoadComplete = true;
+        Notify(nameof(IsInitialLoadComplete));
+    }
+
+    public void RestoreProcessSelection(ExpirationsProcessOption option)
+    {
+        _isProcessSelectionChanging = true;
+        try
+        {
+            _selectedProcessOption = option;
+            Notify(nameof(SelectedProcessOption));
+        }
+        finally
+        {
+            _isProcessSelectionChanging = false;
+        }
+    }
+
+    public void LoadEmailSettings(ExpirationsEmailSettingsSnapshot snapshot)
+    {
+        _emailSettingsSnapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
+        _subject = snapshot.Settings.DefaultSubject;
+        _message = snapshot.Settings.DefaultMessage;
+        _commonCcText = string.Join(Environment.NewLine, snapshot.Settings.CommonCcAddresses);
+        _persistedSubject = _subject;
+        _persistedMessage = _message;
+        _persistedCommonCcText = _commonCcText;
+        NotifyAllState();
+    }
+
+    public void MarkEditableConfigurationSaved(ExpirationsEmailSettingsSnapshot snapshot)
+    {
+        LoadEmailSettings(snapshot);
+        _persistedSignatureImagePath = _signatureImagePath;
+        NotifyAllState();
+    }
+
+    public void LoadPersistedSignature(string? path, BitmapSource? preview, string stateText)
+    {
+        _signatureImagePath = path;
+        _persistedSignatureImagePath = path;
+        _signaturePreview = preview;
+        _signatureStateText = stateText;
+        NotifyAllState();
+    }
+
+    public void SetSignature(string? path, BitmapSource? preview, string stateText)
+    {
+        _signatureImagePath = path;
+        _signaturePreview = preview;
+        _signatureStateText = stateText;
+        InvalidateSendPreview();
+        NotifyAllState();
+    }
 
     public void ApplySnapshot(ExpirationsAnalysisSessionSnapshot snapshot)
     {
@@ -672,6 +1263,27 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         if (snapshot.Process is { } process)
             _selectedProcessOption = ProcessOptions.Single(option => option.Value == process);
         _selectedPendingIssue = null;
+        RebuildBrokerRows();
+        NotifyAllState();
+    }
+
+    public void ResetTransientState(ExpirationsAnalysisSessionSnapshot snapshot)
+    {
+        _snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
+        _generationBatch = null;
+        _sendPreparation = null;
+        _sendResult = null;
+        _eligibleBrokerIds.Clear();
+        _selectedBrokerIds.Clear();
+        _sendStatuses.Clear();
+        _selectedPendingIssue = null;
+        _selectedMonthOption = null;
+        _nextMonthYearText = string.Empty;
+        _premiumColumnOptions = null;
+        _nextMonthGenerationReady = false;
+        _premiumColumnSelectionRequired = false;
+        _generationReadinessText = "Seleccione un mes y año para validar la generación.";
+        RebuildBrokerRows();
         NotifyAllState();
     }
 
@@ -679,24 +1291,59 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         _generationBatch = batch ?? throw new ArgumentNullException(nameof(batch));
         ClearSendState();
+        _eligibleBrokerIds.Clear();
+        _selectedBrokerIds.Clear();
+        _sendStatuses.Clear();
+        _resetSelectionOnNextPreparation = true;
+        RebuildBrokerRows();
+        NotifyAllState();
+    }
+
+    public void ReplaceGenerationBatch(ExpirationsGenerationBatch batch)
+    {
+        _generationBatch = batch ?? throw new ArgumentNullException(nameof(batch));
+        _sendPreparation = null;
+        _sendResult = null;
+        RebuildBrokerRows();
         NotifyAllState();
     }
 
     public void ApplySendPreparation(ExpirationsSendPreparationResult preparation)
     {
         _sendPreparation = preparation ?? throw new ArgumentNullException(nameof(preparation));
+        _eligibleBrokerIds.Clear();
+        _eligibleBrokerIds.UnionWith(preparation.EligibleBrokerIds.Count > 0
+            ? preparation.EligibleBrokerIds
+            : preparation.CanSend
+                ? preparation.Requests.Select(request => request.BrokerId)
+                : []);
+        if (_resetSelectionOnNextPreparation)
+        {
+            _selectedBrokerIds.Clear();
+            _selectedBrokerIds.UnionWith(_eligibleBrokerIds);
+            _resetSelectionOnNextPreparation = false;
+        }
+        else
+        {
+            _selectedBrokerIds.IntersectWith(_eligibleBrokerIds);
+        }
+        RebuildBrokerRows();
         NotifyAllState();
     }
 
     public void InvalidateSendPreview()
     {
         _sendPreparation = null;
+        RebuildBrokerRows();
         NotifyAllState();
     }
 
     public void ApplySendResult(ExpirationsSendExecutionResult result)
     {
         _sendResult = result ?? throw new ArgumentNullException(nameof(result));
+        foreach (var item in result.Items)
+            _sendStatuses[item.BrokerId] = item;
+        RebuildBrokerRows();
         NotifyAllState();
     }
 
@@ -722,6 +1369,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         _premiumColumnOptions = options ?? throw new ArgumentNullException(nameof(options));
         _generationBatch = null;
         ClearSendState();
+        RebuildBrokerRows();
         InvalidateGenerationReadiness("Validando las columnas Prima y Moneda seleccionadas...");
     }
 
@@ -730,16 +1378,13 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         _premiumColumnOptions = null;
         _generationBatch = null;
         ClearSendState();
+        RebuildBrokerRows();
         InvalidateGenerationReadiness("Seleccione un mes y año para validar la generación.");
     }
 
-    public void InvalidateGenerationReadiness(string message) =>
-        SetGenerationReadiness(false, message, false);
+    public void InvalidateGenerationReadiness(string message) => SetGenerationReadiness(false, message, false);
 
-    public void SetGenerationReadiness(
-        bool isReady,
-        string message,
-        bool premiumColumnSelectionRequired)
+    public void SetGenerationReadiness(bool isReady, string message, bool premiumColumnSelectionRequired)
     {
         _nextMonthGenerationReady = isReady;
         _generationReadinessText = message ?? string.Empty;
@@ -751,14 +1396,8 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         if (_isBusy == value && operationStatus is null) return;
         _isBusy = value;
-        _operationStatusText = value ? operationStatus ?? _operationStatusText : string.Empty;
+        _operationStatusText = value ? operationStatus ?? _operationStatusText : "Listo.";
         NotifyAllState();
-    }
-
-    private void ClearSendState()
-    {
-        _sendPreparation = null;
-        _sendResult = null;
     }
 
     public void SetOperationStatus(string value)
@@ -767,7 +1406,222 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         Notify(nameof(OperationStatusText));
     }
 
+    private void ClearSendState()
+    {
+        _sendPreparation = null;
+        _sendResult = null;
+        _eligibleBrokerIds.Clear();
+        _selectedBrokerIds.Clear();
+        _sendStatuses.Clear();
+        _resetSelectionOnNextPreparation = false;
+    }
+
+    private void SelectAllEligible(bool selected)
+    {
+        _isBulkSelectionUpdate = true;
+        try
+        {
+            _selectedBrokerIds.Clear();
+            if (selected)
+                _selectedBrokerIds.UnionWith(_eligibleBrokerIds);
+            foreach (var row in _brokerRows)
+                row.SetSelected(_selectedBrokerIds.Contains(row.BrokerId));
+        }
+        finally
+        {
+            _isBulkSelectionUpdate = false;
+        }
+        NotifySelectionState();
+    }
+
+    private void BrokerSelectionChanged(ExpirationsBrokerRow row)
+    {
+        if (_isBulkSelectionUpdate)
+            return;
+        if (row.IsEligible && row.IsSelected)
+            _selectedBrokerIds.Add(row.BrokerId);
+        else
+            _selectedBrokerIds.Remove(row.BrokerId);
+        NotifySelectionState();
+    }
+
+    private void NotifySelectionState()
+    {
+        Notify(nameof(AreAllEligibleSelected));
+        Notify(nameof(CanSendSelected));
+        Notify(nameof(CanSendAll));
+        Notify(nameof(CanReviewAndSend));
+    }
+
+    private void RebuildBrokerRows()
+    {
+        var distribution = _snapshot.Distribution.ToDictionary(item => item.BrokerId);
+        _selectedBrokerIds.IntersectWith(_eligibleBrokerIds);
+        _brokerRows.Clear();
+        foreach (var broker in _snapshot.Catalog.Where(item => item.IsActive)
+                     .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
+        {
+            distribution.TryGetValue(broker.BrokerId, out var preview);
+            _sendStatuses.TryGetValue(broker.BrokerId, out var sendResult);
+            var files = (_generationBatch?.Files ?? []).Where(file => file.BrokerId == broker.BrokerId)
+                .OrderBy(file => file.Variant).ToList();
+            var warnings = files.SelectMany(file => file.Warnings).Distinct(StringComparer.Ordinal).ToList();
+            if (_generationBatch is not null && preview is not null && files.Count == 0)
+                warnings.Add("Falta el archivo obligatorio del batch actual.");
+            if (warnings.Count == 0 && preview is not null && PendingItems.Count > 0)
+                warnings.Add("El análisis contiene elementos pendientes de resolver.");
+            if (warnings.Count == 0 && files.Count > 0 && _sendPreparation is { CanSend: false })
+            {
+                var knownPrefixes = _snapshot.Catalog.Select(item => $"{item.Name}: ").ToList();
+                var ownPrefix = $"{broker.Name}: ";
+                warnings.AddRange(_sendPreparation.Errors.Where(error =>
+                    error.StartsWith(ownPrefix, StringComparison.CurrentCultureIgnoreCase) ||
+                    !knownPrefixes.Any(prefix => error.StartsWith(prefix, StringComparison.CurrentCultureIgnoreCase))));
+            }
+
+            var status = sendResult switch
+            {
+                { IsConfirmed: true, WasSuccessful: true } => "Enviado",
+                { } => "Fallido",
+                _ when _eligibleBrokerIds.Contains(broker.BrokerId) => "Pendiente / No enviado",
+                _ when files.Count > 0 && warnings.Count > 0 => "Con advertencia",
+                _ when files.Count > 0 => "Generado",
+                _ when _generationBatch is not null && preview is not null => "Con advertencia",
+                _ when _snapshot.Analysis is null => "Sin analizar",
+                _ when preview is null => "No participa",
+                _ when PendingItems.Count > 0 => "Pendiente de resolver",
+                _ when _snapshot.Analysis.CanGenerate => "Listo para generar",
+                _ => "Con advertencia"
+            };
+            _brokerRows.Add(new ExpirationsBrokerRow(
+                broker.BrokerId,
+                broker.Name,
+                string.Join("; ", broker.PrimaryEmailAddresses),
+                string.Join("; ", broker.Assistants.Where(item => item.IsActive)
+                    .Select(item => $"{item.Name} — {item.Email}")),
+                preview?.RowCount ?? 0,
+                files,
+                status,
+                string.Join(Environment.NewLine, warnings),
+                _eligibleBrokerIds.Contains(broker.BrokerId),
+                _selectedBrokerIds.Contains(broker.BrokerId),
+                _generationBatch is not null && (files.Count > 0 || preview is not null),
+                BrokerSelectionChanged));
+        }
+        _brokerRowsView.Refresh();
+        NotifySelectionState();
+    }
+
+    private bool FilterBrokerRow(object value)
+    {
+        if (value is not ExpirationsBrokerRow row || string.IsNullOrWhiteSpace(_searchText))
+            return true;
+        var query = _searchText.Trim();
+        return row.BrokerName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+            row.PrimaryEmail.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            row.AssistantsText.Contains(query, StringComparison.CurrentCultureIgnoreCase);
+    }
+
+    private void SetEditableField(ref string field, string value, [CallerMemberName] string? propertyName = null)
+    {
+        if (string.Equals(field, value, StringComparison.Ordinal)) return;
+        field = value;
+        InvalidateSendPreview();
+        Notify(propertyName);
+        Notify(nameof(HasEditableChanges));
+        Notify(nameof(CanSave));
+    }
+
+    private static bool PathValuesEqual(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            return string.IsNullOrWhiteSpace(left) && string.IsNullOrWhiteSpace(right);
+        try
+        {
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     private void NotifyAllState() => Notify(string.Empty);
     private void Notify([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+internal sealed class ExpirationsBrokerRow : INotifyPropertyChanged
+{
+    private readonly Action<ExpirationsBrokerRow> _selectionChanged;
+    private bool _isSelected;
+
+    public ExpirationsBrokerRow(
+        Guid brokerId,
+        string brokerName,
+        string primaryEmail,
+        string assistantsText,
+        int rowCount,
+        IReadOnlyList<ExpirationsGeneratedFile> generatedFiles,
+        string statusText,
+        string warningText,
+        bool isEligible,
+        bool isSelected,
+        bool canManageFiles,
+        Action<ExpirationsBrokerRow> selectionChanged)
+    {
+        BrokerId = brokerId;
+        BrokerName = brokerName;
+        PrimaryEmail = primaryEmail;
+        AssistantsText = assistantsText;
+        RowCount = rowCount;
+        GeneratedFiles = generatedFiles;
+        StatusText = statusText;
+        WarningText = warningText;
+        IsEligible = isEligible;
+        _isSelected = isEligible && isSelected;
+        CanManageFiles = canManageFiles;
+        _selectionChanged = selectionChanged;
+    }
+
+    public Guid BrokerId { get; }
+    public string BrokerName { get; }
+    public string PrimaryEmail { get; }
+    public string AssistantsText { get; }
+    public int RowCount { get; }
+    public IReadOnlyList<ExpirationsGeneratedFile> GeneratedFiles { get; }
+    public string StatusText { get; }
+    public string WarningText { get; }
+    public bool IsEligible { get; }
+    public bool CanManageFiles { get; }
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            var normalized = IsEligible && value;
+            if (_isSelected == normalized)
+                return;
+            _isSelected = normalized;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+            _selectionChanged(this);
+        }
+    }
+
+    public void SetSelected(bool value)
+    {
+        var normalized = IsEligible && value;
+        if (_isSelected == normalized)
+            return;
+        _isSelected = normalized;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+    }
+
+    public string FileCountText => GeneratedFiles.Count == 1 ? "1 archivo" : $"{GeneratedFiles.Count} archivos";
+    public bool CanViewFiles => CanManageFiles;
+    public string SelectionHint => IsEligible
+        ? "Incluye este corredor en Enviar seleccionados."
+        : "El corredor no tiene todos sus archivos obligatorios válidos.";
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }

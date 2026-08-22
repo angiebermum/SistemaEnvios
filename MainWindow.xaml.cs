@@ -166,6 +166,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler? LogoutRequested;
+    public event EventHandler? ModuleSwitchRequested;
 
     public ObservableCollection<BrokerSendItem> BrokerItems { get; } = [];
     public ObservableCollection<Broker> InactiveBrokers { get; } = [];
@@ -177,6 +178,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public Visibility AdminAccessVisibility => _runtimeData.CurrentUser?.Role == AppUserRole.Admin
         ? Visibility.Visible
         : Visibility.Collapsed;
+    public Visibility SwitchModuleVisibility => ModuleAccessResolver.CanSwitchModules(_runtimeData.CurrentUser)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     public string SignedInUserText => _runtimeData.CurrentUser is null
         ? string.Empty
         : $"{_runtimeData.CurrentUser.DisplayName} · {_runtimeData.CurrentUser.Email}";
@@ -545,6 +549,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         new UserAdministrationWindow(_appUsers, user) { Owner = this }.ShowDialog();
+    }
+
+    private async void SwitchModule_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isBusy)
+        {
+            MessageBox.Show("Espere a que finalice la operación actual antes de cambiar de módulo.",
+                "Cambiar módulo", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (_firebaseAuthentication is null || SwitchModuleVisibility != Visibility.Visible)
+            return;
+
+        SetBusy(true);
+        try
+        {
+            await SavePendingChangesAsync();
+            _closeAfterAsyncSave = true;
+            ModuleSwitchRequested?.Invoke(this, EventArgs.Empty);
+            Close();
+        }
+        catch (FirestoreConcurrencyException ex)
+        {
+            ShowConcurrencyConflict(ex, "Cambiar módulo");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("No fue posible guardar antes de cambiar de módulo.", ex);
+            MessageBox.Show(ex.Message, "Cambiar módulo", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            if (IsVisible)
+                SetBusy(false);
+        }
     }
 
     private async void Logout_Click(object sender, RoutedEventArgs e)

@@ -3,24 +3,30 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="ECS Envío de Correos — Vencimientos"
         Icon="pack://application:,,,/Images/icon.ico"
-        Width="1240" Height="820" MinWidth="980" MinHeight="650"
+        Width="1360" Height="900" MinWidth="1100" MinHeight="760"
         WindowStartupLocation="CenterScreen"
-        Style="{StaticResource AppWindowStyle}">
+        Style="{StaticResource AppWindowStyle}"
+        Loaded="Window_Loaded">
     <Grid Margin="20,14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="16,8" Margin="0,0,0,12">
+        <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="16,8" Margin="0,0,0,8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Border Width="108" Height="58" Background="{StaticResource SurfaceBrush}"
-                        CornerRadius="7" Padding="3" Margin="0,0,14,0" ClipToBounds="True">
+                <Border Width="108" Height="58" Background="White" CornerRadius="7"
+                        Padding="3" Margin="0,0,14,0" ClipToBounds="True">
                     <Image Stretch="Uniform" SnapsToDevicePixels="True" RenderOptions.BitmapScalingMode="HighQuality">
                         <Image.Source>
                             <CroppedBitmap SourceRect="110 430 1060 420">
@@ -33,258 +39,312 @@
                 </Border>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock Text="ECS Envío de Correos" Style="{StaticResource PageTitleTextStyle}" />
-                    <TextBlock Text="Módulo de Vencimientos" Style="{StaticResource PageSubtitleTextStyle}"
-                               Margin="0,2,0,0" />
+                    <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                        <TextBlock Text="Preparación y envío de vencimientos" Style="{StaticResource PageSubtitleTextStyle}" />
+                        <TextBlock Text="{Binding ApplicationVersionText}" Style="{StaticResource CaptionTextStyle}"
+                                   Margin="12,1,0,0" />
+                    </StackPanel>
                 </StackPanel>
-                <StackPanel Grid.Column="2" VerticalAlignment="Center" MaxWidth="420">
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" MaxWidth="520">
                     <TextBlock Text="{Binding SignedInUserText}" FontWeight="SemiBold"
                                TextAlignment="Right" TextTrimming="CharacterEllipsis" />
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
                         <Button Content="Administrar accesos" Click="ManageAccess_Click"
                                 Visibility="{Binding AdminAccessVisibility}"
                                 Style="{StaticResource CompactButtonStyle}" Padding="5,1" MinHeight="22" />
+                        <Button x:Name="SwitchModuleButton" Content="Cambiar módulo" Click="SwitchModule_Click"
+                                Visibility="{Binding SwitchModuleVisibility}" IsEnabled="{Binding CanSwitchModule}"
+                                Style="{StaticResource CompactButtonStyle}" Padding="5,1" MinHeight="22" />
                         <Button Content="Cerrar sesión" Click="Logout_Click"
-                                Style="{StaticResource CompactButtonStyle}" Padding="5,1"
-                                MinHeight="22" Margin="0" />
+                                Style="{StaticResource CompactButtonStyle}" Padding="5,1" MinHeight="22" Margin="0" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,2,0,0">
+                        <Ellipse Width="10" Height="10" Fill="{Binding OutlookStatusBrush}" Margin="0,0,8,0" />
+                        <TextBlock Text="Cuenta de envío:" Style="{StaticResource CaptionTextStyle}"
+                                   VerticalAlignment="Center" />
+                        <ComboBox x:Name="OutlookAccountSelector" ItemsSource="{Binding OutlookAccounts}"
+                                  SelectedItem="{Binding SelectedOutlookAccountEmail, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectionChanged="OutlookAccount_SelectionChanged"
+                                  IsEnabled="{Binding CanSelectFile}" Width="230" Height="26" Margin="6,0,0,0"
+                                  ToolTip="Seleccione la cuenta local de Outlook que se utilizará para enviar." />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,1,0,0">
+                        <TextBlock Text="{Binding OutlookStatusText}" Style="{StaticResource CaptionTextStyle}"
+                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding OutlookStatusText}"
+                                   VerticalAlignment="Center" MaxWidth="340" />
+                        <Button x:Name="ConnectOutlookButton" Content="Conectar cuenta" Click="ConnectOutlook_Click"
+                                IsEnabled="{Binding CanSelectFile}" Style="{StaticResource CompactButtonStyle}"
+                                Padding="5,1" MinHeight="22" Margin="10,0,0,0" />
                     </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel>
-                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
+        <Border x:Name="EmailTemplateCard" Grid.Row="1" Style="{StaticResource CardStyle}"
+                Padding="14,9" Margin="0,0,0,8">
+            <Grid IsEnabled="{Binding CanConfigureEmail}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*" MinWidth="300" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="3*" MinWidth="350" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="220" />
+                </Grid.ColumnDefinitions>
+                <Grid Grid.Column="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Plantilla del correo" Style="{StaticResource SectionTitleTextStyle}" />
+                    <StackPanel Grid.Row="1" Margin="0,8,0,0">
+                        <TextBlock Text="Asunto" Style="{StaticResource FieldLabelTextStyle}" />
+                        <TextBox Text="{Binding Subject, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                        <TextBlock Text="Copias generales" Style="{StaticResource FieldLabelTextStyle}" />
+                        <TextBox Height="44" Text="{Binding CommonCcText, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                                 VerticalScrollBarVisibility="Auto" />
+                        <TextBlock Text="Separe direcciones con punto y coma, coma o salto de línea."
+                                   Style="{StaticResource CaptionTextStyle}" Margin="2,3,0,0" />
+                    </StackPanel>
+                </Grid>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="Mensaje" Style="{StaticResource FieldLabelTextStyle}" />
+                    <TextBox Height="120" Text="{Binding Message, UpdateSourceTrigger=PropertyChanged}"
+                             AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                             VerticalScrollBarVisibility="Auto" />
+                    <TextBlock Text="El texto conserva los saltos de línea al preparar el correo en Outlook."
+                               Style="{StaticResource CaptionTextStyle}" Margin="2,3,0,0" />
+                </StackPanel>
+                <StackPanel x:Name="SignaturePanel" Grid.Column="4">
+                    <TextBlock Text="Firma del correo" Style="{StaticResource FieldLabelTextStyle}" />
+                    <Border Height="82" Background="{StaticResource SurfaceMutedBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="7" Padding="8">
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="Preparación de vencimientos" Style="{StaticResource SectionTitleTextStyle}" />
-                                <TextBlock Text="Seleccione el proceso y el reporte general que desea analizar."
-                                           Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0"
-                                        VerticalAlignment="Center">
-                                <Button Content="Historial de envíos" Click="OpenSendHistory_Click"
-                                        IsEnabled="{Binding CanOpenSendHistory}"
-                                        Style="{StaticResource CompactButtonStyle}" />
-                                <Button Content="Configurar correo" Click="ConfigureEmail_Click"
-                                        IsEnabled="{Binding CanConfigureEmail}"
-                                        Style="{StaticResource CompactButtonStyle}" />
-                                <Button Content="Configurar corredores" Click="ConfigureBrokers_Click"
-                                        IsEnabled="{Binding CanConfigureBrokers}"
-                                        Style="{StaticResource CompactButtonStyle}" Margin="0" />
+                            <Image Source="{Binding SignaturePreview}" Stretch="Uniform"
+                                   Visibility="{Binding SignaturePreviewVisibility}" />
+                            <StackPanel Visibility="{Binding SignatureEmptyVisibility}"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE91B;" FontFamily="Segoe Fluent Icons" FontSize="24"
+                                           Foreground="{StaticResource DisabledBrush}" HorizontalAlignment="Center" />
+                                <TextBlock Text="Sin firma" Style="{StaticResource CaptionTextStyle}"
+                                           TextAlignment="Center" Margin="0,5,0,0" />
                             </StackPanel>
                         </Grid>
-
-                        <Grid Grid.Row="1" Margin="0,16,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="150" />
-                                <ColumnDefinition Width="420" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Proceso" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" />
-                            <ComboBox x:Name="ProcessComboBox" Grid.Column="1"
-                                      ItemsSource="{Binding ProcessOptions}"
-                                      SelectedItem="{Binding SelectedProcessOption, Mode=TwoWay}"
-                                      DisplayMemberPath="DisplayName"
-                                      IsEnabled="{Binding CanSelectFile}"
-                                      SelectionChanged="ProcessComboBox_SelectionChanged" />
-                        </Grid>
-
-                        <Grid Grid.Row="2" Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="150" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Archivo" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" />
-                            <TextBox Grid.Column="1" Text="{Binding SourcePath, Mode=OneWay}" IsReadOnly="True"
-                                     ToolTip="{Binding SourcePath}" VerticalContentAlignment="Center" />
-                            <Button Grid.Column="2" Content="Seleccionar" Click="SelectFile_Click"
-                                    IsEnabled="{Binding CanSelectFile}" Style="{StaticResource CompactButtonStyle}"
-                                    Margin="10,0,0,0" />
-                        </Grid>
-
-                        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="150,14,0,0">
-                            <Button Content="Analizar archivo" Click="Analyze_Click"
-                                    IsEnabled="{Binding CanAnalyze}" Style="{StaticResource PrimaryButtonStyle}" />
-                            <TextBlock Text="{Binding OperationStatusText}" Style="{StaticResource CaptionTextStyle}"
-                                       VerticalAlignment="Center" Margin="8,0,0,0"
-                                       Visibility="{Binding BusyVisibility}" />
-                        </StackPanel>
-                    </Grid>
-                </Border>
-
-                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12"
-                        Visibility="{Binding ResultVisibility}">
-                    <StackPanel>
-                        <TextBlock Text="Resumen del análisis" Style="{StaticResource SectionTitleTextStyle}" />
-                        <Grid Margin="0,14,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="Total de registros" Style="{StaticResource CaptionTextStyle}" />
-                                <TextBlock Text="{Binding TotalRows}" FontSize="22" FontWeight="SemiBold" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Text="Registros resueltos" Style="{StaticResource CaptionTextStyle}" />
-                                <TextBlock Text="{Binding ResolvedRows}" FontSize="22" FontWeight="SemiBold" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="Pendientes" Style="{StaticResource CaptionTextStyle}" />
-                                <TextBlock Text="{Binding PendingRows}" FontSize="22" FontWeight="SemiBold" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="3">
-                                <TextBlock Text="Corredores destino" Style="{StaticResource CaptionTextStyle}" />
-                                <TextBlock Text="{Binding DestinationCount}" FontSize="22" FontWeight="SemiBold" />
-                            </StackPanel>
-                        </Grid>
-                        <Border Style="{StaticResource InfoPanelStyle}" Margin="0,14,0,0">
-                            <StackPanel>
-                                <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                <TextBlock Text="{Binding StatusDetailText}" Style="{StaticResource MutedTextStyle}"
-                                           TextWrapping="Wrap" Margin="0,3,0,0" />
-                            </StackPanel>
-                        </Border>
+                    </Border>
+                    <TextBlock Text="{Binding SignatureFileName}" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding SignatureImagePath}" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding SignatureStateText}" Style="{StaticResource CaptionTextStyle}"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding SignatureStateText}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                        <Button Content="{Binding SignatureSelectButtonText}" Click="SelectSignature_Click"
+                                Style="{StaticResource CompactButtonStyle}" />
+                        <Button Content="Quitar" Click="RemoveSignature_Click"
+                                IsEnabled="{Binding HasConfiguredSignature}"
+                                Style="{StaticResource CompactButtonStyle}" Margin="0" />
                     </StackPanel>
-                </Border>
+                </StackPanel>
+            </Grid>
+        </Border>
 
-                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12"
-                        Visibility="{Binding AnalysisVisibility}">
-                    <StackPanel>
-                        <TextBlock Text="Distribución por corredor" Style="{StaticResource SectionTitleTextStyle}" />
-                        <DataGrid ItemsSource="{Binding PreviewItems}" IsReadOnly="True" AutoGenerateColumns="False"
-                                  Height="230" Margin="0,12,0,0">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Corredor" Binding="{Binding BrokerName}" Width="210" />
-                                <DataGridTextColumn Header="Correo principal" Binding="{Binding PrimaryEmail}" Width="260" />
-                                <DataGridTextColumn Header="Registros" Binding="{Binding RowCount}" Width="90" />
-                                <DataGridTextColumn Header="Nombres / alias / códigos detectados"
-                                                    Binding="{Binding DetectedValuesText}" Width="540" />
-                            </DataGrid.Columns>
-                        </DataGrid>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12"
-                        Visibility="{Binding AnalysisVisibility}">
-                    <StackPanel>
-                        <TextBlock Text="Pendientes por resolver" Style="{StaticResource SectionTitleTextStyle}" />
-                        <TextBlock Text="{Binding ReadyText}"
-                                   Style="{StaticResource MutedTextStyle}" Margin="0,12,0,0"
-                                   Visibility="{Binding ReadyVisibility}" />
-                        <DataGrid ItemsSource="{Binding PendingItems}"
-                                  SelectedItem="{Binding SelectedPendingIssue, Mode=TwoWay}"
-                                  IsReadOnly="True" AutoGenerateColumns="False"
-                                  Height="230" Margin="0,12,0,0"
-                                  Visibility="{Binding PendingVisibility}">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Fila" Binding="{Binding RowNumber}" Width="80" />
-                                <DataGridTextColumn Header="Valor encontrado" Binding="{Binding RawValue}" Width="420" />
-                                <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="180" />
-                                <DataGridTextColumn Header="Posibles corredores" Binding="{Binding CandidateBrokerNames}" Width="420" />
-                            </DataGrid.Columns>
-                        </DataGrid>
-                        <Button Content="Resolver seleccionado" Click="ResolveSelected_Click"
-                                IsEnabled="{Binding CanResolve}" Style="{StaticResource PrimaryButtonStyle}"
-                                HorizontalAlignment="Left" Margin="0,12,0,0"
-                                Visibility="{Binding PendingVisibility}" />
-                    </StackPanel>
-                </Border>
-
-                <Border x:Name="GenerationSection" Style="{StaticResource CardStyle}"
-                        Visibility="{Binding GenerationVisibility}">
-                    <StackPanel>
-                        <TextBlock Text="Generación de archivos" Style="{StaticResource SectionTitleTextStyle}" />
-                        <Border Style="{StaticResource CardStyle}" Padding="12" Margin="0,10,0,0"
+        <Border x:Name="GenerationSection" Grid.Row="2" Style="{StaticResource CardStyle}"
+                Padding="14,10" Margin="0,0,0,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="330" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Reporte general de vencimientos" Style="{StaticResource SectionTitleTextStyle}" />
+                    <TextBlock Text="Proceso" Style="{StaticResource FieldLabelTextStyle}" Margin="0,8,0,0" />
+                    <ComboBox x:Name="ProcessComboBox" ItemsSource="{Binding ProcessOptions}"
+                              SelectedItem="{Binding SelectedProcessOption, Mode=TwoWay}"
+                              DisplayMemberPath="DisplayName" IsEnabled="{Binding CanSelectFile}"
+                              SelectionChanged="ProcessComboBox_SelectionChanged" />
+                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0"
                                 Visibility="{Binding NextMonthPeriodVisibility}">
-                            <StackPanel>
-                                <TextBlock Text="Período del reporte" FontWeight="SemiBold" />
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <TextBlock Text="Mes" Style="{StaticResource CaptionTextStyle}"
-                                               VerticalAlignment="Center" Margin="0,0,8,0" />
-                                    <ComboBox Width="190" ItemsSource="{Binding MonthOptions}"
-                                              SelectedItem="{Binding SelectedMonthOption, Mode=TwoWay}"
-                                              DisplayMemberPath="DisplayName"
-                                              SelectionChanged="NextMonthPeriod_Changed" />
-                                    <TextBlock Text="Año" Style="{StaticResource CaptionTextStyle}"
-                                               VerticalAlignment="Center" Margin="18,0,8,0" />
-                                    <TextBox Width="90" Text="{Binding NextMonthYearText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             TextChanged="NextMonthPeriod_Changed" />
-                                </StackPanel>
-                                <TextBlock Text="{Binding GenerationReadinessText}" TextWrapping="Wrap"
-                                           Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0" />
-                                <Button Content="Seleccionar columnas Prima / Moneda"
-                                        Click="SelectPremiumColumns_Click"
-                                        Visibility="{Binding PremiumColumnSelectionVisibility}"
-                                        IsEnabled="{Binding CanSelectPremiumColumns}"
-                                        Style="{StaticResource CompactButtonStyle}"
-                                        HorizontalAlignment="Left" Margin="0,8,0,0" />
-                            </StackPanel>
-                        </Border>
-                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                            <Button Content="Generar archivos" Click="GenerateFiles_Click"
-                                    IsEnabled="{Binding CanGenerate}" Style="{StaticResource PrimaryButtonStyle}" />
-                            <TextBlock Text="{Binding OperationStatusText}" Style="{StaticResource CaptionTextStyle}"
-                                       VerticalAlignment="Center" Margin="8,0,0,0"
-                                       Visibility="{Binding BusyVisibility}" />
-                        </StackPanel>
-                        <Border Style="{StaticResource InfoPanelStyle}" Margin="0,12,0,0"
-                                Visibility="{Binding GenerationResultVisibility}">
-                            <StackPanel>
-                                <TextBlock Text="Generación completada." FontWeight="SemiBold" />
-                                <TextBlock Margin="0,4,0,0">
-                                    <Run Text="Corredores con archivos: " /><Run Text="{Binding GeneratedBrokerCount, Mode=OneWay}" />
-                                </TextBlock>
-                                <TextBlock Margin="0,2,0,0">
-                                    <Run Text="Archivos generados: " /><Run Text="{Binding GeneratedFileCount, Mode=OneWay}" />
-                                </TextBlock>
-                                <TextBlock Text="{Binding GeneratedOutputDirectory}" TextWrapping="Wrap"
-                                           Style="{StaticResource MutedTextStyle}" Margin="0,2,0,0" />
-                                <TextBlock Text="{Binding GenerationWarningsText}" TextWrapping="Wrap"
-                                           Style="{StaticResource MutedTextStyle}" Margin="0,5,0,0" />
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <Button Content="Abrir carpeta" Click="OpenGeneratedFolder_Click"
-                                            IsEnabled="{Binding CanSelectFile}"
-                                            Style="{StaticResource CompactButtonStyle}" />
-                                    <Button Content="Revisar y enviar" Click="ReviewAndSend_Click"
-                                            IsEnabled="{Binding CanReviewAndSend}"
-                                            Style="{StaticResource PrimaryButtonStyle}" Margin="0" />
-                                </StackPanel>
-                                <TextBlock Text="{Binding SendReadinessText}" TextWrapping="Wrap"
-                                           Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0" />
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource InfoPanelStyle}" Margin="0,12,0,0"
-                                Visibility="{Binding SendResultVisibility}">
-                            <StackPanel>
-                                <TextBlock Text="Resultado del último envío" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding SendSummaryText}" Margin="0,4,0,0" />
-                                <ItemsControl ItemsSource="{Binding SendResultItems}" Margin="0,5,0,0">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,2,0,0" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                        </Border>
+                        <ComboBox Width="150" ItemsSource="{Binding MonthOptions}"
+                                  SelectedItem="{Binding SelectedMonthOption, Mode=TwoWay}"
+                                  DisplayMemberPath="DisplayName" SelectionChanged="NextMonthPeriod_Changed" />
+                        <TextBox Width="78" Text="{Binding NextMonthYearText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 TextChanged="NextMonthPeriod_Changed" ToolTip="Año" />
+                        <Button Content="Prima / Moneda" Click="SelectPremiumColumns_Click"
+                                Visibility="{Binding PremiumColumnSelectionVisibility}"
+                                IsEnabled="{Binding CanSelectPremiumColumns}"
+                                Style="{StaticResource CompactButtonStyle}" Margin="8,0,0,0" />
                     </StackPanel>
-                </Border>
+                </StackPanel>
+                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding SourceFileName}" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding SourcePath}" />
+                    <TextBlock Text="{Binding SourcePath}" Style="{StaticResource CaptionTextStyle}"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding SourcePath}" Margin="0,2,0,0" />
+                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                        <TextBlock Text="Estado:" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding ReportStatusText}" Style="{StaticResource StatusBadgeStyle}" Margin="6,0,0,0" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding StatusDetailText}" Style="{StaticResource MutedTextStyle}"
+                               TextWrapping="Wrap" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding GenerationReadinessText}" Style="{StaticResource CaptionTextStyle}"
+                               TextWrapping="Wrap" Visibility="{Binding NextMonthPeriodVisibility}" Margin="0,2,0,0" />
+                </StackPanel>
+                <WrapPanel Grid.Column="3" VerticalAlignment="Center" Margin="16,0,0,0" MaxWidth="430">
+                    <Button Content="Seleccionar Excel general" Click="SelectFile_Click"
+                            IsEnabled="{Binding CanSelectFile}" />
+                    <Button Content="Abrir archivo" Click="OpenSourceFile_Click"
+                            IsEnabled="{Binding CanOpenSourceFile}" />
+                    <Button Content="Analizar archivo" Click="Analyze_Click"
+                            IsEnabled="{Binding CanAnalyze}" />
+                    <Button Content="Abrir carpeta" Click="OpenSourceFolder_Click"
+                            IsEnabled="{Binding CanOpenSourceFolder}" />
+                    <Button Content="Generar archivos" Click="GenerateFiles_Click"
+                            IsEnabled="{Binding CanGenerate}" Style="{StaticResource PrimaryButtonStyle}" />
+                </WrapPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" Margin="0,0,0,6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="Buscar corredores o asistentes" Style="{StaticResource FieldLabelTextStyle}" />
+                <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="Busca por nombre o correo de corredor y asistente." />
             </StackPanel>
-        </ScrollViewer>
+            <Button Grid.Column="1" Content="Configurar corredores" Click="ConfigureBrokers_Click"
+                    IsEnabled="{Binding CanConfigureBrokers}" VerticalAlignment="Bottom" Margin="14,0,0,0" />
+            <TextBlock Grid.Column="2" Text="{Binding BrokerSummaryText}" Style="{StaticResource MutedTextStyle}"
+                       HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="14,0,0,8" />
+        </Grid>
+
+        <DataGrid x:Name="BrokerGrid" Grid.Row="4" ItemsSource="{Binding BrokerRowsView}"
+                  IsReadOnly="True" AutoGenerateColumns="False" IsEnabled="{Binding CanSelectFile}"
+                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Width="64">
+                    <DataGridTemplateColumn.HeaderTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <CheckBox IsThreeState="True"
+                                          IsChecked="{Binding DataContext.AreAllEligibleSelected, RelativeSource={RelativeSource AncestorType=DataGrid}, Mode=TwoWay}"
+                                          ToolTip="Marcar o desmarcar todos los corredores elegibles." />
+                                <TextBlock Text="Enviar" Margin="5,0,0,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.HeaderTemplate>
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      IsEnabled="{Binding IsEligible}" ToolTip="{Binding SelectionHint}"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Corredor y correo principal" Width="2*" MinWidth="210">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding BrokerName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding PrimaryEmail}" Style="{StaticResource CaptionTextStyle}"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding PrimaryEmail}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Asistentes de Vencimientos" Binding="{Binding AssistantsText}"
+                                    Width="2*" MinWidth="200" />
+                <DataGridTextColumn Header="Registros" Binding="{Binding RowCount}" Width="80" />
+                <DataGridTemplateColumn Header="Archivos asociados" Width="135">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding FileCountText}" VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Estado" Width="135">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding StatusText}" Style="{StaticResource StatusBadgeStyle}" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Error o advertencia" Binding="{Binding WarningText}"
+                                    Width="2*" MinWidth="180" />
+                <DataGridTemplateColumn Header="Acciones" Width="95">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Button Content="Ver archivos" Click="ViewGeneratedFiles_Click"
+                                    IsEnabled="{Binding CanViewFiles}"
+                                    Style="{StaticResource CompactButtonStyle}" Margin="0" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <Border Grid.Row="5" Style="{StaticResource CardStyle}" Padding="10" Margin="0,8,0,0"
+                Visibility="{Binding PendingVisibility}" MaxHeight="160">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Pendientes por resolver" Style="{StaticResource SectionTitleTextStyle}" />
+                    <DataGrid ItemsSource="{Binding PendingItems}"
+                              SelectedItem="{Binding SelectedPendingIssue, Mode=TwoWay}"
+                              IsReadOnly="True" AutoGenerateColumns="False" Height="95" Margin="0,6,0,0">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Fila" Binding="{Binding RowNumber}" Width="70" />
+                            <DataGridTextColumn Header="Valor encontrado" Binding="{Binding RawValue}" Width="2*" />
+                            <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="150" />
+                            <DataGridTextColumn Header="Posibles corredores" Binding="{Binding CandidateBrokerNames}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+                <Button Grid.Column="1" Content="Resolver seleccionado" Click="ResolveSelected_Click"
+                        IsEnabled="{Binding CanResolve}" Style="{StaticResource PrimaryButtonStyle}"
+                        VerticalAlignment="Bottom" Margin="12,0,0,0" />
+            </Grid>
+        </Border>
+
+        <Border x:Name="BottomActionBar" Grid.Row="6" Style="{StaticResource CardStyle}"
+                Padding="14" Margin="0,10,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="300" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <WrapPanel VerticalAlignment="Center">
+                    <Button x:Name="NewSendButton" Content="Nuevo envío" Click="NewSend_Click"
+                            IsEnabled="{Binding CanSelectFile}" />
+                    <Button Content="Guardar" Click="Save_Click" IsEnabled="{Binding CanSave}" />
+                    <Button Content="Recargar datos" Click="ReloadData_Click" IsEnabled="{Binding CanSelectFile}" />
+                    <Button Content="Ver envíos recientes" Click="OpenSendHistory_Click"
+                            IsEnabled="{Binding CanOpenSendHistory}" />
+                </WrapPanel>
+                <StackPanel Grid.Column="1" Margin="16,0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding OperationStatusText}" Style="{StaticResource CaptionTextStyle}"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding SendReadinessText}" />
+                    <ProgressBar Height="5" Margin="0,5,0,0" IsIndeterminate="{Binding IsBusy}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="SendSelectedButton" Content="Enviar seleccionados" Click="SendSelected_Click"
+                            IsEnabled="{Binding CanSendSelected}" />
+                    <Button x:Name="SendAllButton" Content="Enviar todos" Click="SendAll_Click"
+                            IsEnabled="{Binding CanSendAll}"
+                            Style="{StaticResource PrimaryButtonStyle}" Margin="0" />
+                </StackPanel>
+            </Grid>
+        </Border>
     </Grid>
 </Window>

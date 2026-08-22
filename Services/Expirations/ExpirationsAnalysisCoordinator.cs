@@ -7,6 +7,7 @@ namespace ECS.CommissionsMailer.Services.Expirations;
 public interface IExpirationsAnalysisCoordinator
 {
     ExpirationsAnalysisSessionSnapshot Snapshot { get; }
+    void ResetPreparation();
     void SelectProcess(ExpirationsProcess? process);
     void SelectFile(string sourcePath);
     Task<ExpirationsAnalysisSessionSnapshot> AnalyzeAsync(
@@ -79,6 +80,12 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     }
 
     public ExpirationsAnalysisSessionSnapshot Snapshot { get; private set; }
+
+    public void ResetPreparation()
+    {
+        _process = null;
+        ClearAnalysis(preserveSourcePath: false);
+    }
 
     public void SelectProcess(ExpirationsProcess? process)
     {
@@ -489,6 +496,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         ReadOptions = _readOptions,
         ReadResult = readResult,
         AnalyzedSourceSha256 = _analyzedSourceSha256,
+        Catalog = _catalog?.Items.ToList() ?? [],
         Messages = messages ?? []
     };
 

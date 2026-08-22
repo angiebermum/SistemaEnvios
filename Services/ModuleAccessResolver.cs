@@ -15,6 +15,9 @@ public sealed record ModuleAccessResolution(ApplicationModule? DirectModule, boo
 
 public static class ModuleAccessResolver
 {
+    public static bool CanSwitchModules(AppUser? user) => user is
+        { IsActive: true, CanUseCommissions: true, CanUseExpirations: true };
+
     public static ModuleAccessResolution Resolve(AppUser? user)
     {
         AppUserAuthorization.DemandAnyModuleAccess(user);

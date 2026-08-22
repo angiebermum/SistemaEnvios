@@ -162,6 +162,7 @@ internal sealed class ExpirationsSendHistoryItemMapper : IFirestoreEntityMapper<
         nameof(ExpirationsGeneratedFileVariant.Standard) => ExpirationsGeneratedFileVariant.Standard,
         nameof(ExpirationsGeneratedFileVariant.FelixAlphabetical) => ExpirationsGeneratedFileVariant.FelixAlphabetical,
         nameof(ExpirationsGeneratedFileVariant.FelixExpirationDate) => ExpirationsGeneratedFileVariant.FelixExpirationDate,
+        nameof(ExpirationsGeneratedFileVariant.Manual) => ExpirationsGeneratedFileVariant.Manual,
         _ => throw new InvalidDataException("La variante de adjunto del historial no está permitida.")
     };
 

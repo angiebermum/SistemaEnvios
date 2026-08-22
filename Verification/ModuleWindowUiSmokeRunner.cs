@@ -2,6 +2,9 @@ using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authorization;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Firestore;
 using ECS.CommissionsMailer.Models;
@@ -54,6 +57,9 @@ internal static class ModuleWindowUiSmokeRunner
             var expirationsPendingPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-pending-ui-smoke.png");
+            var expirationsSinglePermissionPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-single-permission-ui-smoke.png");
             var resolutionDialogPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-resolution-ui-smoke.png");
@@ -93,6 +99,9 @@ internal static class ModuleWindowUiSmokeRunner
             var emailSettingsPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-email-settings-ui-smoke.png");
+            var generatedFilesPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-associated-files-ui-smoke.png");
             var sendReviewNormalPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-send-review-normal-ui-smoke.png");
@@ -113,9 +122,26 @@ internal static class ModuleWindowUiSmokeRunner
                 "ECSCommissionsMailer-expirations-send-history-in-progress-ui-smoke.png");
 
             Render(new ModuleSelectionWindow(user), selectorPath);
-            Render(
-                ExpirationsWindow(user, new ExpirationsAnalysisSessionSnapshot()),
-                expirationsInitialPath);
+            RenderAndValidateExpirationsShell(
+                ExpirationsWindow(user, InitialSnapshot()),
+                expirationsInitialPath,
+                expectModuleSwitch: true);
+            var singlePermissionUser = new AppUser
+            {
+                Uid = "ui-smoke-single",
+                Email = "ui-smoke-single@example.test",
+                DisplayName = "Usuario solo Vencimientos",
+                Role = AppUserRole.Operator,
+                IsActive = true,
+                CanUseCommissions = false,
+                CanUseExpirations = true,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            RenderAndValidateExpirationsShell(
+                ExpirationsWindow(singlePermissionUser, InitialSnapshot()),
+                expirationsSinglePermissionPath,
+                expectModuleSwitch: false);
             var readySnapshot = ReadySnapshot();
             Render(
                 ExpirationsWindow(user, readySnapshot),
@@ -200,6 +226,22 @@ internal static class ModuleWindowUiSmokeRunner
                         false);
                     state.ApplyGenerationBatch(nextMonthBatch);
                 });
+            var smokeDataPaths = new AppDataPaths(Path.Combine(
+                Path.GetTempPath(),
+                $"ECSCommissionsMailer-expirations-files-smoke-{Guid.NewGuid():N}"));
+            var smokeLogger = new FileLogger(smokeDataPaths);
+            IReadOnlyList<ExpirationsGeneratedFile> smokeFiles = nextMonthBatch.Files;
+            Render(
+                new ExpirationsGeneratedFilesWindow(
+                    "Corredor de prueba",
+                    () => smokeFiles,
+                    new GeneratedFileViewerService(new GeneratedFileProcessLauncher(), smokeDataPaths, smokeLogger),
+                    new AssociatedWorkbookEditService(smokeDataPaths, smokeLogger),
+                    (_, _) => { },
+                    file => smokeFiles = smokeFiles.Where(candidate => !ReferenceEquals(candidate, file)).ToList(),
+                    _ => new ExpirationsManualFileAddResult(nextMonthBatch, null, "Smoke sin selección interactiva."),
+                    () => Task.CompletedTask),
+                generatedFilesPath);
             var settingsWindow = new ExpirationsEmailSettingsWindow(
                 new SmokeEmailSettingsService(),
                 ExpirationsProcess.PreviousMonth);
@@ -261,8 +303,8 @@ internal static class ModuleWindowUiSmokeRunner
             Directory.CreateDirectory(historyDirectory);
             var successfulPath = Path.Combine(historyDirectory, "Corredor exitoso.xlsx");
             var failedPath = Path.Combine(historyDirectory, "Corredor fallido.xlsx");
-            File.WriteAllText(successfulPath, "smoke-success");
-            File.WriteAllText(failedPath, "smoke-failure");
+            CreateSmokeWorkbook(successfulPath, "smoke-success");
+            CreateSmokeWorkbook(failedPath, "smoke-failure");
             var hashService = new GeneratedFileHashService();
             var historyBatch = new ExpirationsGenerationBatch
             {
@@ -328,6 +370,7 @@ internal static class ModuleWindowUiSmokeRunner
                     $"ERRORES_BINDING={(hasBindingErrors ? "SI" : "NO")}",
                     $"SELECTOR={selectorPath}",
                     $"VENCIMIENTOS_INICIAL={expirationsInitialPath}",
+                    $"VENCIMIENTOS_UN_SOLO_PERMISO={expirationsSinglePermissionPath}",
                     $"VENCIMIENTOS_LISTO={expirationsReadyPath}",
                     $"VENCIMIENTOS_PENDIENTE={expirationsPendingPath}",
                     $"DIALOGO_RESOLUCION={resolutionDialogPath}",
@@ -343,6 +386,7 @@ internal static class ModuleWindowUiSmokeRunner
                     $"NEXT_MONTH_SIN_PERIODO={nextMonthNoPeriodPath}",
                     $"NEXT_MONTH_LISTO_NORMAL_MAS_ESPECIAL={nextMonthReadyPath}",
                     $"CONFIGURACION_CORREO={emailSettingsPath}",
+                    $"ARCHIVOS_ASOCIADOS={generatedFilesPath}",
                     $"REVISION_NORMAL_SELECCION_CUENTA={sendReviewNormalPath}",
                     $"REVISION_ESPECIAL_DOS_ADJUNTOS={sendReviewSpecialPath}",
                     $"ENVIO_BUSY={sendReviewBusyPath}",
@@ -402,6 +446,41 @@ internal static class ModuleWindowUiSmokeRunner
         window.Close();
     }
 
+    private static void RenderAndValidateExpirationsShell(
+        ExpirationsWindow window,
+        string path,
+        bool expectModuleSwitch)
+    {
+        window.Show();
+        window.UpdateLayout();
+        foreach (var requiredElement in new[]
+                 {
+                     "EmailTemplateCard",
+                     "SignaturePanel",
+                     "GenerationSection",
+                     "BrokerGrid",
+                     "BottomActionBar",
+                     "NewSendButton",
+                     "OutlookAccountSelector",
+                     "ConnectOutlookButton",
+                     "SendSelectedButton",
+                     "SendAllButton",
+                     "SwitchModuleButton"
+                 })
+        {
+            if (window.FindName(requiredElement) is not FrameworkElement)
+                throw new InvalidOperationException($"Falta el elemento UAT '{requiredElement}'.");
+        }
+        var switchButton = (FrameworkElement)window.FindName("SwitchModuleButton");
+        var expectedVisibility = expectModuleSwitch ? Visibility.Visible : Visibility.Collapsed;
+        if (switchButton.Visibility != expectedVisibility)
+            throw new InvalidOperationException("La visibilidad de Cambiar módulo no corresponde a los permisos.");
+        if (((ExpirationsWindowState)window.DataContext).BrokerRowsView.IsEmpty)
+            throw new InvalidOperationException("La tabla principal no mostró el catálogo activo antes del análisis.");
+        Capture(window, path);
+        window.Close();
+    }
+
     private static void Capture(Window window, string path)
     {
         var width = Math.Max(1, (int)Math.Ceiling(window.ActualWidth));
@@ -412,6 +491,24 @@ internal static class ModuleWindowUiSmokeRunner
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
             encoder.Save(stream);
+    }
+
+    private static void CreateSmokeWorkbook(string path, string value)
+    {
+        using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+        var workbookPart = document.AddWorkbookPart();
+        workbookPart.Workbook = new Workbook();
+        var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+        worksheetPart.Worksheet = new Worksheet(new SheetData(
+            new Row(new Cell { DataType = CellValues.String, CellValue = new CellValue(value) })));
+        var sheets = workbookPart.Workbook.AppendChild(new Sheets());
+        sheets.Append(new Sheet
+        {
+            Id = workbookPart.GetIdOfPart(worksheetPart),
+            SheetId = 1,
+            Name = "Datos"
+        });
+        workbookPart.Workbook.Save();
     }
 
     private static ExpirationsAnalysisSessionSnapshot ReadySnapshot(
@@ -429,6 +526,26 @@ internal static class ModuleWindowUiSmokeRunner
                 ResolvedRows = 12,
                 CanGenerate = true
             },
+            Catalog =
+            [
+                new ExpirationsBrokerCatalogItem
+                {
+                    BrokerId = brokerId,
+                    Name = "Corredor resuelto",
+                    PrimaryEmailAddresses = ["corredor@example.test"],
+                    IsActive = true,
+                    Assistants =
+                    [
+                        new ExpirationsAssistant
+                        {
+                            Id = Guid.Parse("99999999-9999-9999-9999-999999999999"),
+                            Name = "Asistente Vencimientos",
+                            Email = "asistente@example.test",
+                            IsActive = true
+                        }
+                    ]
+                }
+            ],
             Distribution =
             [
                 new ExpirationsDistributionPreviewItem
@@ -443,6 +560,16 @@ internal static class ModuleWindowUiSmokeRunner
         };
     }
 
+    private static ExpirationsAnalysisSessionSnapshot InitialSnapshot()
+    {
+        var ready = ReadySnapshot();
+        return new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = ExpirationsProcess.PreviousMonth,
+            Catalog = ready.Catalog
+        };
+    }
+
     private static ExpirationsWindow ExpirationsWindow(
         AppUser user,
         ExpirationsAnalysisSessionSnapshot snapshot)
@@ -451,6 +578,8 @@ internal static class ModuleWindowUiSmokeRunner
         var catalog = new ExpirationsBrokerCatalogService(
             new SmokeDirectoryRepository(),
             new SmokeProfileRepository());
+        var paths = new AppDataPaths(Path.Combine(Path.GetTempPath(), "ECSCommissionsMailer-module-ui-smoke"));
+        var logger = new FileLogger(paths);
         return new ExpirationsWindow(
             user,
             new NonOperationalAppUserRepository(),
@@ -460,7 +589,9 @@ internal static class ModuleWindowUiSmokeRunner
             new SmokeEmailSettingsService(),
             new ExpirationsSendPreparationService(settingsRepository, catalog),
             new SmokeOutlookSender(),
-            new SmokeSendHistoryRepository());
+            new SmokeSendHistoryRepository(),
+            paths,
+            logger);
     }
 
     private static ExpirationsEmailSettingsSnapshot SettingsSnapshot(ExpirationsProcess process) => new(
@@ -717,6 +848,7 @@ internal static class ModuleWindowUiSmokeRunner
     {
         public ExpirationsAnalysisSessionSnapshot Snapshot { get; private set; } = snapshot;
 
+        public void ResetPreparation() => Snapshot = new ExpirationsAnalysisSessionSnapshot();
         public void SelectProcess(ExpirationsProcess? process) { }
         public void SelectFile(string sourcePath) { }
 

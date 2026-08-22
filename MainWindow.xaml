@@ -53,6 +53,9 @@
                             <Button Content="Administrar accesos" Click="ManageAccess_Click"
                                     Visibility="{Binding AdminAccessVisibility}" Style="{StaticResource CompactButtonStyle}"
                                     Padding="5,1" MinHeight="22" />
+                            <Button Content="Cambiar módulo" Click="SwitchModule_Click"
+                                    Visibility="{Binding SwitchModuleVisibility}" IsEnabled="{Binding IsUiEnabled}"
+                                    Style="{StaticResource CompactButtonStyle}" Padding="5,1" MinHeight="22" />
                             <Button Content="Cerrar sesión" Click="Logout_Click"
                                     Style="{StaticResource CompactButtonStyle}" Padding="5,1" MinHeight="22" Margin="0" />
                         </StackPanel>

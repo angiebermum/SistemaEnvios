@@ -103,7 +103,7 @@ public sealed class ExpirationsEmailSendingTests
         using var files = GeneratedFiles.Create(
             ExpirationsGeneratedFileVariant.FelixAlphabetical,
             ExpirationsGeneratedFileVariant.FelixExpirationDate);
-        var service = Preparation(files.Batch, Broker());
+        var service = Preparation(files.Batch, Broker(mode: ExpirationsNextMonthGenerationMode.SpecialDualSorted));
 
         var result = await service.PrepareAsync(files.Batch, TestContext.Current.CancellationToken);
 
@@ -114,6 +114,40 @@ public sealed class ExpirationsEmailSendingTests
         Assert.Equal(
             [ExpirationsGeneratedFileVariant.FelixAlphabetical, ExpirationsGeneratedFileVariant.FelixExpirationDate],
             prepared.Attachments.Select(attachment => attachment.Variant));
+
+        var state = new ExpirationsWindowState(new AppUser
+        {
+            Uid = "special-ui",
+            Email = "special-ui@example.test",
+            DisplayName = "Special UI",
+            Role = AppUserRole.Operator,
+            IsActive = true,
+            CanUseExpirations = true
+        });
+        state.ApplySnapshot(new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = ExpirationsProcess.NextMonth,
+            Catalog = [Broker(mode: ExpirationsNextMonthGenerationMode.SpecialDualSorted)],
+            Distribution =
+            [
+                new ExpirationsDistributionPreviewItem
+                {
+                    BrokerId = BrokerOne,
+                    BrokerName = "Corredor Uno",
+                    RowCount = 2
+                }
+            ],
+            Analysis = new ExpirationsWorkbookAnalysisResult
+            {
+                TotalRows = 2,
+                ResolvedRows = 2,
+                CanGenerate = true
+            }
+        });
+        state.ApplyGenerationBatch(files.Batch);
+        var row = Assert.Single(state.BrokerRowsView.Cast<ExpirationsBrokerRow>());
+        Assert.Equal("2 archivos", row.FileCountText);
+        Assert.Equal(2, row.GeneratedFiles.Count);
     }
 
     [Fact]
@@ -127,6 +161,22 @@ public sealed class ExpirationsEmailSendingTests
         Assert.True(result.CanSend);
         Assert.Single(result.Requests);
         Assert.Single(result.Requests[0].AttachmentPaths);
+    }
+
+    [Fact]
+    public async Task LocalExpirationsSignatureIsAddedToEveryPreparedRequest()
+    {
+        using var files = GeneratedFiles.Create(ExpirationsGeneratedFileVariant.Standard);
+        var service = Preparation(files.Batch, Broker());
+        var signaturePath = @"C:\FirmaVencimientos\firma-local.png";
+
+        var result = await service.PrepareAsync(
+            files.Batch,
+            signaturePath,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.CanSend);
+        Assert.All(result.Requests, request => Assert.Equal(signaturePath, request.SignatureImagePath));
     }
 
     [Fact]
@@ -375,13 +425,15 @@ public sealed class ExpirationsEmailSendingTests
 
     private static ExpirationsBrokerCatalogItem Broker(
         IEnumerable<string>? primary = null,
-        IEnumerable<ExpirationsAssistant>? assistants = null) => new()
+        IEnumerable<ExpirationsAssistant>? assistants = null,
+        ExpirationsNextMonthGenerationMode mode = ExpirationsNextMonthGenerationMode.Standard) => new()
     {
         BrokerId = BrokerOne,
         Name = "Corredor Uno",
         PrimaryEmailAddresses = (primary ?? ["primary@example.test"]).ToList(),
         Assistants = (assistants ?? []).ToList(),
-        IsActive = true
+        IsActive = true,
+        NextMonthGenerationMode = mode
     };
 
     private static ExpirationsAssistant Assistant(string name, string email, bool active) => new()
@@ -446,7 +498,7 @@ public sealed class ExpirationsEmailSendingTests
             var files = variants.Select((variant, index) =>
             {
                 var path = Path.Combine(directory, $"generated-{index + 1}.xlsx");
-                File.WriteAllText(path, $"file-{index + 1}");
+                ExpirationsUatCompletionTests.CreateValidWorkbook(path, $"file-{index + 1}");
                 return new ExpirationsGeneratedFile
                 {
                     BrokerId = BrokerOne,

@@ -263,6 +263,7 @@ public partial class App : Application
                 var coordinator = new ExpirationsAnalysisCoordinator(
                     catalogService,
                     associationRepository);
+                var generationService = new ExpirationsGenerationService();
                 ShowExpirationsWindow(
                     paths,
                     logger,
@@ -272,7 +273,8 @@ public partial class App : Application
                     appUsers,
                     profile.Value,
                     coordinator,
-                    configurationService);
+                    configurationService,
+                    generationService);
                 return;
             }
 
@@ -379,13 +381,15 @@ public partial class App : Application
         IAppUserRepository appUsers,
         AppUser currentUser,
         IExpirationsAnalysisCoordinator coordinator,
-        IExpirationsBrokerConfigurationService configurationService)
+        IExpirationsBrokerConfigurationService configurationService,
+        IExpirationsGenerationService generationService)
     {
         var expirationsWindow = new ExpirationsWindow(
             currentUser,
             appUsers,
             coordinator,
-            configurationService);
+            configurationService,
+            generationService);
         MainWindow = expirationsWindow;
         var restarting = false;
         expirationsWindow.LogoutRequested += (_, _) =>

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authorization;
@@ -14,17 +15,20 @@ public partial class ExpirationsWindow : Window
     private readonly IAppUserRepository _appUsers;
     private readonly IExpirationsAnalysisCoordinator _coordinator;
     private readonly IExpirationsBrokerConfigurationService _configurationService;
+    private readonly IExpirationsGenerationService _generationService;
     private readonly ExpirationsWindowState _state;
 
     public ExpirationsWindow(
         AppUser currentUser,
         IAppUserRepository appUsers,
         IExpirationsAnalysisCoordinator coordinator,
-        IExpirationsBrokerConfigurationService configurationService)
+        IExpirationsBrokerConfigurationService configurationService,
+        IExpirationsGenerationService generationService)
     {
         ArgumentNullException.ThrowIfNull(appUsers);
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _configurationService = configurationService ?? throw new ArgumentNullException(nameof(configurationService));
+        _generationService = generationService ?? throw new ArgumentNullException(nameof(generationService));
         _state = new ExpirationsWindowState(currentUser);
         _appUsers = appUsers;
         InitializeComponent();
@@ -62,7 +66,7 @@ public partial class ExpirationsWindow : Window
 
     private async void Analyze_Click(object sender, RoutedEventArgs e)
     {
-        await RunBusyAsync(async () =>
+        await RunBusyAsync("Analizando archivo...", async () =>
         {
             var snapshot = await _coordinator.AnalyzeAsync();
             if (snapshot.RequiresWorkbookSelection)
@@ -128,7 +132,7 @@ public partial class ExpirationsWindow : Window
             return;
         }
 
-        await RunBusyAsync(async () =>
+        await RunBusyAsync("Actualizando asociaciones...", async () =>
         {
             var result = await _coordinator.ConfirmAssociationAsync(new ExpirationsAssociationConfirmation(
                 issue.RowNumber,
@@ -156,16 +160,65 @@ public partial class ExpirationsWindow : Window
         if (!management.HasSavedChanges)
             return;
 
-        await RunBusyAsync(async () =>
+        await RunBusyAsync("Actualizando corredores...", async () =>
         {
             var snapshot = await _coordinator.RefreshCatalogAndReanalyzeAsync();
             _state.ApplySnapshot(snapshot);
         });
     }
 
-    private async Task RunBusyAsync(Func<Task> operation)
+    private async void GenerateFiles_Click(object sender, RoutedEventArgs e)
     {
-        _state.SetBusy(true);
+        var dialog = new OpenFolderDialog
+        {
+            Title = "Seleccione la carpeta donde se guardará esta generación",
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        await RunBusyAsync("Preparando generación...", async () =>
+        {
+            var preparation = await _coordinator.PrepareGenerationAsync();
+            _state.ApplySnapshot(preparation.Snapshot);
+            if (!preparation.CanGenerate)
+            {
+                MessageBox.Show(
+                    preparation.ErrorMessage,
+                    "Generación de Vencimientos",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var progress = new Progress<ExpirationsGenerationProgress>(value =>
+                _state.SetOperationStatus($"Generando archivo {value.CurrentFile} de {value.TotalFiles}..."));
+            var batch = await _generationService.GenerateAsync(
+                new ExpirationsGenerationRequest(preparation.Context!, dialog.FolderName),
+                progress);
+            _state.ApplyGenerationBatch(batch);
+            MessageBox.Show(
+                $"Generación completada.\n\nArchivos generados: {batch.Files.Count}\nCarpeta: {batch.OutputDirectory}",
+                "Generación de Vencimientos",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        });
+    }
+
+    private void OpenGeneratedFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_state.GeneratedOutputDirectory.Length == 0 || !Directory.Exists(_state.GeneratedOutputDirectory))
+            return;
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = _state.GeneratedOutputDirectory,
+            UseShellExecute = true
+        });
+    }
+
+    private async Task RunBusyAsync(string status, Func<Task> operation)
+    {
+        _state.SetBusy(true, status);
         try
         {
             await operation();
@@ -217,6 +270,8 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     private ExpirationsAnalysisSessionSnapshot _snapshot = new();
     private ExpirationsPendingIssue? _selectedPendingIssue;
     private bool _isBusy;
+    private string _operationStatusText = string.Empty;
+    private ExpirationsGenerationBatch? _generationBatch;
 
     public ExpirationsWindowState(AppUser currentUser)
     {
@@ -246,7 +301,12 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public bool CanConfigureBrokers => !IsBusy;
     public bool CanAnalyze => !IsBusy && SelectedProcessOption is not null && SourcePath.Length > 0;
     public bool CanResolve => !IsBusy && SelectedPendingIssue?.CanResolve == true;
+    public bool CanGenerate => !IsBusy &&
+        _snapshot.Process == ExpirationsProcess.PreviousMonth &&
+        _snapshot.Analysis is { CanGenerate: true, TotalRows: > 0 } &&
+        _snapshot.Distribution.Count > 0;
     public Visibility BusyVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;
+    public string OperationStatusText => _operationStatusText;
     public Visibility ResultVisibility =>
         _snapshot.Analysis is not null || _snapshot.ReadResult is not null
             ? Visibility.Visible
@@ -259,6 +319,13 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         _snapshot.Analysis is not null && PendingItems.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
+    public Visibility GenerationVisibility => AnalysisVisibility;
+    public Visibility GenerationResultVisibility =>
+        _generationBatch is null ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility NextMonthGenerationNoteVisibility =>
+        _snapshot.Process == ExpirationsProcess.NextMonth && _snapshot.Analysis?.CanGenerate == true
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     public int TotalRows => _snapshot.Analysis?.TotalRows ?? 0;
     public int ResolvedRows => _snapshot.Analysis?.ResolvedRows ?? 0;
     public int PendingRows => _snapshot.Analysis?.RowsWithBlockingIssues ?? 0;
@@ -267,17 +334,27 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public IReadOnlyList<ExpirationsPendingIssue> PendingItems => _snapshot.PendingIssues;
     public string StatusText => _snapshot.Analysis switch
     {
-        { CanGenerate: true } => "Análisis completo. Todas las pólizas tienen un corredor identificado.",
+        { CanGenerate: true } => "Análisis completo.",
         { } when PendingItems.Count == 1 => "El análisis tiene 1 elemento pendiente de revisión.",
         { } => $"El análisis tiene {PendingItems.Count} elementos pendientes de revisión.",
         _ when _snapshot.RequiresWorkbookSelection => "No se identificó automáticamente la columna Corredor.",
         _ => "No fue posible completar el análisis."
     };
     public string StatusDetailText => _snapshot.Analysis?.CanGenerate == true
-        ? "Listo para la generación."
+        ? _snapshot.Process == ExpirationsProcess.PreviousMonth
+            ? "Todas las pólizas tienen un corredor identificado. Listo para la generación."
+            : "Todas las pólizas tienen un corredor identificado."
         : _snapshot.Messages.Count > 0
             ? string.Join(" ", _snapshot.Messages)
             : "Revise los elementos pendientes antes de continuar.";
+    public string ReadyText => _snapshot.Process == ExpirationsProcess.PreviousMonth
+        ? "El análisis está completo y listo para la generación."
+        : "El análisis está completo.";
+    public int GeneratedFileCount => _generationBatch?.Files.Count ?? 0;
+    public string GeneratedOutputDirectory => _generationBatch?.OutputDirectory ?? string.Empty;
+    public string GenerationWarningsText => _generationBatch is { Warnings.Count: > 0 }
+        ? string.Join(Environment.NewLine, _generationBatch.Warnings)
+        : "Sin advertencias.";
 
     public ExpirationsProcessOption? SelectedProcessOption
     {
@@ -287,6 +364,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             if (Equals(_selectedProcessOption, value)) return;
             _selectedProcessOption = value;
             _selectedPendingIssue = null;
+            _generationBatch = null;
             Notify();
             NotifyAllState();
         }
@@ -312,17 +390,31 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public void ApplySnapshot(ExpirationsAnalysisSessionSnapshot snapshot)
     {
         _snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
+        _generationBatch = null;
         if (snapshot.Process is { } process)
             _selectedProcessOption = ProcessOptions.Single(option => option.Value == process);
         _selectedPendingIssue = null;
         NotifyAllState();
     }
 
-    public void SetBusy(bool value)
+    public void ApplyGenerationBatch(ExpirationsGenerationBatch batch)
     {
-        if (_isBusy == value) return;
-        _isBusy = value;
+        _generationBatch = batch ?? throw new ArgumentNullException(nameof(batch));
         NotifyAllState();
+    }
+
+    public void SetBusy(bool value, string? operationStatus = null)
+    {
+        if (_isBusy == value && operationStatus is null) return;
+        _isBusy = value;
+        _operationStatusText = value ? operationStatus ?? _operationStatusText : string.Empty;
+        NotifyAllState();
+    }
+
+    public void SetOperationStatus(string value)
+    {
+        _operationStatusText = value;
+        Notify(nameof(OperationStatusText));
     }
 
     private void NotifyAllState() => Notify(string.Empty);

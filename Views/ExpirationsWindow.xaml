@@ -110,7 +110,7 @@
                         <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="150,14,0,0">
                             <Button Content="Analizar archivo" Click="Analyze_Click"
                                     IsEnabled="{Binding CanAnalyze}" Style="{StaticResource PrimaryButtonStyle}" />
-                            <TextBlock Text="Analizando archivo..." Style="{StaticResource CaptionTextStyle}"
+                            <TextBlock Text="{Binding OperationStatusText}" Style="{StaticResource CaptionTextStyle}"
                                        VerticalAlignment="Center" Margin="8,0,0,0"
                                        Visibility="{Binding BusyVisibility}" />
                         </StackPanel>
@@ -172,10 +172,11 @@
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource CardStyle}" Visibility="{Binding AnalysisVisibility}">
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12"
+                        Visibility="{Binding AnalysisVisibility}">
                     <StackPanel>
                         <TextBlock Text="Pendientes por resolver" Style="{StaticResource SectionTitleTextStyle}" />
-                        <TextBlock Text="El análisis está completo y listo para la generación."
+                        <TextBlock Text="{Binding ReadyText}"
                                    Style="{StaticResource MutedTextStyle}" Margin="0,12,0,0"
                                    Visibility="{Binding ReadyVisibility}" />
                         <DataGrid ItemsSource="{Binding PendingItems}"
@@ -194,6 +195,39 @@
                                 IsEnabled="{Binding CanResolve}" Style="{StaticResource PrimaryButtonStyle}"
                                 HorizontalAlignment="Left" Margin="0,12,0,0"
                                 Visibility="{Binding PendingVisibility}" />
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="GenerationSection" Style="{StaticResource CardStyle}"
+                        Visibility="{Binding GenerationVisibility}">
+                    <StackPanel>
+                        <TextBlock Text="Generación de archivos" Style="{StaticResource SectionTitleTextStyle}" />
+                        <TextBlock Text="La generación de Vencimientos del mes siguiente se habilitará al completar el cálculo de primas y su formato especial."
+                                   Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Visibility="{Binding NextMonthGenerationNoteVisibility}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                            <Button Content="Generar archivos" Click="GenerateFiles_Click"
+                                    IsEnabled="{Binding CanGenerate}" Style="{StaticResource PrimaryButtonStyle}" />
+                            <TextBlock Text="{Binding OperationStatusText}" Style="{StaticResource CaptionTextStyle}"
+                                       VerticalAlignment="Center" Margin="8,0,0,0"
+                                       Visibility="{Binding BusyVisibility}" />
+                        </StackPanel>
+                        <Border Style="{StaticResource InfoPanelStyle}" Margin="0,12,0,0"
+                                Visibility="{Binding GenerationResultVisibility}">
+                            <StackPanel>
+                                <TextBlock Text="Generación completada." FontWeight="SemiBold" />
+                                <TextBlock Margin="0,4,0,0">
+                                    <Run Text="Archivos generados: " /><Run Text="{Binding GeneratedFileCount, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock Text="{Binding GeneratedOutputDirectory}" TextWrapping="Wrap"
+                                           Style="{StaticResource MutedTextStyle}" Margin="0,2,0,0" />
+                                <TextBlock Text="{Binding GenerationWarningsText}" TextWrapping="Wrap"
+                                           Style="{StaticResource MutedTextStyle}" Margin="0,5,0,0" />
+                                <Button Content="Abrir carpeta" Click="OpenGeneratedFolder_Click"
+                                        Style="{StaticResource CompactButtonStyle}"
+                                        HorizontalAlignment="Left" Margin="0,8,0,0" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
             </StackPanel>

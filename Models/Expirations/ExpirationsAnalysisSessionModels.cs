@@ -35,6 +35,7 @@ public sealed class ExpirationsAnalysisSessionSnapshot
     public string SourcePath { get; init; } = string.Empty;
     public ExpirationsWorkbookReadOptions? ReadOptions { get; init; }
     public ExpirationsWorkbookReadResult? ReadResult { get; init; }
+    public string AnalyzedSourceSha256 { get; init; } = string.Empty;
     public ExpirationsWorkbookAnalysisResult? Analysis { get; init; }
     public IReadOnlyList<ExpirationsBrokerCatalogItem> Catalog { get; init; } = [];
     public IReadOnlyList<ExpirationsDistributionPreviewItem> Distribution { get; init; } = [];

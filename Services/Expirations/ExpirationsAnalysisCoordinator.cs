@@ -1,5 +1,6 @@
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Firestore;
 using ECS.CommissionsMailer.Models.Expirations;
+using ECS.CommissionsMailer.Services;
 
 namespace ECS.CommissionsMailer.Services.Expirations;
 
@@ -12,6 +13,8 @@ public interface IExpirationsAnalysisCoordinator
         ExpirationsWorkbookReadOptions? options = null,
         CancellationToken cancellationToken = default);
     Task<ExpirationsAnalysisSessionSnapshot> RefreshCatalogAndReanalyzeAsync(
+        CancellationToken cancellationToken = default);
+    Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
         CancellationToken cancellationToken = default);
     Task<ExpirationsWorkbookInspection> InspectWorkbookAsync(CancellationToken cancellationToken = default);
     ExpirationsManualOverrideResult ApplyManualOverride(
@@ -33,6 +36,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     private readonly IExpirationsWorkbookInspectionService _inspectionService;
     private readonly ExpirationsBrokerNormalizer _normalizer;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<string, string> _computeSourceSha256;
     private ExpirationsProcess? _process;
     private string _sourcePath = string.Empty;
     private ExpirationsWorkbookReadOptions? _readOptions;
@@ -40,6 +44,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     private ExpirationsBrokerCatalog? _catalog;
     private IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerAssociation>> _associationDocuments = [];
     private readonly List<ExpirationsManualResolutionOverride> _manualOverrides = [];
+    private string _analyzedSourceSha256 = string.Empty;
 
     public ExpirationsAnalysisCoordinator(
         ExpirationsBrokerCatalogService catalogService,
@@ -49,7 +54,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         ExpirationsDistributionPreviewService? previewService = null,
         IExpirationsWorkbookInspectionService? inspectionService = null,
         ExpirationsBrokerNormalizer? normalizer = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Func<string, string>? sourceHashProvider = null)
     {
         _catalogService = catalogService ?? throw new ArgumentNullException(nameof(catalogService));
         _associations = associations ?? throw new ArgumentNullException(nameof(associations));
@@ -59,6 +65,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         _inspectionService = inspectionService ?? new ExpirationsWorkbookInspectionService();
         _normalizer = normalizer ?? new ExpirationsBrokerNormalizer();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        var hashService = new GeneratedFileHashService();
+        _computeSourceSha256 = sourceHashProvider ?? hashService.ComputeSha256;
         Snapshot = EmptySnapshot();
     }
 
@@ -96,19 +104,76 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         _readResult = readResult;
         if (!readResult.IsSuccess)
         {
+            _analyzedSourceSha256 = string.Empty;
             _catalog = null;
             _associationDocuments = [];
             Snapshot = EmptySnapshot(readResult, readResult.Messages);
             return Snapshot;
         }
 
+        var analyzedHash = _computeSourceSha256(_sourcePath);
+
         var catalogTask = _catalogService.LoadAsync(cancellationToken);
         var associationsTask = _associations.ListAsync(cancellationToken);
         await Task.WhenAll(catalogTask, associationsTask);
         _catalog = await catalogTask;
         _associationDocuments = await associationsTask;
+        var completedHash = _computeSourceSha256(_sourcePath);
+        if (!string.Equals(analyzedHash, completedHash, StringComparison.OrdinalIgnoreCase))
+        {
+            _analyzedSourceSha256 = string.Empty;
+            throw new ExpirationsGenerationException(
+                "El archivo seleccionado cambió durante el análisis. Analícelo nuevamente.");
+        }
+        _analyzedSourceSha256 = completedHash;
         Snapshot = BuildSnapshot();
         return Snapshot;
+    }
+
+    public async Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var snapshot = await RefreshCatalogAndReanalyzeAsync(cancellationToken);
+        if (snapshot.Process is null)
+            return PreparationRejected(snapshot, "Seleccione el proceso de Vencimientos antes de generar.");
+        if (snapshot.ReadResult?.Workbook is not { } sourceWorkbook || snapshot.Analysis is not { } analysis)
+            return PreparationRejected(snapshot, "Analice el archivo antes de generar.");
+        if (!analysis.CanGenerate || analysis.TotalRows <= 0)
+            return PreparationRejected(snapshot, "El análisis contiene pendientes o no tiene registros para generar.");
+        if (analysis.ResolvedRowNumbersByBroker.Count == 0 ||
+            analysis.ResolvedRowNumbersByBroker.All(item => item.Value.Count == 0))
+        {
+            return PreparationRejected(snapshot, "El análisis no contiene corredores destino.");
+        }
+        if (string.IsNullOrWhiteSpace(_analyzedSourceSha256))
+            return PreparationRejected(snapshot, "El archivo no tiene un hash de análisis válido. Analícelo nuevamente.");
+
+        var currentHash = _computeSourceSha256(_sourcePath);
+        if (!string.Equals(currentHash, _analyzedSourceSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            return PreparationRejected(
+                snapshot,
+                "El archivo seleccionado cambió después del análisis.\nAnalícelo nuevamente antes de generar.");
+        }
+
+        try
+        {
+            return new ExpirationsGenerationPreparationResult
+            {
+                Snapshot = snapshot,
+                Context = new ExpirationsGenerationContext(
+                    snapshot.Process.Value,
+                    _sourcePath,
+                    _analyzedSourceSha256,
+                    sourceWorkbook,
+                    analysis,
+                    snapshot.Catalog)
+            };
+        }
+        catch (ArgumentException ex)
+        {
+            return PreparationRejected(snapshot, ex.Message);
+        }
     }
 
     public async Task<ExpirationsAnalysisSessionSnapshot> RefreshCatalogAndReanalyzeAsync(
@@ -333,6 +398,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
             SourcePath = _sourcePath,
             ReadOptions = _readOptions,
             ReadResult = _readResult,
+            AnalyzedSourceSha256 = _analyzedSourceSha256,
             Analysis = analysis,
             Catalog = catalog,
             Distribution = _previewService.Build(analysis, catalog),
@@ -363,6 +429,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         _catalog = null;
         _associationDocuments = [];
         _manualOverrides.Clear();
+        _analyzedSourceSha256 = string.Empty;
         Snapshot = EmptySnapshot();
     }
 
@@ -374,7 +441,16 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         SourcePath = _sourcePath,
         ReadOptions = _readOptions,
         ReadResult = readResult,
+        AnalyzedSourceSha256 = _analyzedSourceSha256,
         Messages = messages ?? []
+    };
+
+    private static ExpirationsGenerationPreparationResult PreparationRejected(
+        ExpirationsAnalysisSessionSnapshot snapshot,
+        string message) => new()
+    {
+        Snapshot = snapshot,
+        ErrorMessage = message
     };
 
     private ExpirationsManualOverrideResult OverrideRejected(string message) => new()

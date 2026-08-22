@@ -73,6 +73,15 @@ internal static class ModuleWindowUiSmokeRunner
             var missingEmailProfilePath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-missing-email-profile-ui-smoke.png");
+            var generationBusyPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-generation-busy-ui-smoke.png");
+            var generationCompletedPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-generation-completed-ui-smoke.png");
+            var nextMonthReadyPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-next-month-ready-ui-smoke.png");
 
             Render(new ModuleSelectionWindow(user), selectorPath);
             Render(
@@ -80,7 +89,8 @@ internal static class ModuleWindowUiSmokeRunner
                     user,
                     new NonOperationalAppUserRepository(),
                     new SmokeCoordinator(new ExpirationsAnalysisSessionSnapshot()),
-                    new SmokeConfigurationService()),
+                    new SmokeConfigurationService(),
+                    new SmokeGenerationService()),
                 expirationsInitialPath);
             var readySnapshot = ReadySnapshot();
             Render(
@@ -88,7 +98,8 @@ internal static class ModuleWindowUiSmokeRunner
                     user,
                     new NonOperationalAppUserRepository(),
                     new SmokeCoordinator(readySnapshot),
-                    new SmokeConfigurationService()),
+                    new SmokeConfigurationService(),
+                    new SmokeGenerationService()),
                 expirationsReadyPath);
             var pendingSnapshot = PendingSnapshot();
             Render(
@@ -96,7 +107,8 @@ internal static class ModuleWindowUiSmokeRunner
                     user,
                     new NonOperationalAppUserRepository(),
                     new SmokeCoordinator(pendingSnapshot),
-                    new SmokeConfigurationService()),
+                    new SmokeConfigurationService(),
+                    new SmokeGenerationService()),
                 expirationsPendingPath);
             Render(
                 new ExpirationsBrokerResolutionWindow(
@@ -125,6 +137,25 @@ internal static class ModuleWindowUiSmokeRunner
             Render(
                 new ExpirationsBrokerProfileWindow(configurationService, configurationItems[2]),
                 missingEmailProfilePath);
+            var busyWindow = ExpirationsWindow(user, ReadySnapshot());
+            ((ExpirationsWindowState)busyWindow.DataContext).SetBusy(true, "Generando archivo 1 de 2...");
+            RenderAtElement(busyWindow, "GenerationSection", generationBusyPath);
+            var completedWindow = ExpirationsWindow(user, ReadySnapshot());
+            RenderAtElement(
+                completedWindow,
+                "GenerationSection",
+                generationCompletedPath,
+                shownWindow => ((ExpirationsWindowState)shownWindow.DataContext).ApplyGenerationBatch(
+                    new ExpirationsGenerationBatch
+                    {
+                        OutputDirectory = @"C:\Pruebas\Pendientes mes anterior - 20260821-120000",
+                        Files = [new ExpirationsGeneratedFile(), new ExpirationsGeneratedFile()],
+                        Warnings = ["El corredor 'Corredor sin correo' no tiene correo principal válido."]
+                    }));
+            RenderAtElement(
+                ExpirationsWindow(user, ReadySnapshot(ExpirationsProcess.NextMonth)),
+                "GenerationSection",
+                nextMonthReadyPath);
             bindingListener.Flush();
             var hasBindingErrors = new FileInfo(bindingLogPath).Length > 0;
             File.WriteAllText(
@@ -143,6 +174,9 @@ internal static class ModuleWindowUiSmokeRunner
                     $"PERFIL_CONFIGURADO={configuredProfilePath}",
                     $"EDITOR_ASISTENTE={assistantEditorPath}",
                     $"PERFIL_SIN_CORREO={missingEmailProfilePath}",
+                    $"GENERACION_BUSY={generationBusyPath}",
+                    $"GENERACION_COMPLETADA_CON_WARNINGS={generationCompletedPath}",
+                    $"NEXT_MONTH_LISTO_SIN_GENERAR={nextMonthReadyPath}",
                     $"LOG_BINDINGS={bindingLogPath}"));
             return !hasBindingErrors;
         }
@@ -178,6 +212,24 @@ internal static class ModuleWindowUiSmokeRunner
         window.Close();
     }
 
+    private static void RenderAtElement(
+        Window window,
+        string elementName,
+        string path,
+        Action<Window>? afterShow = null)
+    {
+        window.Show();
+        afterShow?.Invoke(window);
+        window.UpdateLayout();
+        if (window.FindName(elementName) is FrameworkElement element)
+        {
+            element.BringIntoView();
+            window.UpdateLayout();
+        }
+        Capture(window, path);
+        window.Close();
+    }
+
     private static void Capture(Window window, string path)
     {
         var width = Math.Max(1, (int)Math.Ceiling(window.ActualWidth));
@@ -190,12 +242,13 @@ internal static class ModuleWindowUiSmokeRunner
             encoder.Save(stream);
     }
 
-    private static ExpirationsAnalysisSessionSnapshot ReadySnapshot()
+    private static ExpirationsAnalysisSessionSnapshot ReadySnapshot(
+        ExpirationsProcess process = ExpirationsProcess.PreviousMonth)
     {
         var brokerId = Guid.Parse("11111111-1111-1111-1111-111111111111");
         return new ExpirationsAnalysisSessionSnapshot
         {
-            Process = ExpirationsProcess.PreviousMonth,
+            Process = process,
             SourcePath = @"C:\Pruebas\vencimientos.xlsx",
             Analysis = new ExpirationsWorkbookAnalysisResult
             {
@@ -217,6 +270,15 @@ internal static class ModuleWindowUiSmokeRunner
             ]
         };
     }
+
+    private static ExpirationsWindow ExpirationsWindow(
+        AppUser user,
+        ExpirationsAnalysisSessionSnapshot snapshot) => new(
+            user,
+            new NonOperationalAppUserRepository(),
+            new SmokeCoordinator(snapshot),
+            new SmokeConfigurationService(),
+            new SmokeGenerationService());
 
     private static ExpirationsAnalysisSessionSnapshot PendingSnapshot()
     {
@@ -377,6 +439,10 @@ internal static class ModuleWindowUiSmokeRunner
         public Task<ExpirationsAnalysisSessionSnapshot> RefreshCatalogAndReanalyzeAsync(
             CancellationToken cancellationToken = default) => Task.FromResult(Snapshot);
 
+        public Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ExpirationsGenerationPreparationResult { Snapshot = Snapshot });
+
         public Task<ExpirationsWorkbookInspection> InspectWorkbookAsync(
             CancellationToken cancellationToken = default) => Task.FromResult(Inspection());
 
@@ -389,6 +455,15 @@ internal static class ModuleWindowUiSmokeRunner
             ExpirationsAssociationConfirmation confirmation,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ExpirationsAssociationConfirmationResult { Snapshot = Snapshot });
+    }
+
+    private sealed class SmokeGenerationService : IExpirationsGenerationService
+    {
+        public Task<ExpirationsGenerationBatch> GenerateAsync(
+            ExpirationsGenerationRequest request,
+            IProgress<ExpirationsGenerationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ExpirationsGenerationBatch());
     }
 
     private sealed class NonOperationalAppUserRepository : IAppUserRepository

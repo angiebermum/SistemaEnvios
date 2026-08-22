@@ -271,7 +271,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             new ExpirationsBrokerCatalogService(directory, profiles),
             associations,
             new FakeWorkbookReader(SuccessfulRead(SourceRow(30, "Broker A"))),
-            inspectionService: new FakeInspectionService());
+            inspectionService: new FakeInspectionService(),
+            sourceHashProvider: _ => "stable-hash");
         Prepare(coordinator, "refresh.xlsx");
         var initial = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.True(initial.CanGenerate);
@@ -321,7 +322,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             new ExpirationsBrokerCatalogService(directory, profiles),
             associations,
             new FakeWorkbookReader(SuccessfulRead(SourceRow(31, "VALOR SIN ASOCIAR"))),
-            inspectionService: new FakeInspectionService());
+            inspectionService: new FakeInspectionService(),
+            sourceHashProvider: _ => "stable-hash");
         Prepare(coordinator, "override-refresh.xlsx");
         _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.True(coordinator.ApplyManualOverride(31, 0, BrokerA).Snapshot.CanGenerate);
@@ -344,6 +346,124 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         Assert.EndsWith("override-refresh.xlsx", refreshed.SourcePath, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(associations.Created);
         Assert.Empty(associations.Updated);
+    }
+
+    [Fact]
+    public async Task PrepareGenerationRefreshesCatalogAndBuildsControlledContext()
+    {
+        var associations = new FakeAssociationRepository([]);
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(40, "Broker A"))),
+            associations,
+            [Broker(BrokerA, "Broker A")]);
+        Prepare(coordinator, "prepare.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        var result = await coordinator.PrepareGenerationAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(result.CanGenerate);
+        Assert.Equal(2, associations.ListCalls);
+        Assert.Equal("stable-hash", result.Context!.SourceWorkbookSha256);
+        Assert.Equal([40U], result.Context.Analysis.ResolvedRowNumbersByBroker[BrokerA]);
+    }
+
+    [Fact]
+    public async Task PrepareGenerationBlocksWhenSourceHashChangedAfterAnalysis()
+    {
+        var currentHash = "hash-before";
+        var associations = new FakeAssociationRepository([]);
+        var directory = new FakeDirectoryRepository([
+            new ExpirationsBrokerDirectoryEntry { BrokerId = BrokerA, Name = "Broker A" }
+        ]);
+        var coordinator = new ExpirationsAnalysisCoordinator(
+            new ExpirationsBrokerCatalogService(directory, new FakeProfileRepository([])),
+            associations,
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(41, "Broker A"))),
+            inspectionService: new FakeInspectionService(),
+            sourceHashProvider: _ => currentHash);
+        Prepare(coordinator, "hash-change.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        currentHash = "hash-after";
+
+        var result = await coordinator.PrepareGenerationAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(result.CanGenerate);
+        Assert.Contains("cambió después del análisis", result.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PrepareGenerationBlocksWhenRefreshFindsDestinationInactive()
+    {
+        var associations = new FakeAssociationRepository([]);
+        var directory = new FakeDirectoryRepository([
+            new ExpirationsBrokerDirectoryEntry { BrokerId = BrokerA, Name = "Broker A" }
+        ]);
+        var profiles = new FakeProfileRepository([]);
+        var coordinator = new ExpirationsAnalysisCoordinator(
+            new ExpirationsBrokerCatalogService(directory, profiles),
+            associations,
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(42, "Broker A"))),
+            inspectionService: new FakeInspectionService(),
+            sourceHashProvider: _ => "stable");
+        Prepare(coordinator, "inactive-before-generate.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        profiles.Documents.Add(StoredProfile(new ExpirationsBrokerProfile
+        {
+            BrokerId = BrokerA,
+            IsActive = false,
+            CreatedAtUtc = Now,
+            UpdatedAtUtc = Now
+        }, "inactive"));
+
+        var result = await coordinator.PrepareGenerationAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(result.CanGenerate);
+        Assert.False(result.Snapshot.CanGenerate);
+        Assert.Equal(ExpirationsBrokerResolutionStatus.InactiveBroker,
+            Assert.Single(Assert.Single(result.Snapshot.Analysis!.RowResolutions).Components).Status);
+    }
+
+    [Fact]
+    public async Task PrepareGenerationBlocksWhenAssociationBecomesAmbiguousDuringRefresh()
+    {
+        var associations = new FakeAssociationRepository([
+            Stored(Association(1, BrokerA, ExpirationsAssociationKind.Code, "CAMBIO"))
+        ]);
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(43, "CAMBIO"))),
+            associations,
+            [Broker(BrokerA, "Broker A"), Broker(BrokerB, "Broker B")]);
+        Prepare(coordinator, "association-change.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        associations.Documents.Add(Stored(Association(2, BrokerB, ExpirationsAssociationKind.Code, "CAMBIO")));
+
+        var result = await coordinator.PrepareGenerationAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(result.CanGenerate);
+        Assert.Equal(ExpirationsBrokerResolutionStatus.Ambiguous,
+            Assert.Single(Assert.Single(result.Snapshot.Analysis!.RowResolutions).Components).Status);
+    }
+
+    [Fact]
+    public async Task PrepareGenerationKeepsValidManualOverrideAfterRefresh()
+    {
+        var associations = new FakeAssociationRepository([
+            Stored(Association(1, BrokerA, ExpirationsAssociationKind.Code, "MANUAL")),
+            Stored(Association(2, BrokerB, ExpirationsAssociationKind.Code, "MANUAL"))
+        ]);
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(44, "MANUAL"))),
+            associations,
+            [Broker(BrokerA, "Broker A"), Broker(BrokerB, "Broker B")]);
+        Prepare(coordinator, "manual-override.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Assert.True(coordinator.ApplyManualOverride(44, 0, BrokerA).Applied);
+
+        var result = await coordinator.PrepareGenerationAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(result.CanGenerate);
+        Assert.Equal(BrokerA, Assert.Single(result.Context!.Analysis.ResolvedRowNumbersByBroker.Keys));
+        Assert.Single(result.Snapshot.ManualOverrides);
     }
 
     private static ExpirationsAnalysisCoordinator Coordinator(
@@ -371,7 +491,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             associations,
             reader,
             inspectionService: new FakeInspectionService(),
-            timeProvider: new FixedTimeProvider(Now));
+            timeProvider: new FixedTimeProvider(Now),
+            sourceHashProvider: _ => "stable-hash");
     }
 
     private static void Prepare(ExpirationsAnalysisCoordinator coordinator, string path)

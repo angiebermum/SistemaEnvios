@@ -39,7 +39,7 @@ public sealed class ExpirationsNextMonthBatchGenerationTests
         {
             var standardWorkbook = standardDocument.WorkbookPart?.Workbook ??
                 throw new InvalidDataException("Workbook sintético inválido.");
-            Assert.Equal(["Reporte", "Total de primas"],
+            Assert.Equal(["Detalle", "Total de primas"],
                 (standardWorkbook.Sheets ?? throw new InvalidDataException("Sheets sintéticas inválidas."))
                 .Elements<Sheet>().Select(sheet => sheet.Name!.Value));
         }

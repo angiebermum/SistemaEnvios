@@ -29,12 +29,17 @@ public interface IExpirationsAnalysisCoordinator
     Task<ExpirationsAssociationConfirmationResult> ConfirmAssociationAsync(
         ExpirationsAssociationConfirmation confirmation,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsExclusionConfirmationResult> ExcludeAsync(
+        uint rowNumber,
+        int componentIndex,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordinator
 {
     private readonly ExpirationsBrokerCatalogService _catalogService;
     private readonly IExpirationsBrokerAssociationRepository _associations;
+    private readonly IExpirationsExclusionRepository? _exclusions;
     private readonly IExpirationsWorkbookReader _reader;
     private readonly ExpirationsWorkbookAnalysisService _analysisService;
     private readonly ExpirationsDistributionPreviewService _previewService;
@@ -49,6 +54,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     private ExpirationsWorkbookReadResult? _readResult;
     private ExpirationsBrokerCatalog? _catalog;
     private IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerAssociation>> _associationDocuments = [];
+    private IReadOnlyList<FirestoreStoredDocument<ExpirationsExclusion>> _exclusionDocuments = [];
     private readonly List<ExpirationsManualResolutionOverride> _manualOverrides = [];
     private string _analyzedSourceSha256 = string.Empty;
 
@@ -62,10 +68,12 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         ExpirationsBrokerNormalizer? normalizer = null,
         TimeProvider? timeProvider = null,
         Func<string, string>? sourceHashProvider = null,
-        IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null)
+        IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null,
+        IExpirationsExclusionRepository? exclusions = null)
     {
         _catalogService = catalogService ?? throw new ArgumentNullException(nameof(catalogService));
         _associations = associations ?? throw new ArgumentNullException(nameof(associations));
+        _exclusions = exclusions;
         _reader = reader ?? new ExpirationsWorkbookReader();
         _analysisService = analysisService ?? new ExpirationsWorkbookAnalysisService();
         _previewService = previewService ?? new ExpirationsDistributionPreviewService();
@@ -92,7 +100,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         if (_process == process)
             return;
         _process = process;
-        ClearAnalysis(preserveSourcePath: true);
+        ClearAnalysis(preserveSourcePath: true, preserveCatalog: true);
     }
 
     public void SelectFile(string sourcePath)
@@ -130,9 +138,11 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
 
         var catalogTask = _catalogService.LoadAsync(cancellationToken);
         var associationsTask = _associations.ListAsync(cancellationToken);
-        await Task.WhenAll(catalogTask, associationsTask);
+        var exclusionsTask = ListExclusionsAsync(cancellationToken);
+        await Task.WhenAll(catalogTask, associationsTask, exclusionsTask);
         _catalog = await catalogTask;
         _associationDocuments = await associationsTask;
+        _exclusionDocuments = await exclusionsTask;
         var completedHash = _computeSourceSha256(_sourcePath);
         if (!string.Equals(analyzedHash, completedHash, StringComparison.OrdinalIgnoreCase))
         {
@@ -235,9 +245,11 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     {
         var catalogTask = _catalogService.LoadAsync(cancellationToken);
         var associationsTask = _associations.ListAsync(cancellationToken);
-        await Task.WhenAll(catalogTask, associationsTask);
+        var exclusionsTask = ListExclusionsAsync(cancellationToken);
+        await Task.WhenAll(catalogTask, associationsTask, exclusionsTask);
         _catalog = await catalogTask;
         _associationDocuments = await associationsTask;
+        _exclusionDocuments = await exclusionsTask;
         _manualOverrides.RemoveAll(value => !IsActiveCatalogBroker(value.BrokerId));
         Snapshot = _readResult?.IsSuccess == true
             ? BuildSnapshot()
@@ -311,6 +323,20 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
 
         try
         {
+            var latestExclusions = await ListExclusionsAsync(cancellationToken);
+            if (latestExclusions.Any(document =>
+                    document.Value.IsActive &&
+                    _normalizer.Normalize(document.Value.NormalizedValue.Length > 0
+                        ? document.Value.NormalizedValue
+                        : document.Value.Value) == normalizedValue))
+            {
+                _exclusionDocuments = latestExclusions;
+                Snapshot = BuildSnapshot();
+                return Confirmation(
+                    ExpirationsAssociationConfirmationOutcome.Rejected,
+                    "Este valor está marcado como No distribuir. Desactive o corrija la exclusión antes de asociarlo.");
+            }
+
             var latest = await _associations.ListAsync(cancellationToken);
             var exact = latest
                 .Where(document => _normalizer.Normalize(
@@ -410,6 +436,109 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         }
     }
 
+    public async Task<ExpirationsExclusionConfirmationResult> ExcludeAsync(
+        uint rowNumber,
+        int componentIndex,
+        CancellationToken cancellationToken = default)
+    {
+        if (_exclusions is null)
+            return ExclusionResult(false, "La persistencia de exclusiones no está disponible.");
+        var component = FindComponent(rowNumber, componentIndex);
+        if (component is null || component.Status is ExpirationsBrokerResolutionStatus.Resolved or
+            ExpirationsBrokerResolutionStatus.Excluded || string.IsNullOrWhiteSpace(component.RawValue))
+        {
+            return ExclusionResult(false, "El valor seleccionado no puede marcarse como No distribuir.");
+        }
+
+        var normalizedValue = _normalizer.Normalize(component.RawValue);
+        if (normalizedValue.Length == 0)
+            return ExclusionResult(false, "No se puede excluir un valor vacío.");
+
+        try
+        {
+            var associationsTask = _associations.ListAsync(cancellationToken);
+            var exclusionsTask = _exclusions.ListAsync(cancellationToken);
+            await Task.WhenAll(associationsTask, exclusionsTask);
+            var associations = await associationsTask;
+            var exclusions = await exclusionsTask;
+            var associationConflict = associations.FirstOrDefault(document =>
+                    document.Value.IsActive &&
+                    _normalizer.Normalize(document.Value.NormalizedValue.Length > 0
+                        ? document.Value.NormalizedValue
+                        : document.Value.Value) == normalizedValue);
+            if (associationConflict is not null)
+            {
+                _associationDocuments = associations;
+                _exclusionDocuments = exclusions;
+                Snapshot = BuildSnapshot();
+                return ExclusionResult(
+                    false,
+                    $"Este valor ya está asociado a " +
+                    $"{_catalog?.Items.FirstOrDefault(item => item.BrokerId == associationConflict.Value.BrokerId)?.Name ?? associationConflict.Value.BrokerId.ToString("D")}. " +
+                    "Desactive o corrija esa asociación primero.");
+            }
+
+            var exact = exclusions
+                .Where(document => _normalizer.Normalize(document.Value.NormalizedValue.Length > 0
+                    ? document.Value.NormalizedValue
+                    : document.Value.Value) == normalizedValue)
+                .OrderBy(document => document.Value.Id)
+                .ToList();
+            if (exact.Any(document => document.Value.IsActive))
+            {
+                _associationDocuments = associations;
+                _exclusionDocuments = exclusions;
+                Snapshot = BuildSnapshot();
+                return ExclusionResult(false, "El valor ya está marcado como No distribuir.");
+            }
+
+            var now = _timeProvider.GetUtcNow();
+            if (exact.FirstOrDefault() is { } inactive)
+            {
+                var value = CopyExclusion(inactive.Value);
+                value.Value = component.RawValue;
+                value.NormalizedValue = normalizedValue;
+                value.IsActive = true;
+                value.UpdatedAtUtc = now;
+                await _exclusions.UpdateAsync(value, inactive.UpdateTime, cancellationToken);
+            }
+            else
+            {
+                await _exclusions.CreateAsync(new ExpirationsExclusion
+                {
+                    Id = Guid.NewGuid(),
+                    Value = component.RawValue,
+                    NormalizedValue = normalizedValue,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    UpdatedAtUtc = now
+                }, cancellationToken);
+            }
+
+            _associationDocuments = await _associations.ListAsync(cancellationToken);
+            _exclusionDocuments = await _exclusions.ListAsync(cancellationToken);
+            _manualOverrides.RemoveAll(value =>
+                value.RowNumber == rowNumber && value.ComponentIndex == componentIndex);
+            Snapshot = BuildSnapshot();
+            return ExclusionResult(
+                true,
+                "El valor quedó marcado como No distribuir y el análisis fue actualizado.");
+        }
+        catch (FirestoreConcurrencyException)
+        {
+            _associationDocuments = await _associations.ListAsync(cancellationToken);
+            _exclusionDocuments = await _exclusions.ListAsync(cancellationToken);
+            Snapshot = BuildSnapshot();
+            return ExclusionResult(
+                false,
+                "La información cambió mientras se guardaba. Revise el pendiente nuevamente.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return ExclusionResult(false, $"No fue posible guardar la exclusión: {ex.Message}");
+        }
+    }
+
     private ExpirationsAnalysisSessionSnapshot BuildSnapshot()
     {
         if (_readResult is null || _catalog is null)
@@ -419,7 +548,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
             _readResult,
             catalog,
             _associationDocuments.Select(document => document.Value),
-            _manualOverrides);
+            _manualOverrides,
+            _exclusionDocuments.Select(document => document.Value));
         var names = catalog.GroupBy(item => item.BrokerId)
             .ToDictionary(group => group.Key, group => group.First().Name);
         var pending = analysis.RowResolutions
@@ -429,7 +559,9 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                 ComponentIndex = index,
                 Component = component
             }))
-            .Where(item => item.Component.Status != ExpirationsBrokerResolutionStatus.Resolved)
+            .Where(item => item.Component.Status is not (
+                ExpirationsBrokerResolutionStatus.Resolved or
+                ExpirationsBrokerResolutionStatus.Excluded))
             .Select(item => new ExpirationsPendingIssue
             {
                 RowNumber = item.RowNumber,
@@ -446,6 +578,19 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
             .OrderBy(issue => issue.RowNumber)
             .ThenBy(issue => issue.ComponentIndex)
             .ToList();
+        var excluded = analysis.RowResolutions
+            .SelectMany(row => row.Components
+                .Where(component => component.Status == ExpirationsBrokerResolutionStatus.Excluded)
+                .Select(component => new { row.RowNumber, Component = component }))
+            .GroupBy(item => item.Component.NormalizedValue, StringComparer.Ordinal)
+            .Select(group => new ExpirationsExcludedValueSummary
+            {
+                RawValue = group.Select(item => item.Component.RawValue).FirstOrDefault() ?? string.Empty,
+                NormalizedValue = group.Key,
+                RowCount = group.Select(item => item.RowNumber).Distinct().Count()
+            })
+            .OrderBy(item => item.RawValue, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
         return new ExpirationsAnalysisSessionSnapshot
         {
             Process = _process,
@@ -457,6 +602,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
             Catalog = catalog,
             Distribution = _previewService.Build(analysis, catalog),
             PendingIssues = pending,
+            ExcludedValues = excluded,
             ManualOverrides = _manualOverrides.ToList(),
             Messages = _readResult.Messages.Concat(_catalog.Warnings).Distinct().ToList()
         };
@@ -474,14 +620,18 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         _catalog?.Items.Where(item => item.BrokerId == brokerId).All(item => item.IsActive) == true &&
         _catalog.Items.Any(item => item.BrokerId == brokerId);
 
-    private void ClearAnalysis(bool preserveSourcePath)
+    private void ClearAnalysis(bool preserveSourcePath, bool preserveCatalog = false)
     {
         if (!preserveSourcePath)
             _sourcePath = string.Empty;
         _readOptions = null;
         _readResult = null;
-        _catalog = null;
-        _associationDocuments = [];
+        if (!preserveCatalog)
+        {
+            _catalog = null;
+            _associationDocuments = [];
+            _exclusionDocuments = [];
+        }
         _manualOverrides.Clear();
         _analyzedSourceSha256 = string.Empty;
         Snapshot = EmptySnapshot();
@@ -526,9 +676,23 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         Snapshot = Snapshot
     };
 
+    private ExpirationsExclusionConfirmationResult ExclusionResult(bool persisted, string message) => new()
+    {
+        Persisted = persisted,
+        Message = message,
+        Snapshot = Snapshot
+    };
+
+    private Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsExclusion>>> ListExclusionsAsync(
+        CancellationToken cancellationToken) =>
+        _exclusions is null
+            ? Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsExclusion>>>([])
+            : _exclusions.ListAsync(cancellationToken);
+
     private static string StatusText(ExpirationsBrokerResolutionStatus status) => status switch
     {
         ExpirationsBrokerResolutionStatus.Unresolved => "No reconocido",
+        ExpirationsBrokerResolutionStatus.Excluded => "No distribuir",
         ExpirationsBrokerResolutionStatus.Ambiguous => "Ambiguo",
         ExpirationsBrokerResolutionStatus.InactiveBroker => "Corredor inactivo",
         ExpirationsBrokerResolutionStatus.MissingBroker => "Sin corredor",
@@ -540,6 +704,16 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         Id = value.Id,
         BrokerId = value.BrokerId,
         Kind = value.Kind,
+        Value = value.Value,
+        NormalizedValue = value.NormalizedValue,
+        IsActive = value.IsActive,
+        CreatedAtUtc = value.CreatedAtUtc,
+        UpdatedAtUtc = value.UpdatedAtUtc
+    };
+
+    private static ExpirationsExclusion CopyExclusion(ExpirationsExclusion value) => new()
+    {
+        Id = value.Id,
         Value = value.Value,
         NormalizedValue = value.NormalizedValue,
         IsActive = value.IsActive,

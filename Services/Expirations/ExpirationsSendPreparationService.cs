@@ -66,7 +66,7 @@ public sealed class ExpirationsSendPreparationService
             .ToList();
 
         if (settingsDocument is null)
-            errors.Add("Configure el asunto, mensaje y CC generales antes de enviar.");
+            errors.Add("Guarde la plantilla de correo antes de enviar.");
         var processSettings = settingsDocument?.Value;
         if (processSettings is not null)
         {
@@ -107,6 +107,10 @@ public sealed class ExpirationsSendPreparationService
             }
 
             var files = filesByBroker.GetValueOrDefault(brokerId) ?? [];
+            var eligibilityErrors = new List<string>();
+            ValidateEligibilityFiles(batch, broker, files, eligibilityErrors);
+            if (eligibilityErrors.Count == 0)
+                eligibleBrokerIds.Add(brokerId);
             ValidateRequiredFiles(batch.Process, broker, files, itemErrors);
             ValidateAttachments(batch, files, itemErrors);
             if (itemErrors.Contains(ChangedAttachmentMessage, StringComparer.Ordinal))
@@ -123,7 +127,6 @@ public sealed class ExpirationsSendPreparationService
             if (!settingsAreValid)
                 continue;
 
-            eligibleBrokerIds.Add(brokerId);
             var orderedFiles = files
                 .OrderBy(AttachmentOrder)
                 .ThenBy(file => file.OutputPath, StringComparer.OrdinalIgnoreCase)
@@ -246,14 +249,7 @@ public sealed class ExpirationsSendPreparationService
         IReadOnlyList<ExpirationsGeneratedFile> files,
         ICollection<string> errors)
     {
-        var required = process == ExpirationsProcess.NextMonth &&
-                       broker.NextMonthGenerationMode == ExpirationsNextMonthGenerationMode.SpecialDualSorted
-            ? new[]
-            {
-                ExpirationsGeneratedFileVariant.FelixAlphabetical,
-                ExpirationsGeneratedFileVariant.FelixExpirationDate
-            }
-            : [ExpirationsGeneratedFileVariant.Standard];
+        var required = RequiredVariants(process, broker);
         foreach (var variant in required)
         {
             var count = files.Count(file => file.Variant == variant);
@@ -268,6 +264,38 @@ public sealed class ExpirationsSendPreparationService
                 errors.Add($"La variante {VariantName(generated.Variant)} no corresponde al corredor en este proceso.");
         }
     }
+
+    private void ValidateEligibilityFiles(
+        ExpirationsGenerationBatch batch,
+        ExpirationsBrokerCatalogItem broker,
+        IReadOnlyList<ExpirationsGeneratedFile> files,
+        ICollection<string> errors)
+    {
+        foreach (var variant in RequiredVariants(batch.Process, broker))
+        {
+            var matches = files.Where(file => file.Variant == variant).ToList();
+            if (matches.Count != 1)
+            {
+                errors.Add(matches.Count == 0
+                    ? $"Falta el archivo obligatorio {VariantName(variant)}."
+                    : $"El archivo obligatorio {VariantName(variant)} está duplicado.");
+                continue;
+            }
+            ValidateAttachments(batch, matches, errors);
+        }
+    }
+
+    private static IReadOnlyList<ExpirationsGeneratedFileVariant> RequiredVariants(
+        ExpirationsProcess process,
+        ExpirationsBrokerCatalogItem broker) =>
+        process == ExpirationsProcess.NextMonth &&
+        broker.NextMonthGenerationMode == ExpirationsNextMonthGenerationMode.SpecialDualSorted
+            ?
+            [
+                ExpirationsGeneratedFileVariant.FelixAlphabetical,
+                ExpirationsGeneratedFileVariant.FelixExpirationDate
+            ]
+            : [ExpirationsGeneratedFileVariant.Standard];
 
     private static int AttachmentOrder(ExpirationsGeneratedFile file) => file.Variant switch
     {

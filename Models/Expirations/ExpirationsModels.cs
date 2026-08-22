@@ -64,6 +64,16 @@ public sealed class ExpirationsBrokerAssociation
     public DateTimeOffset UpdatedAtUtc { get; set; }
 }
 
+public sealed class ExpirationsExclusion
+{
+    public Guid Id { get; set; }
+    public string Value { get; set; } = string.Empty;
+    public string NormalizedValue { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public DateTimeOffset UpdatedAtUtc { get; set; }
+}
+
 public enum ExpirationsProcess
 {
     PreviousMonth,

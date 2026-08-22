@@ -19,6 +19,7 @@ public sealed class ExpirationsNextMonthStandardWorkbookGenerator(
     IExpirationsPremiumTotalsSheetService? premiumTotalsSheetService = null)
     : IExpirationsNextMonthStandardWorkbookGenerator
 {
+    public const string DataSheetName = "Detalle";
     private readonly IExpirationsStandardWorkbookGenerator _standardWorkbookGenerator =
         standardWorkbookGenerator ?? new ExpirationsStandardWorkbookGenerator();
     private readonly IExpirationsPremiumColumnsService _premiumColumnsService =
@@ -75,7 +76,7 @@ public sealed class ExpirationsNextMonthStandardWorkbookGenerator(
                 columns.CurrencyColumnReference,
                 cancellationToken);
             var plan = _premiumTotalsPlanner.CreatePlan(
-                request.WorksheetName,
+                DataSheetName,
                 request.HeaderRowNumber,
                 sourceRows,
                 columns,
@@ -87,6 +88,7 @@ public sealed class ExpirationsNextMonthStandardWorkbookGenerator(
                 request.WorksheetName,
                 request.HeaderRowNumber,
                 sourceRows), cancellationToken);
+            RenameDataWorksheet(destinationPath, request.WorksheetName);
             _premiumTotalsSheetService.AddTotalsSheet(destinationPath, plan, cancellationToken);
             ValidateGeneratedWorkbook(destinationPath, plan);
         }
@@ -107,6 +109,21 @@ public sealed class ExpirationsNextMonthStandardWorkbookGenerator(
                 "No fue posible generar el archivo de Vencimientos del mes siguiente.",
                 exception);
         }
+    }
+
+    private static void RenameDataWorksheet(string path, string expectedSourceName)
+    {
+        using var document = SpreadsheetDocument.Open(path, true);
+        var workbook = document.WorkbookPart?.Workbook ??
+            throw new ExpirationsGenerationException("El archivo generado no contiene la definición del workbook.");
+        var sheets = workbook.Sheets?.Elements<Sheet>().ToList() ?? [];
+        if (sheets.Count != 1 ||
+            !string.Equals(sheets[0].Name?.Value, expectedSourceName, StringComparison.Ordinal))
+        {
+            throw new ExpirationsGenerationException("El archivo estándar no contiene la hoja de datos esperada.");
+        }
+        sheets[0].Name = DataSheetName;
+        workbook.Save();
     }
 
     private static void DemandResolvedColumns(ExpirationsPremiumColumnResolution resolution)
@@ -163,23 +180,26 @@ public sealed class ExpirationsNextMonthStandardWorkbookGenerator(
 
         var totalsWorksheet = GetWorksheet(workbookPart, sheets[1]);
         var totalsRows = totalsWorksheet.GetFirstChild<SheetData>()?.Elements<Row>().ToList() ?? [];
-        if (totalsRows.Count != 2 ||
-            totalsRows[0].RowIndex?.Value != 1U ||
-            totalsRows[1].RowIndex?.Value != 2U)
+        if (totalsRows.Count != 3 ||
+            totalsRows[0].RowIndex?.Value != 2U ||
+            totalsRows[1].RowIndex?.Value != 3U ||
+            totalsRows[2].RowIndex?.Value != 4U)
         {
             throw new ExpirationsGenerationException("La hoja Total de primas contiene filas inesperadas.");
         }
         var cells = totalsRows.SelectMany(row => row.Elements<Cell>()).ToList();
-        var expectedReferences = new[] { "A1", "B1", "A2", "B2" };
+        var expectedReferences = new[] { "B2", "C2", "B3", "C3", "B4", "C4" };
         if (cells.Count != expectedReferences.Length ||
             !cells.Select(cell => cell.CellReference?.Value).SequenceEqual(expectedReferences))
         {
             throw new ExpirationsGenerationException("La hoja Total de primas contiene celdas inesperadas.");
         }
-        if (!string.Equals(cells[0].InlineString?.InnerText, ExpirationsPremiumTotalsSheetService.CrcLabel, StringComparison.Ordinal) ||
-            !string.Equals(cells[2].InlineString?.InnerText, ExpirationsPremiumTotalsSheetService.UsdLabel, StringComparison.Ordinal) ||
-            !string.Equals(cells[1].CellFormula?.Text, plan.CrcFormula, StringComparison.Ordinal) ||
-            !string.Equals(cells[3].CellFormula?.Text, plan.UsdFormula, StringComparison.Ordinal))
+        if (!string.Equals(cells[0].InlineString?.InnerText, ExpirationsPremiumTotalsSheetService.Title, StringComparison.Ordinal) ||
+            !string.Equals(cells[2].InlineString?.InnerText, ExpirationsPremiumTotalsSheetService.CrcLabel, StringComparison.Ordinal) ||
+            !string.Equals(cells[4].InlineString?.InnerText, ExpirationsPremiumTotalsSheetService.UsdLabel, StringComparison.Ordinal) ||
+            !string.Equals(cells[3].CellFormula?.Text, plan.CrcFormula, StringComparison.Ordinal) ||
+            !string.Equals(cells[5].CellFormula?.Text, plan.UsdFormula, StringComparison.Ordinal) ||
+            cells.Any(cell => cell.StyleIndex?.Value is null or 0U))
         {
             throw new ExpirationsGenerationException("La hoja Total de primas no contiene las etiquetas y fórmulas esperadas.");
         }

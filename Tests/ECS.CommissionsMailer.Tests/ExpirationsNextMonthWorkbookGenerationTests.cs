@@ -41,11 +41,17 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
         Assert.Equal(sourceSha, Sha(source));
         using (var document = SpreadsheetDocument.Open(output, false))
         {
-            Assert.Empty(new OpenXmlValidator().Validate(document, TestContext.Current.CancellationToken));
+            var validationErrors = new OpenXmlValidator()
+                .Validate(document, TestContext.Current.CancellationToken)
+                .ToList();
+            Assert.True(
+                validationErrors.Count == 0,
+                string.Join(Environment.NewLine, validationErrors.Select(error =>
+                    $"{error.Description} | {error.Node?.LocalName} | {error.Path?.XPath}")));
             var workbookPart = document.WorkbookPart!;
             var sheets = workbookPart.Workbook!.Sheets!.Elements<Sheet>().ToList();
             Assert.Equal(2, sheets.Count);
-            Assert.Equal(sheetName, sheets[0].Name!.Value);
+            Assert.Equal(ExpirationsNextMonthStandardWorkbookGenerator.DataSheetName, sheets[0].Name!.Value);
             Assert.Equal(ExpirationsPremiumTotalsSheetService.TotalsSheetName, sheets[1].Name!.Value);
 
             var data = ((WorksheetPart)workbookPart.GetPartById(sheets[0].Id!)).Worksheet!;
@@ -55,16 +61,32 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
 
             var totals = ((WorksheetPart)workbookPart.GetPartById(sheets[1].Id!)).Worksheet!;
             var cells = totals.Descendants<Cell>().ToList();
-            Assert.Equal(["A1", "B1", "A2", "B2"], cells.Select(cell => cell.CellReference!.Value));
-            Assert.Equal(ExpirationsPremiumTotalsSheetService.CrcLabel, cells[0].InlineString!.InnerText);
-            Assert.Equal(ExpirationsPremiumTotalsSheetService.UsdLabel, cells[2].InlineString!.InnerText);
+            Assert.Equal(["B2", "C2", "B3", "C3", "B4", "C4"], cells.Select(cell => cell.CellReference!.Value));
+            Assert.Equal(ExpirationsPremiumTotalsSheetService.Title, cells[0].InlineString!.InnerText);
+            Assert.Equal(ExpirationsPremiumTotalsSheetService.CrcLabel, cells[2].InlineString!.InnerText);
+            Assert.Equal(ExpirationsPremiumTotalsSheetService.UsdLabel, cells[4].InlineString!.InnerText);
             Assert.Equal(
-                "SUMPRODUCT(--('Reporte ''Agosto'''!$I$8:$I$10=\"CRC\"),'Reporte ''Agosto'''!$H$8:$H$10)",
-                cells[1].CellFormula!.Text);
-            Assert.Equal(
-                "SUMPRODUCT(--('Reporte ''Agosto'''!$I$8:$I$10=\"USD\"),'Reporte ''Agosto'''!$H$8:$H$10)",
+                "SUMPRODUCT(--('Detalle'!$I$8:$I$10=\"CRC\"),'Detalle'!$H$8:$H$10)",
                 cells[3].CellFormula!.Text);
-            Assert.Equal(2, totals.GetFirstChild<SheetData>()!.Elements<Row>().Count());
+            Assert.Equal(
+                "SUMPRODUCT(--('Detalle'!$I$8:$I$10=\"USD\"),'Detalle'!$H$8:$H$10)",
+                cells[5].CellFormula!.Text);
+            Assert.Equal(3, totals.GetFirstChild<SheetData>()!.Elements<Row>().Count());
+            Assert.Equal("B2:C2", Assert.Single(totals.Elements<MergeCells>().Single().Elements<MergeCell>()).Reference!.Value);
+            Assert.All(cells, cell => Assert.True(cell.StyleIndex?.Value > 0U));
+            var stylesheet = workbookPart.WorkbookStylesPart!.Stylesheet!;
+            var formats = stylesheet.CellFormats!.Elements<CellFormat>().ToList();
+            Assert.All(cells, cell => Assert.True(formats[(int)cell.StyleIndex!.Value].BorderId?.Value > 0U));
+            var crcFormatId = formats[(int)cells[3].StyleIndex!.Value].NumberFormatId!.Value;
+            var usdFormatId = formats[(int)cells[5].StyleIndex!.Value].NumberFormatId!.Value;
+            Assert.NotEqual(crcFormatId, usdFormatId);
+            var numberingFormats = stylesheet.NumberingFormats!.Elements<NumberingFormat>().ToList();
+            Assert.Contains(numberingFormats, format =>
+                format.NumberFormatId?.Value == crcFormatId &&
+                format.FormatCode?.Value?.Contains("₡", StringComparison.Ordinal) == true);
+            Assert.Contains(numberingFormats, format =>
+                format.NumberFormatId?.Value == usdFormatId &&
+                format.FormatCode?.Value?.Contains("$", StringComparison.Ordinal) == true);
 
             var calculation = workbookPart.Workbook.CalculationProperties!;
             Assert.Equal(CalculateModeValues.Auto, calculation.CalculationMode!.Value);
@@ -93,7 +115,7 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
         {
             var totals = document.WorkbookPart!.Workbook!.Sheets!.Elements<Sheet>().Last();
             var formula = ((WorksheetPart)document.WorkbookPart.GetPartById(totals.Id!)).Worksheet!
-                .Descendants<Cell>().Single(cell => cell.CellReference?.Value == "B1").CellFormula!.Text;
+                .Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C3").CellFormula!.Text;
             Assert.Contains("$H$8:$H$10", formula, StringComparison.Ordinal);
             Assert.DoesNotContain("300", formula, StringComparison.Ordinal);
             Assert.DoesNotContain("500", formula, StringComparison.Ordinal);
@@ -127,8 +149,8 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
         using var document = SpreadsheetDocument.Open(output, false);
         var totalsSheet = document.WorkbookPart!.Workbook!.Sheets!.Elements<Sheet>().Last();
         var totals = ((WorksheetPart)document.WorkbookPart.GetPartById(totalsSheet.Id!)).Worksheet!;
-        var crcFormula = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "B1").CellFormula;
-        var usdFormula = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "B2").CellFormula;
+        var crcFormula = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C3").CellFormula;
+        var usdFormula = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C4").CellFormula;
         Assert.NotNull(crcFormula);
         Assert.NotNull(usdFormula);
         Assert.Equal(crcIsAbsent ? "0" : null, crcIsAbsent ? crcFormula.Text : null);
@@ -168,8 +190,8 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
         using var document = SpreadsheetDocument.Open(output, false);
         var totalsSheet = document.WorkbookPart!.Workbook!.Sheets!.Elements<Sheet>().Last();
         var totals = ((WorksheetPart)document.WorkbookPart.GetPartById(totalsSheet.Id!)).Worksheet!;
-        var crc = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "B1").CellFormula!.Text;
-        var usd = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "B2").CellFormula!.Text;
+        var crc = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C3").CellFormula!.Text;
+        var usd = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C4").CellFormula!.Text;
         Assert.Contains("=\"CRC\"", crc, StringComparison.Ordinal);
         Assert.Contains("=\"Colones\"", crc, StringComparison.Ordinal);
         Assert.Contains("=\"₡\"", crc, StringComparison.Ordinal);
@@ -179,8 +201,8 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
         Assert.Contains("=\"Dólares\"", usd, StringComparison.Ordinal);
         Assert.Contains("=\"$\"", usd, StringComparison.Ordinal);
         Assert.DoesNotContain("=\"usd\"", usd, StringComparison.Ordinal);
-        Assert.Contains("'Hoja con espacios'!$R$2:$R$10", crc, StringComparison.Ordinal);
-        Assert.Contains("'Hoja con espacios'!$C$2:$C$10", usd, StringComparison.Ordinal);
+        Assert.Contains("'Detalle'!$R$2:$R$10", crc, StringComparison.Ordinal);
+        Assert.Contains("'Detalle'!$C$2:$C$10", usd, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -248,7 +270,7 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
             .Where(row => row.RowIndex!.Value > 1)
             .Select(row => row.RowIndex!.Value));
         var totals = ((WorksheetPart)document.WorkbookPart.GetPartById(sheets[1].Id!)).Worksheet!;
-        var formula = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "B1").CellFormula!.Text;
+        var formula = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C3").CellFormula!.Text;
         Assert.Contains("$B$2:$B$4", formula, StringComparison.Ordinal);
         Assert.Contains("$C$2:$C$4", formula, StringComparison.Ordinal);
         Assert.DoesNotContain("$B$2:$B$35", formula, StringComparison.Ordinal);
@@ -277,8 +299,8 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
         generator.Generate(new ExpirationsNextMonthStandardWorkbookGenerationRequest(
             source, jerrikaOutput, "Reporte", 1, [10]), TestContext.Current.CancellationToken);
 
-        Assert.Equal(TotalsFormula(anaOutput, "B1"), TotalsFormula(jerrikaOutput, "B1"));
-        Assert.Contains("$B$2:$B$2", TotalsFormula(anaOutput, "B1"), StringComparison.Ordinal);
+        Assert.Equal(TotalsFormula(anaOutput, "C3"), TotalsFormula(jerrikaOutput, "C3"));
+        Assert.Contains("$B$2:$B$2", TotalsFormula(anaOutput, "C3"), StringComparison.Ordinal);
         Assert.Contains("ANA + JERRIKA", ReadPackageText(anaOutput), StringComparison.Ordinal);
         Assert.Contains("ANA + JERRIKA", ReadPackageText(jerrikaOutput), StringComparison.Ordinal);
     }
@@ -310,8 +332,8 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
 
         Assert.Contains("PC→ALBERTO", ReadPackageText(albertoOutput), StringComparison.Ordinal);
         Assert.Contains("HERNÁN→JAVIER", ReadPackageText(javierOutput), StringComparison.Ordinal);
-        Assert.Equal("0", TotalsFormula(albertoOutput, "B2"));
-        Assert.Equal("0", TotalsFormula(javierOutput, "B1"));
+        Assert.Equal("0", TotalsFormula(albertoOutput, "C4"));
+        Assert.Equal("0", TotalsFormula(javierOutput, "C3"));
     }
 
     [Theory]

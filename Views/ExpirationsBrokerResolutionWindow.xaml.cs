@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using ECS.CommissionsMailer.Models.Expirations;
+using MessageBox = ECS.CommissionsMailer.Views.AppDialog;
 
 namespace ECS.CommissionsMailer.Views;
 
@@ -25,6 +26,16 @@ public partial class ExpirationsBrokerResolutionWindow : Window
     {
         if (State.SelectedBroker is null)
             return;
+        if (State.Issue.Status == ExpirationsBrokerResolutionStatus.Unresolved &&
+            MessageBox.Show(
+                State.ConfirmationSummary +
+                "\n\nEsta asociación se utilizará en ambos tipos de Vencimientos.\n\n¿Desea continuar?",
+                "Confirmar asociación",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
         SelectedBrokerId = State.SelectedBroker.BrokerId;
         SelectedKind = State.SelectedKind.Value;
         DialogResult = true;
@@ -80,6 +91,18 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
         Issue.Status == ExpirationsBrokerResolutionStatus.Ambiguous
             ? "Aplicar a esta fila"
             : "Confirmar asociación";
+    public string AssociationHelpText => SelectedKind.Value switch
+    {
+        ExpirationsAssociationKind.Name => "Nombre: nombre con el que se identifica al corredor.",
+        ExpirationsAssociationKind.Alias => "Alias: variante o forma alternativa en que aparece el corredor.",
+        ExpirationsAssociationKind.Code => "Código: código único asignado al corredor.",
+        _ => string.Empty
+    };
+    public string ConfirmationSummary => SelectedBroker is null
+        ? $"Valor que se asociará: {Issue.RawValue}\nSeleccione un corredor."
+        : $"Valor que se asociará: {Issue.RawValue}\n" +
+          $"Corredor: {SelectedBroker.DisplayText}\n" +
+          $"Tipo: {SelectedKind.DisplayName}";
     public bool CanConfirm => SelectedBroker is not null;
 
     public ExpirationsBrokerChoice? SelectedBroker
@@ -91,6 +114,7 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
             _selectedBroker = value;
             Notify();
             Notify(nameof(CanConfirm));
+            Notify(nameof(ConfirmationSummary));
         }
     }
 
@@ -102,6 +126,8 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
             if (Equals(_selectedKind, value)) return;
             _selectedKind = value;
             Notify();
+            Notify(nameof(AssociationHelpText));
+            Notify(nameof(ConfirmationSummary));
         }
     }
 

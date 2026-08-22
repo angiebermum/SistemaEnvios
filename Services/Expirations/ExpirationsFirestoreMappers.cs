@@ -281,6 +281,30 @@ internal sealed class ExpirationsBrokerAssociationMapper : IFirestoreEntityMappe
     }
 }
 
+internal sealed class ExpirationsExclusionMapper : IFirestoreEntityMapper<ExpirationsExclusion>
+{
+    public IReadOnlyDictionary<string, FirestoreRestValue> ToFields(ExpirationsExclusion value) =>
+        new Dictionary<string, FirestoreRestValue>(StringComparer.Ordinal)
+        {
+            ["id"] = ExpirationsFirestoreFields.Guid(value.Id),
+            ["value"] = FirestoreRestValue.String(value.Value),
+            ["normalizedValue"] = FirestoreRestValue.String(value.NormalizedValue),
+            ["isActive"] = FirestoreRestValue.Boolean(value.IsActive),
+            ["createdAtUtc"] = FirestoreRestValue.Timestamp(value.CreatedAtUtc),
+            ["updatedAtUtc"] = FirestoreRestValue.Timestamp(value.UpdatedAtUtc)
+        };
+
+    public ExpirationsExclusion FromFields(IReadOnlyDictionary<string, FirestoreRestValue> fields) => new()
+    {
+        Id = ExpirationsFirestoreFields.ReadGuid(fields.Required("id"), "id"),
+        Value = fields.Required("value").RequireString("value"),
+        NormalizedValue = fields.Required("normalizedValue").RequireString("normalizedValue"),
+        IsActive = fields.Required("isActive").RequireBoolean("isActive"),
+        CreatedAtUtc = fields.Required("createdAtUtc").RequireTimestamp("createdAtUtc"),
+        UpdatedAtUtc = fields.Required("updatedAtUtc").RequireTimestamp("updatedAtUtc")
+    };
+}
+
 internal sealed class ExpirationsProcessSettingsMapper : IFirestoreEntityMapper<ExpirationsProcessSettings>
 {
     public IReadOnlyDictionary<string, FirestoreRestValue> ToFields(ExpirationsProcessSettings value) =>

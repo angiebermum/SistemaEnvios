@@ -90,6 +90,24 @@ service cloud.firestore {
         request.resource.data.updatedAtUtc is timestamp;
     }
 
+    function validExpirationsExclusionShape(exclusionId) {
+      return request.resource.data.keys().hasAll([
+          'id', 'value', 'normalizedValue', 'isActive', 'createdAtUtc', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'id', 'value', 'normalizedValue', 'isActive', 'createdAtUtc', 'updatedAtUtc'
+        ]) &&
+        request.resource.data.id is string &&
+        request.resource.data.id == exclusionId &&
+        request.resource.data.value is string &&
+        request.resource.data.value.size() > 0 &&
+        request.resource.data.normalizedValue is string &&
+        request.resource.data.normalizedValue.size() > 0 &&
+        request.resource.data.isActive is bool &&
+        request.resource.data.createdAtUtc is timestamp &&
+        request.resource.data.updatedAtUtc is timestamp;
+    }
+
     function validExpirationsSettingsShape() {
       return request.resource.data.keys().hasAll([
           'defaultSubject', 'defaultMessage', 'commonCcAddresses', 'updatedAtUtc'
@@ -222,6 +240,16 @@ service cloud.firestore {
       allow create, update: if canUseExpirations() &&
         validExpirationsAssociationShape(associationId) &&
         exists(/databases/$(database)/documents/brokers/$(request.resource.data.brokerId));
+      allow delete: if false;
+    }
+
+    match /modules/vencimientos/exclusions/{exclusionId} {
+      allow read: if canUseExpirations();
+      allow create: if canUseExpirations() &&
+        validExpirationsExclusionShape(exclusionId);
+      allow update: if canUseExpirations() &&
+        validExpirationsExclusionShape(exclusionId) &&
+        request.resource.data.createdAtUtc == resource.data.createdAtUtc;
       allow delete: if false;
     }
 

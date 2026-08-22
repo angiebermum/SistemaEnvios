@@ -29,6 +29,14 @@ public sealed class ExpirationsPendingIssue
         ExpirationsBrokerResolutionStatus.Ambiguous;
 }
 
+public sealed class ExpirationsExcludedValueSummary
+{
+    public string RawValue { get; init; } = string.Empty;
+    public string NormalizedValue { get; init; } = string.Empty;
+    public int RowCount { get; init; }
+    public string StatusText => "No distribuir";
+}
+
 public sealed class ExpirationsAnalysisSessionSnapshot
 {
     public ExpirationsProcess? Process { get; init; }
@@ -40,6 +48,7 @@ public sealed class ExpirationsAnalysisSessionSnapshot
     public IReadOnlyList<ExpirationsBrokerCatalogItem> Catalog { get; init; } = [];
     public IReadOnlyList<ExpirationsDistributionPreviewItem> Distribution { get; init; } = [];
     public IReadOnlyList<ExpirationsPendingIssue> PendingIssues { get; init; } = [];
+    public IReadOnlyList<ExpirationsExcludedValueSummary> ExcludedValues { get; init; } = [];
     public IReadOnlyList<ExpirationsManualResolutionOverride> ManualOverrides { get; init; } = [];
     public IReadOnlyList<string> Messages { get; init; } = [];
     public bool RequiresWorkbookSelection => ReadResult?.Status is
@@ -108,6 +117,13 @@ public sealed class ExpirationsManualOverrideResult
     public ExpirationsAnalysisSessionSnapshot Snapshot { get; init; } = new();
 }
 
+public sealed class ExpirationsExclusionConfirmationResult
+{
+    public bool Persisted { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public ExpirationsAnalysisSessionSnapshot Snapshot { get; init; } = new();
+}
+
 public sealed record ExpirationsProcessOption(ExpirationsProcess Value, string DisplayName);
 
 public sealed record ExpirationsAssociationKindOption(ExpirationsAssociationKind Value, string DisplayName);
@@ -115,4 +131,43 @@ public sealed record ExpirationsAssociationKindOption(ExpirationsAssociationKind
 public sealed record ExpirationsBrokerChoice(Guid BrokerId, string Name, string PrimaryEmail)
 {
     public string DisplayText => PrimaryEmail.Length == 0 ? Name : $"{Name} — {PrimaryEmail}";
+}
+
+public sealed class ExpirationsAssociationAdministrationItem
+{
+    public ExpirationsBrokerAssociation Association { get; init; } = new();
+    public string UpdateTime { get; init; } = string.Empty;
+    public string BrokerName { get; init; } = string.Empty;
+    public string BrokerPrimaryEmail { get; init; } = string.Empty;
+    public string KindText => Association.Kind switch
+    {
+        ExpirationsAssociationKind.Name => "Nombre",
+        ExpirationsAssociationKind.Alias => "Alias / nombre alternativo",
+        ExpirationsAssociationKind.Code => "Código",
+        _ => Association.Kind.ToString()
+    };
+    public string StatusText => Association.IsActive ? "Activa" : "Inactiva";
+}
+
+public sealed class ExpirationsExclusionAdministrationItem
+{
+    public ExpirationsExclusion Exclusion { get; init; } = new();
+    public string UpdateTime { get; init; } = string.Empty;
+    public string StatusText => Exclusion.IsActive ? "Activa" : "Inactiva";
+}
+
+public enum ExpirationsRoutingAdministrationOutcome
+{
+    Updated,
+    ConcurrencyConflict,
+    Conflict,
+    NotFound,
+    Rejected
+}
+
+public sealed class ExpirationsRoutingAdministrationResult
+{
+    public ExpirationsRoutingAdministrationOutcome Outcome { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public bool WasPersisted => Outcome == ExpirationsRoutingAdministrationOutcome.Updated;
 }

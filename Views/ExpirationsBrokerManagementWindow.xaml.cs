@@ -11,13 +11,20 @@ namespace ECS.CommissionsMailer.Views;
 public partial class ExpirationsBrokerManagementWindow : Window
 {
     private readonly IExpirationsBrokerConfigurationService _service;
+    private readonly IExpirationsRoutingAdministrationService? _routingAdministration;
     internal readonly ExpirationsBrokerManagementState State = new();
 
-    public ExpirationsBrokerManagementWindow(IExpirationsBrokerConfigurationService service)
+    public ExpirationsBrokerManagementWindow(
+        IExpirationsBrokerConfigurationService service,
+        IExpirationsRoutingAdministrationService? routingAdministration = null)
     {
         _service = service ?? throw new ArgumentNullException(nameof(service));
+        _routingAdministration = routingAdministration;
         InitializeComponent();
         DataContext = State;
+        RoutingAdministrationButton.Visibility = routingAdministration is null
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
     public bool HasSavedChanges { get; private set; }
@@ -62,6 +69,21 @@ public partial class ExpirationsBrokerManagementWindow : Window
     }
 
     private void ToggleInactive_Click(object sender, RoutedEventArgs e) => State.ToggleInactiveVisibility();
+
+    private void RoutingAdministration_Click(object sender, RoutedEventArgs e)
+    {
+        if (_routingAdministration is null)
+            return;
+        var window = new ExpirationsRoutingAdministrationWindow(
+            _routingAdministration,
+            _service,
+            State.SelectedItem?.BrokerId)
+        {
+            Owner = this
+        };
+        _ = window.ShowDialog();
+        HasSavedChanges |= window.HasSavedChanges;
+    }
 }
 
 internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged

@@ -94,6 +94,7 @@ public sealed class ExpirationsEmailSendingTests
         var result = await service.PrepareAsync(files.Batch, TestContext.Current.CancellationToken);
 
         Assert.False(result.CanSend);
+        Assert.Contains(BrokerOne, result.EligibleBrokerIds);
         Assert.Contains(result.Errors, error => error.Contains("ningún destinatario Para válido", StringComparison.Ordinal));
     }
 
@@ -161,6 +162,53 @@ public sealed class ExpirationsEmailSendingTests
         Assert.True(result.CanSend);
         Assert.Single(result.Requests);
         Assert.Single(result.Requests[0].AttachmentPaths);
+    }
+
+    [Fact]
+    public async Task ValidStandardFileStaysAutoSelectedWhenEmailTemplateIsMissingOrUnsaved()
+    {
+        using var files = GeneratedFiles.Create(ExpirationsGeneratedFileVariant.Standard);
+        var broker = Broker();
+        var service = Preparation(files.Batch, broker, seedSettings: false);
+
+        var result = await service.PrepareAsync(files.Batch, TestContext.Current.CancellationToken);
+
+        Assert.False(result.CanSend);
+        Assert.Contains(BrokerOne, result.EligibleBrokerIds);
+        Assert.Contains(result.Errors, error => error.Contains("Guarde la plantilla", StringComparison.OrdinalIgnoreCase));
+        var state = StateForBatch(files.Batch, broker);
+        state.ApplySendPreparation(result);
+        var selectedRow = Assert.Single(state.BrokerRowsView.Cast<ExpirationsBrokerRow>());
+        Assert.True(selectedRow.IsSelected);
+        Assert.Equal("Con advertencia", selectedRow.StatusText);
+        state.LoadEmailSettings(new ExpirationsEmailSettingsSnapshot(
+            files.Batch.Process,
+            new ExpirationsProcessSettings(),
+            null));
+        state.Subject = "Escrito pero no guardado";
+        Assert.True(Assert.Single(state.BrokerRowsView.Cast<ExpirationsBrokerRow>()).IsSelected);
+        Assert.Contains("sin guardar", state.EmailSettingsStateText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CompleteSpecialFilesStayEligibleWithoutTemplateWhileManualOnlyNeverDoes()
+    {
+        using var special = GeneratedFiles.Create(
+            ExpirationsGeneratedFileVariant.FelixAlphabetical,
+            ExpirationsGeneratedFileVariant.FelixExpirationDate);
+        var specialResult = await Preparation(
+                special.Batch,
+                Broker(mode: ExpirationsNextMonthGenerationMode.SpecialDualSorted),
+                seedSettings: false)
+            .PrepareAsync(special.Batch, TestContext.Current.CancellationToken);
+
+        using var manual = GeneratedFiles.Create(ExpirationsGeneratedFileVariant.Manual);
+        var manualResult = await Preparation(manual.Batch, Broker(), seedSettings: false)
+            .PrepareAsync(manual.Batch, TestContext.Current.CancellationToken);
+
+        Assert.Contains(BrokerOne, specialResult.EligibleBrokerIds);
+        Assert.DoesNotContain(BrokerOne, manualResult.EligibleBrokerIds);
+        Assert.Contains(manualResult.Errors, error => error.Contains("Falta el archivo obligatorio", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -395,10 +443,12 @@ public sealed class ExpirationsEmailSendingTests
 
     private static ExpirationsSendPreparationService Preparation(
         ExpirationsGenerationBatch batch,
-        ExpirationsBrokerCatalogItem broker)
+        ExpirationsBrokerCatalogItem broker,
+        bool seedSettings = true)
     {
         var settings = new FakeSettingsRepository();
-        settings.Seed(batch.Process, Settings("Asunto", "Mensaje", "cc@example.test"));
+        if (seedSettings)
+            settings.Seed(batch.Process, Settings("Asunto", "Mensaje", "cc@example.test"));
         return new ExpirationsSendPreparationService(
             settings,
             new ExpirationsBrokerCatalogService(
@@ -421,6 +471,43 @@ public sealed class ExpirationsEmailSendingTests
                         NextMonthGenerationMode = broker.NextMonthGenerationMode
                     }
                 ])));
+    }
+
+    private static ExpirationsWindowState StateForBatch(
+        ExpirationsGenerationBatch batch,
+        ExpirationsBrokerCatalogItem broker)
+    {
+        var state = new ExpirationsWindowState(new AppUser
+        {
+            Uid = "selection-ui",
+            Email = "selection-ui@example.test",
+            DisplayName = "Selection UI",
+            Role = AppUserRole.Operator,
+            IsActive = true,
+            CanUseExpirations = true
+        });
+        state.ApplySnapshot(new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = batch.Process,
+            Catalog = [broker],
+            Distribution =
+            [
+                new ExpirationsDistributionPreviewItem
+                {
+                    BrokerId = broker.BrokerId,
+                    BrokerName = broker.Name,
+                    RowCount = 1
+                }
+            ],
+            Analysis = new ExpirationsWorkbookAnalysisResult
+            {
+                TotalRows = 1,
+                ResolvedRows = 1,
+                CanGenerate = true
+            }
+        });
+        state.ApplyGenerationBatch(batch);
+        return state;
     }
 
     private static ExpirationsBrokerCatalogItem Broker(

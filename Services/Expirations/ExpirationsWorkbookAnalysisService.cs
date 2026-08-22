@@ -8,18 +8,27 @@ public sealed class ExpirationsWorkbookAnalysisService
         ExpirationsWorkbookReadResult readResult,
         IEnumerable<ExpirationsBrokerCatalogItem> catalog,
         IEnumerable<ExpirationsBrokerAssociation> associations) =>
-        Analyze(readResult, catalog, associations, []);
+        Analyze(readResult, catalog, associations, [], []);
 
     public ExpirationsWorkbookAnalysisResult Analyze(
         ExpirationsWorkbookReadResult readResult,
         IEnumerable<ExpirationsBrokerCatalogItem> catalog,
         IEnumerable<ExpirationsBrokerAssociation> associations,
-        IEnumerable<ExpirationsManualResolutionOverride> manualOverrides)
+        IEnumerable<ExpirationsManualResolutionOverride> manualOverrides) =>
+        Analyze(readResult, catalog, associations, manualOverrides, []);
+
+    public ExpirationsWorkbookAnalysisResult Analyze(
+        ExpirationsWorkbookReadResult readResult,
+        IEnumerable<ExpirationsBrokerCatalogItem> catalog,
+        IEnumerable<ExpirationsBrokerAssociation> associations,
+        IEnumerable<ExpirationsManualResolutionOverride> manualOverrides,
+        IEnumerable<ExpirationsExclusion> exclusions)
     {
         ArgumentNullException.ThrowIfNull(readResult);
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(associations);
         ArgumentNullException.ThrowIfNull(manualOverrides);
+        ArgumentNullException.ThrowIfNull(exclusions);
         if (!readResult.IsSuccess)
         {
             return new ExpirationsWorkbookAnalysisResult
@@ -32,7 +41,11 @@ public sealed class ExpirationsWorkbookAnalysisService
 
         var catalogItems = catalog.ToList();
         var associationItems = associations.ToList();
-        var resolver = new ExpirationsBrokerResolver(catalogItems, associationItems);
+        var exclusionItems = exclusions.ToList();
+        var resolver = new ExpirationsBrokerResolver(
+            catalogItems,
+            associationItems,
+            exclusions: exclusionItems);
         var rowService = new ExpirationsRowResolutionService(
             new ExpirationsBrokerCellParser(),
             resolver);
@@ -60,6 +73,11 @@ public sealed class ExpirationsWorkbookAnalysisService
             ReadStatus = readResult.Status,
             TotalRows = rows.Count,
             ResolvedRows = rows.Count - blockingRows,
+            ExcludedRows = rows.Count(row =>
+                row.Components.Count > 0 &&
+                row.Components.All(component => component.Status == ExpirationsBrokerResolutionStatus.Excluded)),
+            ExcludedComponents = components.Count(
+                component => component.Status == ExpirationsBrokerResolutionStatus.Excluded),
             RowsWithBlockingIssues = blockingRows,
             UnresolvedComponents = components.Count(
                 component => component.Status == ExpirationsBrokerResolutionStatus.Unresolved),
@@ -134,7 +152,9 @@ public sealed class ExpirationsWorkbookAnalysisService
                     .OrderBy(id => id)
                     .ToList(),
                 HasBlockingIssues = components.Any(
-                    component => component.Status != ExpirationsBrokerResolutionStatus.Resolved)
+                    component => component.Status is not (
+                        ExpirationsBrokerResolutionStatus.Resolved or
+                        ExpirationsBrokerResolutionStatus.Excluded))
             };
         }).ToList();
     }

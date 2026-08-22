@@ -72,6 +72,9 @@ internal static class ModuleWindowUiSmokeRunner
             var brokerManagementPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-broker-management-ui-smoke.png");
+            var routingAdministrationPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-routing-administration-ui-smoke.png");
             var defaultProfilePath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-default-profile-ui-smoke.png");
@@ -166,6 +169,11 @@ internal static class ModuleWindowUiSmokeRunner
             Render(
                 new ExpirationsBrokerManagementWindow(configurationService),
                 brokerManagementPath);
+            Render(
+                new ExpirationsRoutingAdministrationWindow(
+                    new SmokeRoutingAdministrationService(configurationItems),
+                    configurationService),
+                routingAdministrationPath);
             Render(
                 new ExpirationsBrokerProfileWindow(configurationService, configurationItems[0]),
                 defaultProfilePath);
@@ -377,6 +385,7 @@ internal static class ModuleWindowUiSmokeRunner
                     $"DIALOGO_SELECCION={selectionDialogPath}",
                     $"DIALOGO_SELECCION_PRIMA_MONEDA={premiumSelectionDialogPath}",
                     $"CONFIGURACION_CORREDORES={brokerManagementPath}",
+                    $"ADMINISTRACION_ROUTING={routingAdministrationPath}",
                     $"PERFIL_SIN_DOCUMENTO={defaultProfilePath}",
                     $"PERFIL_CONFIGURADO={configuredProfilePath}",
                     $"EDITOR_ASISTENTE={assistantEditorPath}",
@@ -885,6 +894,12 @@ internal static class ModuleWindowUiSmokeRunner
             ExpirationsAssociationConfirmation confirmation,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ExpirationsAssociationConfirmationResult { Snapshot = Snapshot });
+
+        public Task<ExpirationsExclusionConfirmationResult> ExcludeAsync(
+            uint rowNumber,
+            int componentIndex,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ExpirationsExclusionConfirmationResult { Snapshot = Snapshot });
     }
 
     private sealed class SmokeGenerationService : IExpirationsGenerationService
@@ -942,6 +957,68 @@ internal static class ModuleWindowUiSmokeRunner
                 Outcome = ExpirationsBrokerConfigurationSaveOutcome.NoChanges,
                 Configuration = configuration
             });
+    }
+
+    private sealed class SmokeRoutingAdministrationService(
+        IReadOnlyList<ExpirationsBrokerConfigurationItem> brokers)
+        : IExpirationsRoutingAdministrationService
+    {
+        public Task<IReadOnlyList<ExpirationsAssociationAdministrationItem>> ListAssociationsAsync(
+            CancellationToken cancellationToken = default)
+        {
+            var broker = brokers.First();
+            return Task.FromResult<IReadOnlyList<ExpirationsAssociationAdministrationItem>>(
+            [
+                new ExpirationsAssociationAdministrationItem
+                {
+                    Association = new ExpirationsBrokerAssociation
+                    {
+                        Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                        BrokerId = broker.BrokerId,
+                        Kind = ExpirationsAssociationKind.Alias,
+                        Value = "Alias de prueba",
+                        NormalizedValue = "ALIAS DE PRUEBA",
+                        IsActive = true,
+                        CreatedAtUtc = DateTimeOffset.UtcNow,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow
+                    },
+                    UpdateTime = "smoke-association",
+                    BrokerName = broker.Name,
+                    BrokerPrimaryEmail = broker.PrimaryEmailAddresses.FirstOrDefault() ?? string.Empty
+                }
+            ]);
+        }
+
+        public Task<IReadOnlyList<ExpirationsExclusionAdministrationItem>> ListExclusionsAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ExpirationsExclusionAdministrationItem>>(
+            [
+                new ExpirationsExclusionAdministrationItem
+                {
+                    Exclusion = new ExpirationsExclusion
+                    {
+                        Id = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+                        Value = "Corredor histórico",
+                        NormalizedValue = "CORREDOR HISTORICO",
+                        IsActive = true,
+                        CreatedAtUtc = DateTimeOffset.UtcNow,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow
+                    },
+                    UpdateTime = "smoke-exclusion"
+                }
+            ]);
+
+        public Task<ExpirationsRoutingAdministrationResult> SetAssociationActiveAsync(
+            Guid associationId, bool isActive, string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ExpirationsRoutingAdministrationResult> ReassignAsync(
+            Guid associationId, Guid destinationBrokerId, string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ExpirationsRoutingAdministrationResult> SetExclusionActiveAsync(
+            Guid exclusionId, bool isActive, string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class SmokeEmailSettingsService : IExpirationsEmailSettingsService

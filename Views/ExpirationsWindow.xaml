@@ -96,7 +96,11 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <TextBlock Text="Plantilla del correo" Style="{StaticResource SectionTitleTextStyle}" />
+                    <StackPanel>
+                        <TextBlock Text="Plantilla del correo" Style="{StaticResource SectionTitleTextStyle}" />
+                        <TextBlock Text="{Binding EmailSettingsStateText}" Style="{StaticResource CaptionTextStyle}"
+                                   Margin="0,2,0,0" />
+                    </StackPanel>
                     <StackPanel Grid.Row="1" Margin="0,8,0,0">
                         <TextBlock Text="Asunto" Style="{StaticResource FieldLabelTextStyle}" />
                         <TextBox Text="{Binding Subject, UpdateSourceTrigger=PropertyChanged}" />
@@ -221,8 +225,13 @@
             </StackPanel>
             <Button Grid.Column="1" Content="Configurar corredores" Click="ConfigureBrokers_Click"
                     IsEnabled="{Binding CanConfigureBrokers}" VerticalAlignment="Bottom" Margin="14,0,0,0" />
-            <TextBlock Grid.Column="2" Text="{Binding BrokerSummaryText}" Style="{StaticResource MutedTextStyle}"
-                       HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="14,0,0,8" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom" Margin="14,0,0,4">
+                <Button Content="{Binding ViewExcludedButtonText}" Click="ViewExcluded_Click"
+                        IsEnabled="{Binding CanViewExcluded}" Style="{StaticResource CompactButtonStyle}" />
+                <TextBlock Text="{Binding BrokerSummaryText}" Style="{StaticResource MutedTextStyle}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
         </Grid>
 
         <DataGrid x:Name="BrokerGrid" Grid.Row="4" ItemsSource="{Binding BrokerRowsView}"
@@ -310,9 +319,12 @@
                         </DataGrid.Columns>
                     </DataGrid>
                 </StackPanel>
-                <Button Grid.Column="1" Content="Resolver seleccionado" Click="ResolveSelected_Click"
-                        IsEnabled="{Binding CanResolve}" Style="{StaticResource PrimaryButtonStyle}"
-                        VerticalAlignment="Bottom" Margin="12,0,0,0" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="12,0,0,0">
+                    <Button Content="Resolver seleccionado" Click="ResolveSelected_Click"
+                            IsEnabled="{Binding CanResolve}" Style="{StaticResource PrimaryButtonStyle}" />
+                    <Button Content="Excluir / No corresponde distribución" Click="ExcludeSelected_Click"
+                            IsEnabled="{Binding CanExclude}" Style="{StaticResource CompactButtonStyle}" Margin="0,6,0,0" />
+                </StackPanel>
             </Grid>
         </Border>
 

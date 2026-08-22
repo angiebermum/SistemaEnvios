@@ -58,6 +58,16 @@ const association = (id, brokerId, overrides = {}) => ({
   ...overrides
 });
 
+const exclusion = (id, overrides = {}) => ({
+  id,
+  value: 'Cristian Porras',
+  normalizedValue: 'CRISTIAN PORRAS',
+  isActive: true,
+  createdAtUtc: new Date('2026-08-10T00:00:00Z'),
+  updatedAtUtc: new Date('2026-08-10T00:00:00Z'),
+  ...overrides
+});
+
 const expirationsSettings = (overrides = {}) => ({
   defaultSubject: 'Vencimientos',
   defaultMessage: 'Mensaje de Vencimientos',
@@ -309,6 +319,35 @@ test('associations: no permite broker inexistente y solo Comisiones recibe DENY'
     association(associationId, missingBroker)));
   await assertFails(getDoc(
     doc(commissionsDb, `modules/vencimientos/associations/${existingAssociation}`)));
+});
+
+test('exclusions: Vencimientos permite read/create/update estricto pero no delete', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  const exclusionId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  const path = `modules/vencimientos/exclusions/${exclusionId}`;
+  await assertSucceeds(setDoc(doc(db, path), exclusion(exclusionId)));
+  await assertSucceeds(getDoc(doc(db, path)));
+  await assertSucceeds(updateDoc(doc(db, path), {
+    isActive: false,
+    updatedAtUtc: new Date('2026-08-10T01:00:00Z')
+  }));
+  await assertFails(updateDoc(doc(db, path), {
+    createdAtUtc: new Date('2026-08-10T02:00:00Z')
+  }));
+  await assertFails(deleteDoc(doc(db, path)));
+});
+
+test('exclusions: rechaza shape o ID inválido y no amplía permisos de Comisiones', async () => {
+  const expirationsDb = environment.authenticatedContext('expirations').firestore();
+  const commissionsDb = environment.authenticatedContext('operator').firestore();
+  const exclusionId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  const path = `modules/vencimientos/exclusions/${exclusionId}`;
+  await assertFails(setDoc(doc(expirationsDb, path), exclusion(exclusionId, { unexpected: true })));
+  await assertFails(setDoc(doc(expirationsDb, path), exclusion(existingAssociation)));
+  await assertFails(setDoc(doc(expirationsDb, path), exclusion(exclusionId, { value: '' })));
+  await assertFails(setDoc(doc(expirationsDb, path), exclusion(exclusionId, { normalizedValue: '' })));
+  await assertFails(getDoc(doc(commissionsDb, path)));
+  await assertFails(setDoc(doc(commissionsDb, path), exclusion(exclusionId)));
 });
 
 test('settings Vencimientos: previousMonth y nextMonth son permitidos e independientes', async () => {

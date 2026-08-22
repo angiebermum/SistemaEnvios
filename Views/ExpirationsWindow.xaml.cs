@@ -23,6 +23,7 @@ public partial class ExpirationsWindow : Window
     private readonly IAppUserRepository _appUsers;
     private readonly IExpirationsAnalysisCoordinator _coordinator;
     private readonly IExpirationsBrokerConfigurationService _configurationService;
+    private readonly IExpirationsRoutingAdministrationService? _routingAdministrationService;
     private readonly IExpirationsGenerationService _generationService;
     private readonly IExpirationsEmailSettingsService _emailSettingsService;
     private readonly ExpirationsSendPreparationService _sendPreparationService;
@@ -50,11 +51,13 @@ public partial class ExpirationsWindow : Window
         IExpirationsSendHistoryRepository sendHistory,
         AppDataPaths paths,
         FileLogger logger,
-        IExpirationsLocalSettingsService? localSettingsService = null)
+        IExpirationsLocalSettingsService? localSettingsService = null,
+        IExpirationsRoutingAdministrationService? routingAdministrationService = null)
     {
         ArgumentNullException.ThrowIfNull(appUsers);
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _configurationService = configurationService ?? throw new ArgumentNullException(nameof(configurationService));
+        _routingAdministrationService = routingAdministrationService;
         _generationService = generationService ?? throw new ArgumentNullException(nameof(generationService));
         _emailSettingsService = emailSettingsService ?? throw new ArgumentNullException(nameof(emailSettingsService));
         _sendPreparationService = sendPreparationService ?? throw new ArgumentNullException(nameof(sendPreparationService));
@@ -273,9 +276,50 @@ public partial class ExpirationsWindow : Window
         });
     }
 
+    private async void ExcludeSelected_Click(object sender, RoutedEventArgs e)
+    {
+        if (_state.SelectedPendingIssue is not { } issue)
+            return;
+        if (MessageBox.Show(
+                "Este valor se marcará como no distribuible para Vencimientos.\n" +
+                "Las filas que contengan esta identificación no generarán archivos ni correos.\n" +
+                "La exclusión se aplicará también en futuros análisis.\n\n¿Desea continuar?",
+                "No corresponde distribución",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
+
+        await RunBusyAsync("Guardando exclusión...", async () =>
+        {
+            var result = await _coordinator.ExcludeAsync(issue.RowNumber, issue.ComponentIndex);
+            _state.ApplySnapshot(result.Snapshot);
+            MessageBox.Show(
+                result.Message,
+                "No corresponde distribución",
+                MessageBoxButton.OK,
+                result.Persisted ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            await EvaluateNextMonthReadinessAsync();
+        });
+    }
+
+    private void ViewExcluded_Click(object sender, RoutedEventArgs e)
+    {
+        var values = _coordinator.Snapshot.ExcludedValues;
+        if (values.Count == 0)
+            return;
+        MessageBox.Show(
+            string.Join(Environment.NewLine, values.Select(item =>
+                $"{item.RawValue} — {item.RowCount} fila(s) — {item.StatusText}")),
+            "Valores excluidos del análisis",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
     private async void ConfigureBrokers_Click(object sender, RoutedEventArgs e)
     {
-        var management = new ExpirationsBrokerManagementWindow(_configurationService) { Owner = this };
+        var management = new ExpirationsBrokerManagementWindow(
+            _configurationService,
+            _routingAdministrationService) { Owner = this };
         _ = management.ShowDialog();
         if (!management.HasSavedChanges)
             return;
@@ -292,7 +336,10 @@ public partial class ExpirationsWindow : Window
     {
         if (_state.SelectedProcessOption?.Value is not { } process)
             return;
-        _state.LoadEmailSettings(await _emailSettingsService.LoadAsync(process));
+        var loaded = await _emailSettingsService.LoadAsync(process);
+        if (_state.SelectedProcessOption?.Value != process)
+            return;
+        _state.LoadEmailSettings(loaded);
     }
 
     private async Task<bool> SaveEditableConfigurationAsync(bool showSuccessMessage)
@@ -917,6 +964,8 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public bool CanOpenGeneratedFolder => !IsBusy && Directory.Exists(GeneratedOutputDirectory);
     public bool CanAnalyze => !IsBusy && SelectedProcessOption is not null && SourcePath.Length > 0;
     public bool CanResolve => !IsBusy && SelectedPendingIssue?.CanResolve == true;
+    public bool CanExclude => !IsBusy && SelectedPendingIssue?.CanResolve == true;
+    public bool CanViewExcluded => !IsBusy && ExcludedCount > 0;
     public bool CanSelectPremiumColumns => !IsBusy &&
         _snapshot.Process == ExpirationsProcess.NextMonth && _snapshot.ReadResult?.Workbook is not null;
     public bool CanGenerate => !IsBusy &&
@@ -940,6 +989,11 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         !string.Equals(_subject, _persistedSubject, StringComparison.Ordinal) ||
         !string.Equals(_message, _persistedMessage, StringComparison.Ordinal) ||
         !string.Equals(_commonCcText, _persistedCommonCcText, StringComparison.Ordinal);
+    public string EmailSettingsStateText => HasEmailSettingsChanges
+        ? "Cambios sin guardar. Guarde la plantilla de correo antes de enviar."
+        : _emailSettingsSnapshot?.Exists == true
+            ? "Plantilla guardada para este proceso."
+            : "Aún no existe una plantilla guardada para este proceso.";
     public Visibility BusyVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;
     public bool IsRefreshingOutlookAccounts => _isRefreshingOutlookAccounts;
     public string OutlookStatusText => _outlookStatusText;
@@ -978,10 +1032,12 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public int TotalRows => _snapshot.Analysis?.TotalRows ?? 0;
     public int ResolvedRows => _snapshot.Analysis?.ResolvedRows ?? 0;
     public int PendingRows => _snapshot.Analysis?.RowsWithBlockingIssues ?? 0;
+    public int ExcludedCount => _snapshot.Analysis?.ExcludedComponents ?? 0;
+    public string ViewExcludedButtonText => $"Ver excluidos ({ExcludedCount})";
     public int DestinationCount => PreviewItems.Count;
     public int CatalogCount => _snapshot.Catalog.Count(item => item.IsActive);
     public string BrokerSummaryText =>
-        $"Corredores: {CatalogCount}  ·  Participan: {DestinationCount}  ·  Con pendientes: {PendingRows}  ·  Generados: {GeneratedBrokerCount}";
+        $"Corredores: {CatalogCount}  ·  Participan: {DestinationCount}  ·  Con pendientes: {PendingRows}  ·  Excluidos: {ExcludedCount}  ·  Generados: {GeneratedBrokerCount}";
     public IReadOnlyList<ExpirationsDistributionPreviewItem> PreviewItems => _snapshot.Distribution;
     public IReadOnlyList<ExpirationsPendingIssue> PendingItems => _snapshot.PendingIssues;
     public string ReportStatusText => _sendResult is not null ? "Enviado" :
@@ -1181,6 +1237,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             _selectedPendingIssue = value;
             Notify();
             Notify(nameof(CanResolve));
+            Notify(nameof(CanExclude));
         }
     }
 
@@ -1483,8 +1540,8 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             {
                 { IsConfirmed: true, WasSuccessful: true } => "Enviado",
                 { } => "Fallido",
-                _ when _eligibleBrokerIds.Contains(broker.BrokerId) => "Pendiente / No enviado",
                 _ when files.Count > 0 && warnings.Count > 0 => "Con advertencia",
+                _ when _eligibleBrokerIds.Contains(broker.BrokerId) => "Pendiente / No enviado",
                 _ when files.Count > 0 => "Generado",
                 _ when _generationBatch is not null && preview is not null => "Con advertencia",
                 _ when _snapshot.Analysis is null => "Sin analizar",
@@ -1530,6 +1587,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         Notify(propertyName);
         Notify(nameof(HasEditableChanges));
         Notify(nameof(CanSave));
+        Notify(nameof(EmailSettingsStateText));
     }
 
     private static bool PathValuesEqual(string? left, string? right)

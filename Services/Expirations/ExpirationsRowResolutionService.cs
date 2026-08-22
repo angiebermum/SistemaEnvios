@@ -37,7 +37,9 @@ public sealed class ExpirationsRowResolutionService(
             Components = resolutions,
             DistinctDestinationBrokerIds = destinations,
             HasBlockingIssues = resolutions.Any(
-                component => component.Status != ExpirationsBrokerResolutionStatus.Resolved)
+                component => component.Status is not (
+                    ExpirationsBrokerResolutionStatus.Resolved or
+                    ExpirationsBrokerResolutionStatus.Excluded))
         };
     }
 }

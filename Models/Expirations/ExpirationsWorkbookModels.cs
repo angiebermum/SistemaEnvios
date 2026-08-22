@@ -65,6 +65,7 @@ public sealed class ExpirationsBrokerComponent
 public enum ExpirationsBrokerResolutionStatus
 {
     Resolved,
+    Excluded,
     Unresolved,
     Ambiguous,
     InactiveBroker,
@@ -97,6 +98,8 @@ public sealed class ExpirationsWorkbookAnalysisResult
     public ExpirationsWorkbookReadStatus ReadStatus { get; init; }
     public int TotalRows { get; init; }
     public int ResolvedRows { get; init; }
+    public int ExcludedRows { get; init; }
+    public int ExcludedComponents { get; init; }
     public int RowsWithBlockingIssues { get; init; }
     public int UnresolvedComponents { get; init; }
     public int AmbiguousComponents { get; init; }

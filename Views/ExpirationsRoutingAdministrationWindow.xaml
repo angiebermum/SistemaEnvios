@@ -1,0 +1,129 @@
+<Window x:Class="ECS.CommissionsMailer.Views.ExpirationsRoutingAdministrationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Asociaciones y exclusiones — Vencimientos"
+        Width="1060" Height="690" MinWidth="900" MinHeight="560"
+        WindowStartupLocation="CenterOwner" Loaded="Window_Loaded"
+        Style="{StaticResource DialogWindowStyle}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Administración de routing — Vencimientos"
+                       Style="{StaticResource PageTitleTextStyle}" />
+            <TextBlock Text="Audite asociaciones persistentes y valores marcados como No distribuir. Los cambios aplican a ambos procesos."
+                       Style="{StaticResource PageSubtitleTextStyle}" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <TabControl Grid.Row="1" Margin="0,18,0,0" IsEnabled="{Binding IsUiEnabled}">
+            <TabItem Header="ASOCIACIONES DE VENCIMIENTOS">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Buscar por valor, tipo, corredor o correo"
+                                       Style="{StaticResource CaptionTextStyle}" />
+                            <TextBox Text="{Binding AssociationSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="0,5,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Corredor" Style="{StaticResource CaptionTextStyle}" />
+                            <ComboBox ItemsSource="{Binding BrokerFilters}"
+                                      SelectedItem="{Binding SelectedBrokerFilter, Mode=TwoWay}"
+                                      DisplayMemberPath="DisplayText" Margin="0,5,0,0" />
+                        </StackPanel>
+                    </Grid>
+
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding VisibleAssociations}"
+                              SelectedItem="{Binding SelectedAssociation, Mode=TwoWay}"
+                              IsReadOnly="True" AutoGenerateColumns="False" Margin="0,12,0,0">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Tipo" Binding="{Binding KindText}" Width="140" />
+                            <DataGridTextColumn Header="Valor asociado" Binding="{Binding Association.Value}" Width="2*" />
+                            <DataGridTextColumn Header="Corredor" Binding="{Binding BrokerName}" Width="2*" />
+                            <DataGridTextColumn Header="Correo principal" Binding="{Binding BrokerPrimaryEmail}" Width="2*" />
+                            <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="95" />
+                            <DataGridTextColumn Header="Actualizado" Binding="{Binding Association.UpdatedAtUtc, StringFormat={}{0:g}}" Width="145" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <Grid Grid.Row="2" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="260" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button Content="Desactivar" Click="DeactivateAssociation_Click"
+                                IsEnabled="{Binding CanDeactivateAssociation}"
+                                Style="{StaticResource CompactButtonStyle}" />
+                        <Button Grid.Column="1" Content="Reactivar" Click="ReactivateAssociation_Click"
+                                IsEnabled="{Binding CanReactivateAssociation}"
+                                Style="{StaticResource CompactButtonStyle}" HorizontalAlignment="Left" />
+                        <TextBlock Grid.Column="2" Text="Reasignar a" Style="{StaticResource CaptionTextStyle}"
+                                   VerticalAlignment="Center" Margin="12,0,8,0" />
+                        <ComboBox Grid.Column="3" ItemsSource="{Binding DestinationBrokers}"
+                                  SelectedItem="{Binding SelectedDestinationBroker, Mode=TwoWay}"
+                                  DisplayMemberPath="DisplayText" />
+                        <Button Grid.Column="4" Content="Reasignar" Click="ReassignAssociation_Click"
+                                IsEnabled="{Binding CanReassign}" Style="{StaticResource PrimaryButtonStyle}" />
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="NO CORRESPONDE DISTRIBUCIÓN">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Buscar valor excluido" Style="{StaticResource CaptionTextStyle}" />
+                        <TextBox Width="420" HorizontalAlignment="Left"
+                                 Text="{Binding ExclusionSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 Margin="0,5,0,0" />
+                    </StackPanel>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding VisibleExclusions}"
+                              SelectedItem="{Binding SelectedExclusion, Mode=TwoWay}"
+                              IsReadOnly="True" AutoGenerateColumns="False" Margin="0,12,0,0">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Valor" Binding="{Binding Exclusion.Value}" Width="*" />
+                            <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="130" />
+                            <DataGridTextColumn Header="Actualizado" Binding="{Binding Exclusion.UpdatedAtUtc, StringFormat={}{0:g}}" Width="180" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Content="Desactivar" Click="DeactivateExclusion_Click"
+                                IsEnabled="{Binding CanDeactivateExclusion}"
+                                Style="{StaticResource CompactButtonStyle}" />
+                        <Button Content="Reactivar" Click="ReactivateExclusion_Click"
+                                IsEnabled="{Binding CanReactivateExclusion}"
+                                Style="{StaticResource CompactButtonStyle}" />
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <TextBlock Text="{Binding BusyText}" Style="{StaticResource CaptionTextStyle}"
+                       Visibility="{Binding BusyVisibility}" VerticalAlignment="Center" />
+            <Button Content="Cerrar" IsCancel="True" HorizontalAlignment="Right"
+                    Style="{StaticResource CompactButtonStyle}" Margin="0" />
+        </Grid>
+    </Grid>
+</Window>

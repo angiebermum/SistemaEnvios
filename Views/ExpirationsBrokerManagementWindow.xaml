@@ -55,9 +55,13 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <Button Content="Configurar seleccionado" Click="ConfigureSelected_Click"
-                    IsEnabled="{Binding CanConfigure}" Style="{StaticResource PrimaryButtonStyle}"
-                    HorizontalAlignment="Left" />
+            <WrapPanel>
+                <Button Content="Configurar seleccionado" Click="ConfigureSelected_Click"
+                        IsEnabled="{Binding CanConfigure}" Style="{StaticResource PrimaryButtonStyle}" />
+                <Button x:Name="RoutingAdministrationButton" Content="Administrar asociaciones y exclusiones"
+                        Click="RoutingAdministration_Click" IsEnabled="{Binding IsUiEnabled}"
+                        Style="{StaticResource CompactButtonStyle}" />
+            </WrapPanel>
             <Button Grid.Column="1" Content="Cerrar" IsCancel="True"
                     Style="{StaticResource CompactButtonStyle}" Margin="0" />
         </Grid>

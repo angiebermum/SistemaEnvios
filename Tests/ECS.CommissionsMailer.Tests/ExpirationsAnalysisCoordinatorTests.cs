@@ -11,6 +11,57 @@ public sealed class ExpirationsAnalysisCoordinatorTests
     private static readonly DateTimeOffset Now = new(2026, 8, 21, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task SwitchingProcessInEitherDirectionPreservesLoadedCatalogWithoutReload()
+    {
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead()),
+            new FakeAssociationRepository([]),
+            [Broker(BrokerA, "Broker A"), Broker(BrokerB, "Broker B")]);
+        coordinator.SelectProcess(ExpirationsProcess.PreviousMonth);
+        var loaded = await coordinator.RefreshCatalogAndReanalyzeAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(2, loaded.Catalog.Count);
+
+        coordinator.SelectProcess(ExpirationsProcess.NextMonth);
+        Assert.Equal(2, coordinator.Snapshot.Catalog.Count);
+        Assert.Null(coordinator.Snapshot.Analysis);
+        Assert.Equal(ExpirationsProcess.NextMonth, coordinator.Snapshot.Process);
+
+        coordinator.SelectProcess(ExpirationsProcess.PreviousMonth);
+        Assert.Equal(2, coordinator.Snapshot.Catalog.Count);
+        Assert.Null(coordinator.Snapshot.Analysis);
+        Assert.Equal(ExpirationsProcess.PreviousMonth, coordinator.Snapshot.Process);
+    }
+
+    [Fact]
+    public async Task ExcludingPendingValuePersistsAndAppliesToBothProcessesWithoutBlocking()
+    {
+        var exclusions = new FakeExclusionRepository([]);
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(2, "CRISTIAN PORRAS"))),
+            new FakeAssociationRepository([]),
+            [Broker(BrokerA, "Broker A")],
+            exclusions);
+        Prepare(coordinator, "excluded.xlsx");
+        var before = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Single(before.PendingIssues);
+
+        var result = await coordinator.ExcludeAsync(2, 0, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Persisted);
+        Assert.Empty(result.Snapshot.PendingIssues);
+        Assert.Equal("CRISTIAN PORRAS", Assert.Single(result.Snapshot.ExcludedValues).RawValue);
+        Assert.Equal(ExpirationsBrokerResolutionStatus.Excluded,
+            Assert.Single(result.Snapshot.Analysis!.RowResolutions).Components[0].Status);
+        Assert.False(result.Snapshot.Analysis.RowResolutions[0].HasBlockingIssues);
+
+        coordinator.SelectProcess(ExpirationsProcess.NextMonth);
+        coordinator.SelectFile("excluded-next.xlsx");
+        var next = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(ExpirationsBrokerResolutionStatus.Excluded,
+            Assert.Single(next.Analysis!.RowResolutions).Components[0].Status);
+    }
+
+    [Fact]
     public async Task LoadsCatalogAssociationsAndWorkbookIntoAnalysis()
     {
         var associations = new FakeAssociationRepository([
@@ -469,7 +520,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
     private static ExpirationsAnalysisCoordinator Coordinator(
         IExpirationsWorkbookReader reader,
         FakeAssociationRepository associations,
-        IReadOnlyList<ExpirationsBrokerCatalogItem> brokers)
+        IReadOnlyList<ExpirationsBrokerCatalogItem> brokers,
+        FakeExclusionRepository? exclusions = null)
     {
         var directory = new FakeDirectoryRepository(brokers.Select(item => new ExpirationsBrokerDirectoryEntry
         {
@@ -492,7 +544,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             reader,
             inspectionService: new FakeInspectionService(),
             timeProvider: new FixedTimeProvider(Now),
-            sourceHashProvider: _ => "stable-hash");
+            sourceHashProvider: _ => "stable-hash",
+            exclusions: exclusions);
     }
 
     private static void Prepare(ExpirationsAnalysisCoordinator coordinator, string path)
@@ -665,6 +718,48 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             Documents[index] = stored;
             return Task.FromResult(stored);
         }
+    }
+
+    private sealed class FakeExclusionRepository(
+        IEnumerable<FirestoreStoredDocument<ExpirationsExclusion>> documents)
+        : IExpirationsExclusionRepository
+    {
+        private int _version;
+        public List<FirestoreStoredDocument<ExpirationsExclusion>> Documents { get; } = documents.ToList();
+
+        public Task<FirestoreStoredDocument<ExpirationsExclusion>?> GetAsync(
+            Guid exclusionId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Documents.FirstOrDefault(item => item.Value.Id == exclusionId));
+
+        public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsExclusion>>> ListAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsExclusion>>>(Documents.ToList());
+
+        public Task<FirestoreStoredDocument<ExpirationsExclusion>> CreateAsync(
+            ExpirationsExclusion value,
+            CancellationToken cancellationToken = default)
+        {
+            var stored = Store(value);
+            Documents.Add(stored);
+            return Task.FromResult(stored);
+        }
+
+        public Task<FirestoreStoredDocument<ExpirationsExclusion>> UpdateAsync(
+            ExpirationsExclusion value,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default)
+        {
+            var stored = Store(value);
+            var index = Documents.FindIndex(item => item.Value.Id == value.Id);
+            Documents[index] = stored;
+            return Task.FromResult(stored);
+        }
+
+        private FirestoreStoredDocument<ExpirationsExclusion> Store(ExpirationsExclusion value) => new(
+            value,
+            $"modules/vencimientos/exclusions/{value.Id:D}",
+            $"exclusion-{++_version}");
     }
 
     private sealed record UpdateCall(ExpirationsBrokerAssociation Value, string ExpectedUpdateTime);

@@ -272,6 +272,7 @@ public partial class App : Application
                 var directoryRepository = new ExpirationsBrokerDirectoryRepository(moduleContext.FirestoreClient);
                 var profileRepository = new ExpirationsBrokerProfileRepository(moduleContext.FirestoreClient);
                 var associationRepository = new ExpirationsBrokerAssociationRepository(moduleContext.FirestoreClient);
+                var exclusionRepository = new ExpirationsExclusionRepository(moduleContext.FirestoreClient);
                 var settingsRepository = new ExpirationsProcessSettingsRepository(moduleContext.FirestoreClient);
                 var sendHistoryRepository = new ExpirationsSendHistoryRepository(moduleContext.FirestoreClient);
                 var catalogService = new ExpirationsBrokerCatalogService(
@@ -282,7 +283,12 @@ public partial class App : Application
                     profileRepository);
                 var coordinator = new ExpirationsAnalysisCoordinator(
                     catalogService,
-                    associationRepository);
+                    associationRepository,
+                    exclusions: exclusionRepository);
+                var routingAdministrationService = new ExpirationsRoutingAdministrationService(
+                    associationRepository,
+                    exclusionRepository,
+                    configurationService);
                 var generationService = new ExpirationsGenerationService();
                 var emailSettingsService = new ExpirationsEmailSettingsService(settingsRepository);
                 var sendPreparationService = new ExpirationsSendPreparationService(
@@ -301,7 +307,8 @@ public partial class App : Application
                     emailSettingsService,
                     sendPreparationService,
                     outlookSender,
-                    sendHistoryRepository);
+                    sendHistoryRepository,
+                    routingAdministrationService);
                 return;
             }
 
@@ -437,7 +444,8 @@ public partial class App : Application
         IExpirationsEmailSettingsService emailSettingsService,
         ExpirationsSendPreparationService sendPreparationService,
         IExpirationsOutlookSender outlookSender,
-        IExpirationsSendHistoryRepository sendHistory)
+        IExpirationsSendHistoryRepository sendHistory,
+        IExpirationsRoutingAdministrationService routingAdministrationService)
     {
         var expirationsWindow = new ExpirationsWindow(
             moduleContext.CurrentUser,
@@ -450,7 +458,8 @@ public partial class App : Application
             outlookSender,
             sendHistory,
             paths,
-            logger);
+            logger,
+            routingAdministrationService: routingAdministrationService);
         MainWindow = expirationsWindow;
         var restarting = false;
         expirationsWindow.LogoutRequested += (_, _) =>

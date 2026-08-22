@@ -114,6 +114,49 @@ public sealed class ExpirationsBrokerAssociationRepository(IFirestoreRestClient 
         _repository.UpdateAsync(value.Id.ToString("D"), value, expectedUpdateTime, cancellationToken);
 }
 
+public interface IExpirationsExclusionRepository
+{
+    Task<FirestoreStoredDocument<ExpirationsExclusion>?> GetAsync(
+        Guid exclusionId,
+        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsExclusion>>> ListAsync(
+        CancellationToken cancellationToken = default);
+    Task<FirestoreStoredDocument<ExpirationsExclusion>> CreateAsync(
+        ExpirationsExclusion value,
+        CancellationToken cancellationToken = default);
+    Task<FirestoreStoredDocument<ExpirationsExclusion>> UpdateAsync(
+        ExpirationsExclusion value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class ExpirationsExclusionRepository(IFirestoreRestClient client)
+    : IExpirationsExclusionRepository
+{
+    private readonly FirestoreCollectionRepository<ExpirationsExclusion> _repository =
+        new(client, new ExpirationsExclusionMapper(), "modules/vencimientos", "exclusions");
+
+    public Task<FirestoreStoredDocument<ExpirationsExclusion>?> GetAsync(
+        Guid exclusionId,
+        CancellationToken cancellationToken = default) =>
+        _repository.GetAsync(exclusionId.ToString("D"), cancellationToken);
+
+    public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsExclusion>>> ListAsync(
+        CancellationToken cancellationToken = default) =>
+        _repository.ListAsync(cancellationToken: cancellationToken);
+
+    public Task<FirestoreStoredDocument<ExpirationsExclusion>> CreateAsync(
+        ExpirationsExclusion value,
+        CancellationToken cancellationToken = default) =>
+        _repository.CreateAsync(value.Id.ToString("D"), value, cancellationToken);
+
+    public Task<FirestoreStoredDocument<ExpirationsExclusion>> UpdateAsync(
+        ExpirationsExclusion value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        _repository.UpdateAsync(value.Id.ToString("D"), value, expectedUpdateTime, cancellationToken);
+}
+
 public interface IExpirationsProcessSettingsRepository
 {
     Task<FirestoreStoredDocument<ExpirationsProcessSettings>?> GetAsync(

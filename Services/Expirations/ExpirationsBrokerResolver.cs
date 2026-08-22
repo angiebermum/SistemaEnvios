@@ -6,13 +6,15 @@ public sealed class ExpirationsBrokerResolver
 {
     private readonly IReadOnlyList<ExpirationsBrokerCatalogItem> _catalog;
     private readonly IReadOnlyList<ExpirationsBrokerAssociation> _associations;
+    private readonly IReadOnlyList<ExpirationsExclusion> _exclusions;
     private readonly ExpirationsBrokerNormalizer _normalizer;
     private readonly IReadOnlyDictionary<Guid, bool> _brokerActivity;
 
     public ExpirationsBrokerResolver(
         IEnumerable<ExpirationsBrokerCatalogItem> catalog,
         IEnumerable<ExpirationsBrokerAssociation> associations,
-        ExpirationsBrokerNormalizer? normalizer = null)
+        ExpirationsBrokerNormalizer? normalizer = null,
+        IEnumerable<ExpirationsExclusion>? exclusions = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(associations);
@@ -20,6 +22,9 @@ public sealed class ExpirationsBrokerResolver
         _associations = associations
             .OrderBy(association => association.Id)
             .ThenBy(association => association.BrokerId)
+            .ToList();
+        _exclusions = (exclusions ?? [])
+            .OrderBy(exclusion => exclusion.Id)
             .ToList();
         _normalizer = normalizer ?? new ExpirationsBrokerNormalizer();
         _brokerActivity = _catalog
@@ -44,48 +49,124 @@ public sealed class ExpirationsBrokerResolver
             };
         }
 
-        var candidateBrokerIds = new HashSet<Guid>();
+        var activeAssociations = _associations
+            .Where(association => association.IsActive)
+            .Select(association => new
+            {
+                Association = association,
+                ComparableValue = _normalizer.Normalize(
+                    association.NormalizedValue.Length > 0
+                        ? association.NormalizedValue
+                        : association.Value)
+            })
+            .Where(item => item.ComparableValue.Length > 0)
+            .ToList();
+        var exactAssociations = activeAssociations
+            .Where(item => string.Equals(item.ComparableValue, normalizedComponent, StringComparison.Ordinal))
+            .ToList();
+        var isExcluded = _exclusions.Any(exclusion =>
+            exclusion.IsActive &&
+            string.Equals(
+                _normalizer.Normalize(exclusion.NormalizedValue.Length > 0
+                    ? exclusion.NormalizedValue
+                    : exclusion.Value),
+                normalizedComponent,
+                StringComparison.Ordinal));
+        if (isExcluded)
+        {
+            if (exactAssociations.Count > 0)
+            {
+                return new ExpirationsBrokerComponentResolution
+                {
+                    RawValue = component.RawValue,
+                    NormalizedValue = normalizedComponent,
+                    Status = ExpirationsBrokerResolutionStatus.Ambiguous,
+                    CandidateBrokerIds = exactAssociations
+                        .Where(item => _brokerActivity.ContainsKey(item.Association.BrokerId))
+                        .Select(item => item.Association.BrokerId)
+                        .Distinct()
+                        .Order()
+                        .ToList(),
+                    MatchedAssociationIds = exactAssociations.Select(item => item.Association.Id).Order().ToList(),
+                    Diagnostics = ["El valor tiene simultáneamente una asociación activa y una exclusión activa."]
+                };
+            }
+
+            return new ExpirationsBrokerComponentResolution
+            {
+                RawValue = component.RawValue,
+                NormalizedValue = normalizedComponent,
+                Status = ExpirationsBrokerResolutionStatus.Excluded,
+                Diagnostics = ["El valor está marcado como No distribuir para Vencimientos."]
+            };
+        }
+
+        var exactCandidates = _catalog
+            .Where(broker => string.Equals(
+                _normalizer.Normalize(broker.Name),
+                normalizedComponent,
+                StringComparison.Ordinal))
+            .Select(broker => broker.BrokerId)
+            .Concat(exactAssociations
+                .Where(item => _brokerActivity.ContainsKey(item.Association.BrokerId))
+                .Select(item => item.Association.BrokerId))
+            .ToHashSet();
+        var exactUnknown = exactAssociations
+            .Where(item => !_brokerActivity.ContainsKey(item.Association.BrokerId))
+            .Select(item => item.Association.BrokerId)
+            .ToHashSet();
+        if (exactCandidates.Count > 0 || exactUnknown.Count > 0)
+        {
+            return BuildResolution(
+                component.RawValue,
+                normalizedComponent,
+                exactCandidates,
+                exactUnknown,
+                exactAssociations.Select(item => item.Association.Id),
+                "El componente coincide exactamente con más de un corredor distinto.");
+        }
+
+        var candidateBrokerIds = _catalog
+            .Where(broker => ContainsDelimitedPhrase(normalizedComponent, _normalizer.Normalize(broker.Name)))
+            .Select(broker => broker.BrokerId)
+            .ToHashSet();
         var unknownBrokerIds = new HashSet<Guid>();
         var matchedAssociationIds = new HashSet<Guid>();
-
-        foreach (var broker in _catalog)
+        foreach (var item in activeAssociations.Where(item =>
+                     ContainsDelimitedPhrase(normalizedComponent, item.ComparableValue)))
         {
-            if (ContainsDelimitedPhrase(normalizedComponent, _normalizer.Normalize(broker.Name)))
-                candidateBrokerIds.Add(broker.BrokerId);
-        }
-
-        foreach (var association in _associations.Where(association => association.IsActive))
-        {
-            var comparableValue = _normalizer.Normalize(
-                association.NormalizedValue.Length > 0
-                    ? association.NormalizedValue
-                    : association.Value);
-            var isMatch = association.Kind switch
-            {
-                ExpirationsAssociationKind.Name or
-                ExpirationsAssociationKind.Alias or
-                ExpirationsAssociationKind.Code =>
-                    ContainsDelimitedPhrase(normalizedComponent, comparableValue),
-                _ => false
-            };
-            if (!isMatch)
-                continue;
-
-            matchedAssociationIds.Add(association.Id);
-            if (_brokerActivity.ContainsKey(association.BrokerId))
-                candidateBrokerIds.Add(association.BrokerId);
+            matchedAssociationIds.Add(item.Association.Id);
+            if (_brokerActivity.ContainsKey(item.Association.BrokerId))
+                candidateBrokerIds.Add(item.Association.BrokerId);
             else
-                unknownBrokerIds.Add(association.BrokerId);
+                unknownBrokerIds.Add(item.Association.BrokerId);
         }
 
-        var orderedCandidates = candidateBrokerIds.OrderBy(id => id).ToList();
-        var orderedUnknown = unknownBrokerIds.OrderBy(id => id).ToList();
-        var orderedAssociations = matchedAssociationIds.OrderBy(id => id).ToList();
+        return BuildResolution(
+            component.RawValue,
+            normalizedComponent,
+            candidateBrokerIds,
+            unknownBrokerIds,
+            matchedAssociationIds,
+            "El componente coincide con más de un corredor distinto.");
+    }
+
+    private ExpirationsBrokerComponentResolution BuildResolution(
+        string rawValue,
+        string normalizedComponent,
+        IEnumerable<Guid> candidateBrokerIds,
+        IEnumerable<Guid> unknownBrokerIds,
+        IEnumerable<Guid> matchedAssociationIds,
+        string ambiguousDiagnostic)
+    {
+        var orderedCandidates = candidateBrokerIds.Distinct().Order().ToList();
+        var orderedUnknown = unknownBrokerIds.Distinct().Order().ToList();
+        var orderedAssociations = matchedAssociationIds.Distinct().Order().ToList();
         if (orderedUnknown.Count > 0)
         {
             return new ExpirationsBrokerComponentResolution
             {
-                RawValue = component.RawValue,
+                RawValue = rawValue,
                 NormalizedValue = normalizedComponent,
                 Status = ExpirationsBrokerResolutionStatus.Unresolved,
                 CandidateBrokerIds = orderedCandidates,
@@ -101,7 +182,7 @@ public sealed class ExpirationsBrokerResolver
         {
             return new ExpirationsBrokerComponentResolution
             {
-                RawValue = component.RawValue,
+                RawValue = rawValue,
                 NormalizedValue = normalizedComponent,
                 Status = ExpirationsBrokerResolutionStatus.Unresolved,
                 MatchedAssociationIds = orderedAssociations,
@@ -113,12 +194,12 @@ public sealed class ExpirationsBrokerResolver
         {
             return new ExpirationsBrokerComponentResolution
             {
-                RawValue = component.RawValue,
+                RawValue = rawValue,
                 NormalizedValue = normalizedComponent,
                 Status = ExpirationsBrokerResolutionStatus.Ambiguous,
                 CandidateBrokerIds = orderedCandidates,
                 MatchedAssociationIds = orderedAssociations,
-                Diagnostics = ["El componente coincide con más de un corredor distinto."]
+                Diagnostics = [ambiguousDiagnostic]
             };
         }
 
@@ -126,7 +207,7 @@ public sealed class ExpirationsBrokerResolver
         var isActive = _brokerActivity[brokerId];
         return new ExpirationsBrokerComponentResolution
         {
-            RawValue = component.RawValue,
+            RawValue = rawValue,
             NormalizedValue = normalizedComponent,
             Status = isActive
                 ? ExpirationsBrokerResolutionStatus.Resolved

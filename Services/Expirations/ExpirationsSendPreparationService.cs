@@ -57,6 +57,7 @@ public sealed class ExpirationsSendPreparationService
             .GroupBy(item => item.BrokerId)
             .ToDictionary(group => group.Key, group => group.ToList());
         var requests = new List<EmailSendRequest>();
+        var preparedItems = new List<ExpirationsPreparedSendItem>();
         foreach (var fileGroup in batch.Files
                      .GroupBy(file => file.BrokerId)
                      .OrderBy(group => group.First().BrokerName, StringComparer.CurrentCultureIgnoreCase)
@@ -79,7 +80,7 @@ public sealed class ExpirationsSendPreparationService
                 broker,
                 processSettings?.CommonCcAddresses ?? []);
             errors.AddRange(resolution.Errors);
-            requests.Add(new EmailSendRequest
+            var request = new EmailSendRequest
             {
                 BrokerId = broker.BrokerId,
                 BrokerName = broker.Name,
@@ -99,6 +100,19 @@ public sealed class ExpirationsSendPreparationService
                 PaymentGenerationId = null,
                 ResendOfRecordId = null,
                 SignatureImagePath = null
+            };
+            requests.Add(request);
+            preparedItems.Add(new ExpirationsPreparedSendItem
+            {
+                RequestId = request.RequestId,
+                Attachments = fileGroup
+                    .OrderBy(file => file.Variant)
+                    .Select(file => new ExpirationsPreparedAttachment(
+                        TryGetFullPath(file.OutputPath) ?? file.OutputPath,
+                        Path.GetFileName(file.OutputPath),
+                        file.Sha256,
+                        file.Variant))
+                    .ToList()
             });
         }
 
@@ -110,6 +124,7 @@ public sealed class ExpirationsSendPreparationService
             Process = batch.Process,
             Settings = processSettings is null ? null : Copy(processSettings),
             Requests = requests,
+            PreparedItems = preparedItems,
             Errors = errors.Distinct(StringComparer.Ordinal).ToList(),
             Warnings = warnings
         };

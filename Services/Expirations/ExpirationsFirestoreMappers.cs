@@ -12,6 +12,12 @@ internal static class ExpirationsFirestoreFields
             ? parsed
             : throw new InvalidDataException($"El campo '{name}' no contiene un UUID válido.");
 
+    public static FirestoreRestValue NullableGuid(Guid? value) =>
+        value is { } id ? Guid(id) : FirestoreRestValue.Null();
+
+    public static Guid? ReadNullableGuid(FirestoreRestValue value, string name) =>
+        value.IsNull ? null : ReadGuid(value, name);
+
     public static FirestoreRestValue Strings(IEnumerable<string>? values) =>
         FirestoreRestValue.Array((values ?? []).Select(FirestoreRestValue.String));
 
@@ -40,6 +46,132 @@ internal static class ExpirationsFirestoreFields
             IsActive = fields.Required("isActive").RequireBoolean($"{name}.isActive")
         };
     }
+}
+
+internal sealed class ExpirationsSendOperationMapper : IFirestoreEntityMapper<ExpirationsSendOperation>
+{
+    public IReadOnlyDictionary<string, FirestoreRestValue> ToFields(ExpirationsSendOperation value) =>
+        new Dictionary<string, FirestoreRestValue>(StringComparer.Ordinal)
+        {
+            ["operationId"] = ExpirationsFirestoreFields.Guid(value.OperationId),
+            ["process"] = FirestoreRestValue.String(value.Process.ToString()),
+            ["startedAtUtc"] = FirestoreRestValue.Timestamp(value.StartedAtUtc),
+            ["completedAtUtc"] = value.CompletedAtUtc is { } completed
+                ? FirestoreRestValue.Timestamp(completed)
+                : FirestoreRestValue.Null(),
+            ["sendingAccountEmail"] = FirestoreRestValue.String(value.SendingAccountEmail),
+            ["subject"] = FirestoreRestValue.String(value.Subject),
+            ["body"] = FirestoreRestValue.String(value.Body),
+            ["status"] = FirestoreRestValue.String(value.Status.ToString()),
+            ["totalCount"] = FirestoreRestValue.Integer(value.TotalCount),
+            ["successCount"] = FirestoreRestValue.Integer(value.SuccessCount),
+            ["failureCount"] = FirestoreRestValue.Integer(value.FailureCount),
+            ["retryOfOperationId"] = ExpirationsFirestoreFields.NullableGuid(value.RetryOfOperationId)
+        };
+
+    public ExpirationsSendOperation FromFields(IReadOnlyDictionary<string, FirestoreRestValue> fields) => new()
+    {
+        OperationId = ExpirationsFirestoreFields.ReadGuid(fields.Required("operationId"), "operationId"),
+        Process = ReadProcess(fields.Required("process").RequireString("process")),
+        StartedAtUtc = fields.Required("startedAtUtc").RequireTimestamp("startedAtUtc"),
+        CompletedAtUtc = fields.Required("completedAtUtc").IsNull
+            ? null
+            : fields.Required("completedAtUtc").RequireTimestamp("completedAtUtc"),
+        SendingAccountEmail = fields.Required("sendingAccountEmail").RequireString("sendingAccountEmail"),
+        Subject = fields.Required("subject").RequireString("subject"),
+        Body = fields.Required("body").RequireString("body"),
+        Status = ReadStatus(fields.Required("status").RequireString("status")),
+        TotalCount = checked((int)fields.Required("totalCount").RequireInteger("totalCount")),
+        SuccessCount = checked((int)fields.Required("successCount").RequireInteger("successCount")),
+        FailureCount = checked((int)fields.Required("failureCount").RequireInteger("failureCount")),
+        RetryOfOperationId = ExpirationsFirestoreFields.ReadNullableGuid(
+            fields.Required("retryOfOperationId"),
+            "retryOfOperationId")
+    };
+
+    private static ExpirationsProcess ReadProcess(string value) => value switch
+    {
+        nameof(ExpirationsProcess.PreviousMonth) => ExpirationsProcess.PreviousMonth,
+        nameof(ExpirationsProcess.NextMonth) => ExpirationsProcess.NextMonth,
+        _ => throw new InvalidDataException("El proceso del historial de Vencimientos no está permitido.")
+    };
+
+    private static ExpirationsSendOperationStatus ReadStatus(string value) => value switch
+    {
+        nameof(ExpirationsSendOperationStatus.InProgress) => ExpirationsSendOperationStatus.InProgress,
+        nameof(ExpirationsSendOperationStatus.Completed) => ExpirationsSendOperationStatus.Completed,
+        _ => throw new InvalidDataException("El estado de la operación de Vencimientos no está permitido.")
+    };
+}
+
+internal sealed class ExpirationsSendHistoryItemMapper : IFirestoreEntityMapper<ExpirationsSendHistoryItem>
+{
+    public IReadOnlyDictionary<string, FirestoreRestValue> ToFields(ExpirationsSendHistoryItem value) =>
+        new Dictionary<string, FirestoreRestValue>(StringComparer.Ordinal)
+        {
+            ["itemId"] = ExpirationsFirestoreFields.Guid(value.ItemId),
+            ["requestId"] = ExpirationsFirestoreFields.Guid(value.RequestId),
+            ["brokerId"] = ExpirationsFirestoreFields.Guid(value.BrokerId),
+            ["brokerName"] = FirestoreRestValue.String(value.BrokerName),
+            ["toRecipients"] = ExpirationsFirestoreFields.Strings(value.ToRecipients),
+            ["ccRecipients"] = ExpirationsFirestoreFields.Strings(value.CcRecipients),
+            ["attachments"] = FirestoreRestValue.Array(value.Attachments.Select(WriteAttachment)),
+            ["status"] = FirestoreRestValue.String(value.Status.ToString()),
+            ["errorMessage"] = FirestoreRestValue.String(value.ErrorMessage),
+            ["retryOfItemId"] = ExpirationsFirestoreFields.NullableGuid(value.RetryOfItemId)
+        };
+
+    public ExpirationsSendHistoryItem FromFields(IReadOnlyDictionary<string, FirestoreRestValue> fields) => new()
+    {
+        ItemId = ExpirationsFirestoreFields.ReadGuid(fields.Required("itemId"), "itemId"),
+        RequestId = ExpirationsFirestoreFields.ReadGuid(fields.Required("requestId"), "requestId"),
+        BrokerId = ExpirationsFirestoreFields.ReadGuid(fields.Required("brokerId"), "brokerId"),
+        BrokerName = fields.Required("brokerName").RequireString("brokerName"),
+        ToRecipients = ExpirationsFirestoreFields.ReadStrings(fields.Required("toRecipients"), "toRecipients"),
+        CcRecipients = ExpirationsFirestoreFields.ReadStrings(fields.Required("ccRecipients"), "ccRecipients"),
+        Attachments = fields.Required("attachments").RequireArray("attachments")
+            .Select((value, index) => ReadAttachment(value, index))
+            .ToList(),
+        Status = ReadStatus(fields.Required("status").RequireString("status")),
+        ErrorMessage = fields.Required("errorMessage").RequireString("errorMessage"),
+        RetryOfItemId = ExpirationsFirestoreFields.ReadNullableGuid(
+            fields.Required("retryOfItemId"),
+            "retryOfItemId")
+    };
+
+    private static FirestoreRestValue WriteAttachment(ExpirationsSendAttachment value) =>
+        FirestoreRestValue.Map(new Dictionary<string, FirestoreRestValue>(StringComparer.Ordinal)
+        {
+            ["fileName"] = FirestoreRestValue.String(value.FileName),
+            ["sha256"] = FirestoreRestValue.String(value.Sha256),
+            ["variant"] = FirestoreRestValue.String(value.Variant.ToString())
+        });
+
+    private static ExpirationsSendAttachment ReadAttachment(FirestoreRestValue value, int index)
+    {
+        var name = $"attachments[{index}]";
+        var fields = value.RequireMap(name);
+        return new ExpirationsSendAttachment(
+            fields.Required("fileName").RequireString($"{name}.fileName"),
+            fields.Required("sha256").RequireString($"{name}.sha256"),
+            ReadVariant(fields.Required("variant").RequireString($"{name}.variant")));
+    }
+
+    private static ExpirationsGeneratedFileVariant ReadVariant(string value) => value switch
+    {
+        nameof(ExpirationsGeneratedFileVariant.Standard) => ExpirationsGeneratedFileVariant.Standard,
+        nameof(ExpirationsGeneratedFileVariant.FelixAlphabetical) => ExpirationsGeneratedFileVariant.FelixAlphabetical,
+        nameof(ExpirationsGeneratedFileVariant.FelixExpirationDate) => ExpirationsGeneratedFileVariant.FelixExpirationDate,
+        _ => throw new InvalidDataException("La variante de adjunto del historial no está permitida.")
+    };
+
+    private static ExpirationsSendItemStatus ReadStatus(string value) => value switch
+    {
+        nameof(ExpirationsSendItemStatus.Pending) => ExpirationsSendItemStatus.Pending,
+        nameof(ExpirationsSendItemStatus.Succeeded) => ExpirationsSendItemStatus.Succeeded,
+        nameof(ExpirationsSendItemStatus.Failed) => ExpirationsSendItemStatus.Failed,
+        _ => throw new InvalidDataException("El estado del item de Vencimientos no está permitido.")
+    };
 }
 
 internal sealed class ExpirationsBrokerDirectoryMapper : IFirestoreEntityMapper<ExpirationsBrokerDirectoryEntry>

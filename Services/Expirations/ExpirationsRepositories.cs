@@ -161,3 +161,88 @@ public sealed class ExpirationsProcessSettingsRepository(IFirestoreRestClient cl
         _ => throw new ArgumentOutOfRangeException(nameof(process), process, "Proceso de Vencimientos no permitido.")
     };
 }
+
+public interface IExpirationsSendHistoryRepository
+{
+    Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendOperation>>> ListOperationsAsync(
+        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendHistoryItem>>> ListItemsAsync(
+        Guid operationId,
+        CancellationToken cancellationToken = default);
+    Task<FirestoreStoredDocument<ExpirationsSendOperation>> CreateOperationAsync(
+        ExpirationsSendOperation value,
+        CancellationToken cancellationToken = default);
+    Task<FirestoreStoredDocument<ExpirationsSendHistoryItem>> CreateItemAsync(
+        Guid operationId,
+        ExpirationsSendHistoryItem value,
+        CancellationToken cancellationToken = default);
+    Task<FirestoreStoredDocument<ExpirationsSendOperation>> UpdateOperationAsync(
+        ExpirationsSendOperation value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
+    Task<FirestoreStoredDocument<ExpirationsSendHistoryItem>> UpdateItemAsync(
+        Guid operationId,
+        ExpirationsSendHistoryItem value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class ExpirationsSendHistoryRepository : IExpirationsSendHistoryRepository
+{
+    private readonly IFirestoreRestClient _client;
+    private readonly FirestoreCollectionRepository<ExpirationsSendOperation> _operations;
+    private readonly ExpirationsSendHistoryItemMapper _itemMapper = new();
+
+    public ExpirationsSendHistoryRepository(IFirestoreRestClient client)
+    {
+        _client = client ?? throw new ArgumentNullException(nameof(client));
+        _operations = new FirestoreCollectionRepository<ExpirationsSendOperation>(
+            client,
+            new ExpirationsSendOperationMapper(),
+            "modules/vencimientos",
+            "sendOperations");
+    }
+
+    public async Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendOperation>>> ListOperationsAsync(
+        CancellationToken cancellationToken = default) =>
+        (await _operations.ListAsync(cancellationToken: cancellationToken))
+            .OrderByDescending(document => document.Value.StartedAtUtc)
+            .ThenByDescending(document => document.Value.OperationId)
+            .ToList();
+
+    public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendHistoryItem>>> ListItemsAsync(
+        Guid operationId,
+        CancellationToken cancellationToken = default) =>
+        Items(operationId).ListAsync(cancellationToken: cancellationToken);
+
+    public Task<FirestoreStoredDocument<ExpirationsSendOperation>> CreateOperationAsync(
+        ExpirationsSendOperation value,
+        CancellationToken cancellationToken = default) =>
+        _operations.CreateAsync(value.OperationId.ToString("D"), value, cancellationToken);
+
+    public Task<FirestoreStoredDocument<ExpirationsSendHistoryItem>> CreateItemAsync(
+        Guid operationId,
+        ExpirationsSendHistoryItem value,
+        CancellationToken cancellationToken = default) =>
+        Items(operationId).CreateAsync(value.ItemId.ToString("D"), value, cancellationToken);
+
+    public Task<FirestoreStoredDocument<ExpirationsSendOperation>> UpdateOperationAsync(
+        ExpirationsSendOperation value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        _operations.UpdateAsync(value.OperationId.ToString("D"), value, expectedUpdateTime, cancellationToken);
+
+    public Task<FirestoreStoredDocument<ExpirationsSendHistoryItem>> UpdateItemAsync(
+        Guid operationId,
+        ExpirationsSendHistoryItem value,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        Items(operationId).UpdateAsync(value.ItemId.ToString("D"), value, expectedUpdateTime, cancellationToken);
+
+    private FirestoreCollectionRepository<ExpirationsSendHistoryItem> Items(Guid operationId) =>
+        new(
+            _client,
+            _itemMapper,
+            $"modules/vencimientos/sendOperations/{operationId:D}",
+            "items");
+}

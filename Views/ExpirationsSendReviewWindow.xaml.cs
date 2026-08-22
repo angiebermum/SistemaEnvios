@@ -17,13 +17,16 @@ public partial class ExpirationsSendReviewWindow : Window
 
     public ExpirationsSendReviewWindow(
         ExpirationsSendPreparationResult preparation,
-        IExpirationsOutlookSender sender)
+        IExpirationsOutlookSender sender,
+        IExpirationsSendHistoryRepository history)
     {
         ArgumentNullException.ThrowIfNull(preparation);
         if (!preparation.CanSend)
             throw new ArgumentException("El preflight debe estar completo antes de abrir la revisión.", nameof(preparation));
         _sender = sender ?? throw new ArgumentNullException(nameof(sender));
-        _execution = new ExpirationsSendExecutionService(sender);
+        _execution = new ExpirationsSendExecutionService(
+            sender,
+            history ?? throw new ArgumentNullException(nameof(history)));
         State = new ExpirationsSendReviewState(preparation);
         InitializeComponent();
         DataContext = State;
@@ -128,7 +131,12 @@ internal sealed class ExpirationsSendReviewState : INotifyPropertyChanged
     public string ProgressText => _progressText;
     public string SummaryText => _result is null
         ? string.Empty
-        : $"Enviados correctamente: {_result.SuccessfulCount} · Fallidos: {_result.FailedCount}";
+        : $"Enviados correctamente: {_result.SuccessfulCount} · Fallidos: {_result.FailedCount}" +
+          (_result.UnknownCount > 0 ? $" · No confirmados: {_result.UnknownCount}" : string.Empty);
+    public string HistoryWarningText => _result?.HistoryWarning ?? string.Empty;
+    public Visibility HistoryWarningVisibility => HistoryWarningText.Length == 0
+        ? Visibility.Collapsed
+        : Visibility.Visible;
     public Visibility ResultsVisibility => _result is null ? Visibility.Collapsed : Visibility.Visible;
     public bool CanSelectAccount => !_isBusy && _outlookAvailable && AvailableAccounts.Count > 1 && _result is null;
     public bool CanContinue => !_isBusy && _outlookAvailable &&

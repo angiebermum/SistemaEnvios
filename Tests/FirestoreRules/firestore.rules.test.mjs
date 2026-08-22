@@ -66,6 +66,40 @@ const expirationsSettings = (overrides = {}) => ({
   ...overrides
 });
 
+const sendOperation = (operationId, process = 'PreviousMonth', overrides = {}) => ({
+  operationId,
+  process,
+  startedAtUtc: new Date('2026-08-21T12:00:00Z'),
+  completedAtUtc: null,
+  sendingAccountEmail: 'sender@example.test',
+  subject: 'Vencimientos',
+  body: 'Adjuntamos el reporte.',
+  status: 'InProgress',
+  totalCount: 1,
+  successCount: 0,
+  failureCount: 0,
+  retryOfOperationId: null,
+  ...overrides
+});
+
+const sendItem = (itemId, overrides = {}) => ({
+  itemId,
+  requestId: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  brokerId: brokerOne,
+  brokerName: 'Broker Uno',
+  toRecipients: ['broker@example.test'],
+  ccRecipients: ['cc@example.test'],
+  attachments: [{
+    fileName: 'broker.xlsx',
+    sha256: 'a'.repeat(64),
+    variant: 'Standard'
+  }],
+  status: 'Pending',
+  errorMessage: '',
+  retryOfItemId: null,
+  ...overrides
+});
+
 before(async () => {
   environment = await initializeTestEnvironment({
     projectId,
@@ -304,6 +338,91 @@ test('settings Vencimientos: processId arbitrario y solo Comisiones reciben DENY
     doc(commissionsDb, 'modules/vencimientos/settings/previousMonth'),
     expirationsSettings()));
   await assertFails(getDoc(doc(commissionsDb, 'modules/vencimientos/settings/previousMonth')));
+});
+
+test('historial Vencimientos: crea Pending, termina item y completa operación', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  const operationId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  const itemId = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+  const operationPath = `modules/vencimientos/sendOperations/${operationId}`;
+  const itemPath = `${operationPath}/items/${itemId}`;
+  await assertSucceeds(setDoc(doc(db, operationPath), sendOperation(operationId)));
+  await assertSucceeds(setDoc(doc(db, itemPath), sendItem(itemId, {
+    attachments: [
+      { fileName: 'alfabetico.xlsx', sha256: 'a'.repeat(64), variant: 'FelixAlphabetical' },
+      { fileName: 'vencimiento.xlsx', sha256: 'b'.repeat(64), variant: 'FelixExpirationDate' }
+    ]
+  })));
+  await assertSucceeds(updateDoc(doc(db, itemPath), {
+    status: 'Succeeded',
+    errorMessage: ''
+  }));
+  await assertSucceeds(updateDoc(doc(db, operationPath), {
+    status: 'Completed',
+    completedAtUtc: new Date('2026-08-21T12:01:00Z'),
+    successCount: 1,
+    failureCount: 0
+  }));
+  await assertSucceeds(getDoc(doc(db, operationPath)));
+  await assertSucceeds(getDoc(doc(db, itemPath)));
+});
+
+test('historial Vencimientos: resultados terminados son inmutables y no hay deletes', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  const operationId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  const itemId = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+  const operationPath = `modules/vencimientos/sendOperations/${operationId}`;
+  const itemPath = `${operationPath}/items/${itemId}`;
+  await assertSucceeds(setDoc(doc(db, operationPath), sendOperation(operationId)));
+  await assertSucceeds(setDoc(doc(db, itemPath), sendItem(itemId)));
+  await assertSucceeds(updateDoc(doc(db, itemPath), {
+    status: 'Failed',
+    errorMessage: 'Falló Outlook'
+  }));
+  await assertFails(updateDoc(doc(db, itemPath), {
+    status: 'Succeeded',
+    errorMessage: ''
+  }));
+  await assertFails(deleteDoc(doc(db, itemPath)));
+  await assertFails(deleteDoc(doc(db, operationPath)));
+});
+
+test('historial Vencimientos: rechaza shapes, estados y cambios de snapshot inválidos', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  const operationId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  const itemId = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+  const operationPath = `modules/vencimientos/sendOperations/${operationId}`;
+  const itemPath = `${operationPath}/items/${itemId}`;
+  await assertFails(setDoc(doc(db, operationPath), sendOperation(operationId, 'Unknown')));
+  await assertSucceeds(setDoc(doc(db, operationPath), sendOperation(operationId)));
+  await assertFails(setDoc(doc(db, itemPath), sendItem(itemId, {
+    attachments: [{ fileName: 'broker.xlsx', sha256: 'a'.repeat(64), variant: 'Unknown' }]
+  })));
+  await assertSucceeds(setDoc(doc(db, itemPath), sendItem(itemId)));
+  await assertFails(updateDoc(doc(db, itemPath), {
+    brokerId: brokerTwo,
+    status: 'Succeeded'
+  }));
+  await assertFails(updateDoc(doc(db, operationPath), {
+    status: 'Completed',
+    completedAtUtc: new Date('2026-08-21T12:01:00Z'),
+    successCount: 0,
+    failureCount: 0
+  }));
+});
+
+test('historial Vencimientos: solo canUseExpirations accede; Comisiones no basta', async () => {
+  const expirationsDb = environment.authenticatedContext('expirations').firestore();
+  const commissionsDb = environment.authenticatedContext('operator').firestore();
+  const noModulesDb = environment.authenticatedContext('no-modules').firestore();
+  const operationId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  const path = `modules/vencimientos/sendOperations/${operationId}`;
+  await assertSucceeds(setDoc(doc(expirationsDb, path), sendOperation(operationId, 'NextMonth')));
+  await assertFails(getDoc(doc(commissionsDb, path)));
+  await assertFails(setDoc(doc(commissionsDb,
+    'modules/vencimientos/sendOperations/aaaaaaaa-1111-1111-1111-111111111111'),
+    sendOperation('aaaaaaaa-1111-1111-1111-111111111111')));
+  await assertFails(getDoc(doc(noModulesDb, path)));
 });
 
 test('documentos Vencimientos rechazan formas o IDs inválidos', async () => {

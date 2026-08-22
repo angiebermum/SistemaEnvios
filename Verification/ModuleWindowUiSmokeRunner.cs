@@ -105,6 +105,12 @@ internal static class ModuleWindowUiSmokeRunner
             var sendReviewResultPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-send-review-result-ui-smoke.png");
+            var sendHistoryMixedPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-send-history-mixed-ui-smoke.png");
+            var sendHistoryInProgressPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-send-history-in-progress-ui-smoke.png");
 
             Render(new ModuleSelectionWindow(user), selectorPath);
             Render(
@@ -208,21 +214,27 @@ internal static class ModuleWindowUiSmokeRunner
                             true,
                             "Seleccione explícitamente una cuenta.",
                             null,
-                            ["operaciones@example.test", "vencimientos@example.test"]))),
+                            ["operaciones@example.test", "vencimientos@example.test"])),
+                    new SmokeSendHistoryRepository()),
                 sendReviewNormalPath);
             Render(
                 new ExpirationsSendReviewWindow(
                     ReviewPreparation(special: true),
-                    new SmokeOutlookSender()),
+                    new SmokeOutlookSender(),
+                    new SmokeSendHistoryRepository()),
                 sendReviewSpecialPath);
             var busyReview = new ExpirationsSendReviewWindow(
                 ReviewPreparation(special: false),
-                new SmokeOutlookSender());
+                new SmokeOutlookSender(),
+                new SmokeSendHistoryRepository());
             busyReview.State.ApplyOutlook(AvailableOutlook());
             busyReview.State.SetBusy(true, "Enviando correo 1 de 2...");
             Render(busyReview, sendReviewBusyPath);
             var resultPreparation = ReviewPreparation(special: false, brokerCount: 2);
-            var resultReview = new ExpirationsSendReviewWindow(resultPreparation, new SmokeOutlookSender());
+            var resultReview = new ExpirationsSendReviewWindow(
+                resultPreparation,
+                new SmokeOutlookSender(),
+                new SmokeSendHistoryRepository());
             resultReview.State.ApplyOutlook(AvailableOutlook());
             resultReview.State.ApplyResults(new ExpirationsSendExecutionResult
             {
@@ -244,6 +256,69 @@ internal static class ModuleWindowUiSmokeRunner
                 ]
             });
             Render(resultReview, sendReviewResultPath);
+
+            var historyDirectory = Path.Combine(Path.GetTempPath(), "ECSCommissionsMailer-expirations-history-files");
+            Directory.CreateDirectory(historyDirectory);
+            var successfulPath = Path.Combine(historyDirectory, "Corredor exitoso.xlsx");
+            var failedPath = Path.Combine(historyDirectory, "Corredor fallido.xlsx");
+            File.WriteAllText(successfulPath, "smoke-success");
+            File.WriteAllText(failedPath, "smoke-failure");
+            var hashService = new GeneratedFileHashService();
+            var historyBatch = new ExpirationsGenerationBatch
+            {
+                Process = ExpirationsProcess.PreviousMonth,
+                OutputDirectory = historyDirectory,
+                Files =
+                [
+                    new ExpirationsGeneratedFile
+                    {
+                        BrokerId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                        BrokerName = "Corredor exitoso",
+                        OutputPath = successfulPath,
+                        Sha256 = hashService.ComputeSha256(successfulPath)
+                    },
+                    new ExpirationsGeneratedFile
+                    {
+                        BrokerId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                        BrokerName = "Corredor fallido",
+                        OutputPath = failedPath,
+                        Sha256 = hashService.ComputeSha256(failedPath)
+                    }
+                ]
+            };
+            var mixedOperation = SmokeHistoryOperation(
+                ExpirationsSendOperationStatus.Completed,
+                total: 2,
+                successes: 1,
+                failures: 1);
+            var mixedItems = new[]
+            {
+                SmokeHistoryItem(historyBatch.Files[0], ExpirationsSendItemStatus.Succeeded),
+                SmokeHistoryItem(historyBatch.Files[1], ExpirationsSendItemStatus.Failed)
+            };
+            var mixedHistoryWindow = new ExpirationsSendHistoryWindow(
+                new SmokeSendHistoryRepository([mixedOperation], mixedItems),
+                new ExpirationsRetryPreparationService(),
+                historyBatch,
+                new SmokeOutlookSender());
+            Render(mixedHistoryWindow, sendHistoryMixedPath);
+            if (!mixedHistoryWindow.State.CanRetry || mixedHistoryWindow.State.Items.Count != 2)
+                throw new InvalidOperationException("El smoke no habilitó el retry del historial mixto.");
+            var incompleteOperation = SmokeHistoryOperation(
+                ExpirationsSendOperationStatus.InProgress,
+                total: 1,
+                successes: 0,
+                failures: 0);
+            var incompleteHistoryWindow = new ExpirationsSendHistoryWindow(
+                new SmokeSendHistoryRepository(
+                    [incompleteOperation],
+                    [SmokeHistoryItem(historyBatch.Files[1], ExpirationsSendItemStatus.Pending)]),
+                new ExpirationsRetryPreparationService(),
+                historyBatch,
+                new SmokeOutlookSender());
+            Render(incompleteHistoryWindow, sendHistoryInProgressPath);
+            if (incompleteHistoryWindow.State.CanRetry)
+                throw new InvalidOperationException("El smoke habilitó retry para una operación InProgress.");
             bindingListener.Flush();
             var hasBindingErrors = new FileInfo(bindingLogPath).Length > 0;
             File.WriteAllText(
@@ -272,6 +347,8 @@ internal static class ModuleWindowUiSmokeRunner
                     $"REVISION_ESPECIAL_DOS_ADJUNTOS={sendReviewSpecialPath}",
                     $"ENVIO_BUSY={sendReviewBusyPath}",
                     $"RESULTADO_SUCCESS_FAILURE={sendReviewResultPath}",
+                    $"HISTORIAL_COMPLETED_MIXTO_RETRY={sendHistoryMixedPath}",
+                    $"HISTORIAL_IN_PROGRESS_SIN_RETRY={sendHistoryInProgressPath}",
                     $"LOG_BINDINGS={bindingLogPath}"));
             return !hasBindingErrors;
         }
@@ -382,7 +459,8 @@ internal static class ModuleWindowUiSmokeRunner
             new SmokeGenerationService(),
             new SmokeEmailSettingsService(),
             new ExpirationsSendPreparationService(settingsRepository, catalog),
-            new SmokeOutlookSender());
+            new SmokeOutlookSender(),
+            new SmokeSendHistoryRepository());
     }
 
     private static ExpirationsEmailSettingsSnapshot SettingsSnapshot(ExpirationsProcess process) => new(
@@ -432,6 +510,50 @@ internal static class ModuleWindowUiSmokeRunner
         "Cuenta disponible.",
         "vencimientos@example.test",
         ["vencimientos@example.test"]);
+
+    private static ExpirationsSendOperation SmokeHistoryOperation(
+        ExpirationsSendOperationStatus status,
+        int total,
+        int successes,
+        int failures) => new()
+    {
+        OperationId = Guid.NewGuid(),
+        Process = ExpirationsProcess.PreviousMonth,
+        StartedAtUtc = new DateTimeOffset(2026, 8, 21, 12, 0, 0, TimeSpan.Zero),
+        CompletedAtUtc = status == ExpirationsSendOperationStatus.Completed
+            ? new DateTimeOffset(2026, 8, 21, 12, 2, 0, TimeSpan.Zero)
+            : null,
+        SendingAccountEmail = "vencimientos@example.test",
+        Subject = "Pendientes de pólizas — mes anterior",
+        Body = "Buen día, adjuntamos el reporte.",
+        Status = status,
+        TotalCount = total,
+        SuccessCount = successes,
+        FailureCount = failures
+    };
+
+    private static ExpirationsSendHistoryItem SmokeHistoryItem(
+        ExpirationsGeneratedFile file,
+        ExpirationsSendItemStatus status) => new()
+    {
+        ItemId = Guid.NewGuid(),
+        RequestId = Guid.NewGuid(),
+        BrokerId = file.BrokerId,
+        BrokerName = file.BrokerName,
+        ToRecipients = [$"{file.BrokerName.Replace(" ", ".").ToLowerInvariant()}@example.test"],
+        CcRecipients = ["supervision@example.test"],
+        Attachments =
+        [
+            new ExpirationsSendAttachment(
+                Path.GetFileName(file.OutputPath),
+                file.Sha256,
+                file.Variant)
+        ],
+        Status = status,
+        ErrorMessage = status == ExpirationsSendItemStatus.Failed
+            ? "Outlook rechazó el destinatario"
+            : string.Empty
+    };
 
     private static ExpirationsAnalysisSessionSnapshot PendingSnapshot()
     {
@@ -750,6 +872,61 @@ internal static class ModuleWindowUiSmokeRunner
             ExpirationsProcessSettings value,
             string expectedUpdateTime,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class SmokeSendHistoryRepository(
+        IReadOnlyList<ExpirationsSendOperation>? operations = null,
+        IReadOnlyList<ExpirationsSendHistoryItem>? items = null) : IExpirationsSendHistoryRepository
+    {
+        private readonly IReadOnlyList<ExpirationsSendOperation> _operations = operations ?? [];
+        private readonly IReadOnlyList<ExpirationsSendHistoryItem> _items = items ?? [];
+
+        public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendOperation>>> ListOperationsAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendOperation>>>(
+                _operations.Select(value => new FirestoreStoredDocument<ExpirationsSendOperation>(
+                    value,
+                    $"modules/vencimientos/sendOperations/{value.OperationId:D}",
+                    "smoke-version")).ToList());
+
+        public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendHistoryItem>>> ListItemsAsync(
+            Guid operationId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendHistoryItem>>>(
+                _items.Select(value => new FirestoreStoredDocument<ExpirationsSendHistoryItem>(
+                    value,
+                    $"modules/vencimientos/sendOperations/{operationId:D}/items/{value.ItemId:D}",
+                    "smoke-version")).ToList());
+
+        public Task<FirestoreStoredDocument<ExpirationsSendOperation>> CreateOperationAsync(
+            ExpirationsSendOperation value,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new FirestoreStoredDocument<ExpirationsSendOperation>(
+                value,
+                $"modules/vencimientos/sendOperations/{value.OperationId:D}",
+                "smoke-version"));
+
+        public Task<FirestoreStoredDocument<ExpirationsSendHistoryItem>> CreateItemAsync(
+            Guid operationId,
+            ExpirationsSendHistoryItem value,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new FirestoreStoredDocument<ExpirationsSendHistoryItem>(
+                value,
+                $"modules/vencimientos/sendOperations/{operationId:D}/items/{value.ItemId:D}",
+                "smoke-version"));
+
+        public Task<FirestoreStoredDocument<ExpirationsSendOperation>> UpdateOperationAsync(
+            ExpirationsSendOperation value,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default) =>
+            CreateOperationAsync(value, cancellationToken);
+
+        public Task<FirestoreStoredDocument<ExpirationsSendHistoryItem>> UpdateItemAsync(
+            Guid operationId,
+            ExpirationsSendHistoryItem value,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default) =>
+            CreateItemAsync(operationId, value, cancellationToken);
     }
 
     private sealed class SmokeDirectoryRepository : IExpirationsBrokerDirectoryRepository

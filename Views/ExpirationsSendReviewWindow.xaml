@@ -93,6 +93,9 @@
                 <TextBlock Text="{Binding ProgressText}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding SummaryText}" FontWeight="SemiBold" Margin="0,3,0,0"
                            Visibility="{Binding ResultsVisibility}" />
+                <TextBlock Text="{Binding HistoryWarningText}" TextWrapping="Wrap" Foreground="#9A3412"
+                           FontWeight="SemiBold" Margin="0,4,12,0"
+                           Visibility="{Binding HistoryWarningVisibility}" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
                 <Button Content="Cancelar" Click="Cancel_Click" IsEnabled="{Binding CanCancel}"

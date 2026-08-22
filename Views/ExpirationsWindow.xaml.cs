@@ -20,6 +20,7 @@ public partial class ExpirationsWindow : Window
     private readonly IExpirationsEmailSettingsService _emailSettingsService;
     private readonly ExpirationsSendPreparationService _sendPreparationService;
     private readonly IExpirationsOutlookSender _outlookSender;
+    private readonly IExpirationsSendHistoryRepository _sendHistory;
     private readonly ExpirationsWindowState _state;
     private int _readinessVersion;
     private CancellationTokenSource? _readinessCancellation;
@@ -32,7 +33,8 @@ public partial class ExpirationsWindow : Window
         IExpirationsGenerationService generationService,
         IExpirationsEmailSettingsService emailSettingsService,
         ExpirationsSendPreparationService sendPreparationService,
-        IExpirationsOutlookSender outlookSender)
+        IExpirationsOutlookSender outlookSender,
+        IExpirationsSendHistoryRepository sendHistory)
     {
         ArgumentNullException.ThrowIfNull(appUsers);
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -41,6 +43,7 @@ public partial class ExpirationsWindow : Window
         _emailSettingsService = emailSettingsService ?? throw new ArgumentNullException(nameof(emailSettingsService));
         _sendPreparationService = sendPreparationService ?? throw new ArgumentNullException(nameof(sendPreparationService));
         _outlookSender = outlookSender ?? throw new ArgumentNullException(nameof(outlookSender));
+        _sendHistory = sendHistory ?? throw new ArgumentNullException(nameof(sendHistory));
         _state = new ExpirationsWindowState(currentUser);
         _appUsers = appUsers;
         InitializeComponent();
@@ -362,11 +365,24 @@ public partial class ExpirationsWindow : Window
                 return;
             }
 
-            var review = new ExpirationsSendReviewWindow(preparation, _outlookSender) { Owner = this };
+            var review = new ExpirationsSendReviewWindow(preparation, _outlookSender, _sendHistory) { Owner = this };
             _ = review.ShowDialog();
             if (review.CompletedResult is { } result)
                 _state.ApplySendResult(result);
         });
+    }
+
+    private void OpenSendHistory_Click(object sender, RoutedEventArgs e)
+    {
+        var history = new ExpirationsSendHistoryWindow(
+            _sendHistory,
+            new ExpirationsRetryPreparationService(),
+            _state.GenerationBatch,
+            _outlookSender)
+        {
+            Owner = this
+        };
+        _ = history.ShowDialog();
     }
 
     private async Task<ExpirationsSendPreparationResult?> EvaluateSendPreflightAsync()
@@ -500,6 +516,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public bool CanSelectFile => !IsBusy;
     public bool CanConfigureBrokers => !IsBusy;
     public bool CanConfigureEmail => !IsBusy && SelectedProcessOption is not null;
+    public bool CanOpenSendHistory => !IsBusy;
     public bool CanAnalyze => !IsBusy && SelectedProcessOption is not null && SourcePath.Length > 0;
     public bool CanResolve => !IsBusy && SelectedPendingIssue?.CanResolve == true;
     public bool CanSelectPremiumColumns => !IsBusy &&
@@ -576,7 +593,11 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     };
     public string SendSummaryText => _sendResult is null
         ? string.Empty
-        : $"Enviados correctamente: {_sendResult.SuccessfulCount} · Fallidos: {_sendResult.FailedCount}";
+        : $"Enviados correctamente: {_sendResult.SuccessfulCount} · Fallidos: {_sendResult.FailedCount}" +
+          (_sendResult.UnknownCount > 0 ? $" · No confirmados: {_sendResult.UnknownCount}" : string.Empty) +
+          (_sendResult.HistoryWarning.Length > 0
+              ? $"{Environment.NewLine}{_sendResult.HistoryWarning}"
+              : string.Empty);
     public IReadOnlyList<ExpirationsSendResultItem> SendResultItems => _sendResult?.Items ?? [];
     public ExpirationsPremiumColumnOptions? PremiumColumnOptions => _premiumColumnOptions;
     internal ExpirationsGenerationBatch? GenerationBatch => _generationBatch;

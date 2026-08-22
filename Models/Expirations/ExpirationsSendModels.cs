@@ -47,6 +47,8 @@ public sealed class ExpirationsSendPreparationResult
     public ExpirationsProcess Process { get; init; }
     public ExpirationsProcessSettings? Settings { get; init; }
     public IReadOnlyList<EmailSendRequest> Requests { get; init; } = [];
+    public IReadOnlyList<ExpirationsPreparedSendItem> PreparedItems { get; init; } = [];
+    public Guid? RetryOfOperationId { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
     public IReadOnlyList<string> Warnings { get; init; } = [];
     public bool CanSend => Errors.Count == 0 && Requests.Count > 0;
@@ -57,9 +59,12 @@ public sealed record ExpirationsSendResultItem(
     Guid BrokerId,
     string BrokerName,
     bool WasSuccessful,
-    string ErrorMessage)
+    string ErrorMessage,
+    bool IsConfirmed = true)
 {
-    public string StatusText => WasSuccessful
+    public string StatusText => !IsConfirmed
+        ? $"? {BrokerName} — resultado no confirmado"
+        : WasSuccessful
         ? $"✓ {BrokerName}"
         : $"✗ {BrokerName} — {ErrorMessage}";
 }
@@ -68,7 +73,11 @@ public sealed class ExpirationsSendExecutionResult
 {
     public bool WasCancelled { get; init; }
     public string SendingAccount { get; init; } = string.Empty;
+    public Guid? OperationId { get; init; }
+    public string HistoryWarning { get; init; } = string.Empty;
     public IReadOnlyList<ExpirationsSendResultItem> Items { get; init; } = [];
-    public int SuccessfulCount => Items.Count(item => item.WasSuccessful);
-    public int FailedCount => Items.Count(item => !item.WasSuccessful);
+    public int SuccessfulCount => Items.Count(item => item.IsConfirmed && item.WasSuccessful);
+    public int FailedCount => Items.Count(item => item.IsConfirmed && !item.WasSuccessful);
+    public int UnknownCount => Items.Count(item => !item.IsConfirmed);
+    public bool HistoryIsComplete => HistoryWarning.Length == 0;
 }

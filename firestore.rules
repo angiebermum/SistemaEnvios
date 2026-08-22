@@ -103,6 +103,83 @@ service cloud.firestore {
         request.resource.data.updatedAtUtc is timestamp;
     }
 
+    function validExpirationsSendOperationShape(operationId) {
+      return request.resource.data.keys().hasAll([
+          'operationId', 'process', 'startedAtUtc', 'completedAtUtc',
+          'sendingAccountEmail', 'subject', 'body', 'status', 'totalCount',
+          'successCount', 'failureCount', 'retryOfOperationId'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'operationId', 'process', 'startedAtUtc', 'completedAtUtc',
+          'sendingAccountEmail', 'subject', 'body', 'status', 'totalCount',
+          'successCount', 'failureCount', 'retryOfOperationId'
+        ]) &&
+        request.resource.data.operationId is string &&
+        request.resource.data.operationId == operationId &&
+        request.resource.data.process in ['PreviousMonth', 'NextMonth'] &&
+        request.resource.data.startedAtUtc is timestamp &&
+        (request.resource.data.completedAtUtc == null ||
+          request.resource.data.completedAtUtc is timestamp) &&
+        request.resource.data.sendingAccountEmail is string &&
+        request.resource.data.subject is string &&
+        request.resource.data.body is string &&
+        request.resource.data.status in ['InProgress', 'Completed'] &&
+        request.resource.data.totalCount is int &&
+        request.resource.data.totalCount > 0 &&
+        request.resource.data.successCount is int &&
+        request.resource.data.successCount >= 0 &&
+        request.resource.data.failureCount is int &&
+        request.resource.data.failureCount >= 0 &&
+        (request.resource.data.retryOfOperationId == null ||
+          request.resource.data.retryOfOperationId is string);
+    }
+
+    function validExpirationsAttachment(attachment) {
+      return attachment is map &&
+        attachment.keys().hasAll(['fileName', 'sha256', 'variant']) &&
+        attachment.keys().hasOnly(['fileName', 'sha256', 'variant']) &&
+        attachment.fileName is string &&
+        attachment.fileName.size() > 0 &&
+        attachment.sha256 is string &&
+        attachment.sha256.matches('^[0-9a-fA-F]{64}$') &&
+        attachment.variant in ['Standard', 'FelixAlphabetical', 'FelixExpirationDate'];
+    }
+
+    function validExpirationsAttachments(attachments) {
+      return attachments is list &&
+        attachments.size() >= 1 &&
+        attachments.size() <= 2 &&
+        validExpirationsAttachment(attachments[0]) &&
+        (attachments.size() == 1 || validExpirationsAttachment(attachments[1]));
+    }
+
+    function validExpirationsSendItemShape(itemId) {
+      return request.resource.data.keys().hasAll([
+          'itemId', 'requestId', 'brokerId', 'brokerName', 'toRecipients',
+          'ccRecipients', 'attachments', 'status', 'errorMessage', 'retryOfItemId'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'itemId', 'requestId', 'brokerId', 'brokerName', 'toRecipients',
+          'ccRecipients', 'attachments', 'status', 'errorMessage', 'retryOfItemId'
+        ]) &&
+        request.resource.data.itemId is string &&
+        request.resource.data.itemId == itemId &&
+        request.resource.data.requestId is string &&
+        request.resource.data.brokerId is string &&
+        request.resource.data.brokerName is string &&
+        request.resource.data.toRecipients is list &&
+        request.resource.data.toRecipients.size() > 0 &&
+        request.resource.data.toRecipients[0] is string &&
+        request.resource.data.ccRecipients is list &&
+        (request.resource.data.ccRecipients.size() == 0 ||
+          request.resource.data.ccRecipients[0] is string) &&
+        validExpirationsAttachments(request.resource.data.attachments) &&
+        request.resource.data.status in ['Pending', 'Succeeded', 'Failed'] &&
+        request.resource.data.errorMessage is string &&
+        (request.resource.data.retryOfItemId == null ||
+          request.resource.data.retryOfItemId is string);
+    }
+
     // Technical metadata is administrative only. Server/Admin SDK access based on
     // IAM bypasses these client rules and remains available to bootstrap/migration.
     match /system/{document=**} {
@@ -150,6 +227,59 @@ service cloud.firestore {
         processId in ['previousMonth', 'nextMonth'] &&
         validExpirationsSettingsShape();
       allow delete: if false;
+    }
+
+    match /modules/vencimientos/sendOperations/{operationId} {
+      allow read: if canUseExpirations();
+      allow create: if canUseExpirations() &&
+        validExpirationsSendOperationShape(operationId) &&
+        request.resource.data.status == 'InProgress' &&
+        request.resource.data.completedAtUtc == null &&
+        request.resource.data.successCount == 0 &&
+        request.resource.data.failureCount == 0;
+      allow update: if canUseExpirations() &&
+        validExpirationsSendOperationShape(operationId) &&
+        resource.data.status == 'InProgress' &&
+        request.resource.data.status == 'Completed' &&
+        request.resource.data.operationId == resource.data.operationId &&
+        request.resource.data.process == resource.data.process &&
+        request.resource.data.startedAtUtc == resource.data.startedAtUtc &&
+        request.resource.data.completedAtUtc is timestamp &&
+        request.resource.data.sendingAccountEmail == resource.data.sendingAccountEmail &&
+        request.resource.data.subject == resource.data.subject &&
+        request.resource.data.body == resource.data.body &&
+        request.resource.data.totalCount == resource.data.totalCount &&
+        request.resource.data.retryOfOperationId == resource.data.retryOfOperationId &&
+        request.resource.data.successCount + request.resource.data.failureCount ==
+          request.resource.data.totalCount;
+      allow delete: if false;
+
+      match /items/{itemId} {
+        allow read: if canUseExpirations();
+        allow create: if canUseExpirations() &&
+          validExpirationsSendItemShape(itemId) &&
+          request.resource.data.status == 'Pending' &&
+          request.resource.data.errorMessage == '' &&
+          get(/databases/$(database)/documents/modules/vencimientos/sendOperations/$(operationId)).data.status == 'InProgress';
+        allow update: if canUseExpirations() &&
+          validExpirationsSendItemShape(itemId) &&
+          resource.data.status == 'Pending' &&
+          request.resource.data.status in ['Succeeded', 'Failed'] &&
+          request.resource.data.itemId == resource.data.itemId &&
+          request.resource.data.requestId == resource.data.requestId &&
+          request.resource.data.brokerId == resource.data.brokerId &&
+          request.resource.data.brokerName == resource.data.brokerName &&
+          request.resource.data.toRecipients == resource.data.toRecipients &&
+          request.resource.data.ccRecipients == resource.data.ccRecipients &&
+          request.resource.data.attachments == resource.data.attachments &&
+          request.resource.data.retryOfItemId == resource.data.retryOfItemId &&
+          ((request.resource.data.status == 'Succeeded' &&
+              request.resource.data.errorMessage == '') ||
+            (request.resource.data.status == 'Failed' &&
+              request.resource.data.errorMessage.size() > 0)) &&
+          get(/databases/$(database)/documents/modules/vencimientos/sendOperations/$(operationId)).data.status == 'InProgress';
+        allow delete: if false;
+      }
     }
 
     match /sessions/{sessionId} {

@@ -108,8 +108,12 @@ public sealed class ExpirationsEmailSendingTests
         var result = await service.PrepareAsync(files.Batch, TestContext.Current.CancellationToken);
 
         var request = Assert.Single(result.Requests);
+        var prepared = Assert.Single(result.PreparedItems);
         Assert.True(result.CanSend);
         Assert.Equal(2, request.AttachmentPaths.Count);
+        Assert.Equal(
+            [ExpirationsGeneratedFileVariant.FelixAlphabetical, ExpirationsGeneratedFileVariant.FelixExpirationDate],
+            prepared.Attachments.Select(attachment => attachment.Variant));
     }
 
     [Fact]
@@ -227,7 +231,7 @@ public sealed class ExpirationsEmailSendingTests
     {
         var request = Request(BrokerOne, "Uno");
         var sender = new FakeOutlookSender([]);
-        var service = new ExpirationsSendExecutionService(sender);
+        var service = new ExpirationsSendExecutionService(sender, new FakeSendHistoryRepository());
 
         var result = await service.SendAsync(
             ValidPreparation(request),
@@ -248,7 +252,7 @@ public sealed class ExpirationsEmailSendingTests
             new EmailSendResult { RequestId = first.RequestId, WasSuccessful = true },
             new EmailSendResult { RequestId = second.RequestId, WasSuccessful = false, ErrorMessage = "Falló Outlook" }
         ]);
-        var service = new ExpirationsSendExecutionService(sender);
+        var service = new ExpirationsSendExecutionService(sender, new FakeSendHistoryRepository());
 
         var result = await service.SendAsync(
             ValidPreparation(first, second),
@@ -392,7 +396,16 @@ public sealed class ExpirationsEmailSendingTests
     {
         Process = ExpirationsProcess.PreviousMonth,
         Settings = Settings("Asunto", "Mensaje", string.Empty),
-        Requests = requests
+        Requests = requests,
+        PreparedItems = requests.Select(request => new ExpirationsPreparedSendItem
+        {
+            RequestId = request.RequestId,
+            Attachments = request.AttachmentPaths.Select(path => new ExpirationsPreparedAttachment(
+                path,
+                Path.GetFileName(path),
+                new string('a', 64),
+                ExpirationsGeneratedFileVariant.Standard)).ToList()
+        }).ToList()
     };
 
     private sealed class GeneratedFiles : IDisposable
@@ -562,5 +575,50 @@ public sealed class ExpirationsEmailSendingTests
             SendCalls++;
             return Task.FromResult(results);
         }
+    }
+
+    private sealed class FakeSendHistoryRepository : IExpirationsSendHistoryRepository
+    {
+        private int _version;
+
+        public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendOperation>>> ListOperationsAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendOperation>>>([]);
+
+        public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendHistoryItem>>> ListItemsAsync(
+            Guid operationId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsSendHistoryItem>>>([]);
+
+        public Task<FirestoreStoredDocument<ExpirationsSendOperation>> CreateOperationAsync(
+            ExpirationsSendOperation value,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Store(value, $"modules/vencimientos/sendOperations/{value.OperationId:D}"));
+
+        public Task<FirestoreStoredDocument<ExpirationsSendHistoryItem>> CreateItemAsync(
+            Guid operationId,
+            ExpirationsSendHistoryItem value,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Store(
+                value,
+                $"modules/vencimientos/sendOperations/{operationId:D}/items/{value.ItemId:D}"));
+
+        public Task<FirestoreStoredDocument<ExpirationsSendOperation>> UpdateOperationAsync(
+            ExpirationsSendOperation value,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Store(value, $"modules/vencimientos/sendOperations/{value.OperationId:D}"));
+
+        public Task<FirestoreStoredDocument<ExpirationsSendHistoryItem>> UpdateItemAsync(
+            Guid operationId,
+            ExpirationsSendHistoryItem value,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Store(
+                value,
+                $"modules/vencimientos/sendOperations/{operationId:D}/items/{value.ItemId:D}"));
+
+        private FirestoreStoredDocument<T> Store<T>(T value, string path) =>
+            new(value, path, $"version-{++_version}");
     }
 }

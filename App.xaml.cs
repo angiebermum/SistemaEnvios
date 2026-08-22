@@ -255,6 +255,7 @@ public partial class App : Application
                 var profileRepository = new ExpirationsBrokerProfileRepository(firestoreClient);
                 var associationRepository = new ExpirationsBrokerAssociationRepository(firestoreClient);
                 var settingsRepository = new ExpirationsProcessSettingsRepository(firestoreClient);
+                var sendHistoryRepository = new ExpirationsSendHistoryRepository(firestoreClient);
                 var catalogService = new ExpirationsBrokerCatalogService(
                     directoryRepository,
                     profileRepository);
@@ -283,7 +284,8 @@ public partial class App : Application
                     generationService,
                     emailSettingsService,
                     sendPreparationService,
-                    outlookSender);
+                    outlookSender,
+                    sendHistoryRepository);
                 return;
             }
 
@@ -394,7 +396,8 @@ public partial class App : Application
         IExpirationsGenerationService generationService,
         IExpirationsEmailSettingsService emailSettingsService,
         ExpirationsSendPreparationService sendPreparationService,
-        IExpirationsOutlookSender outlookSender)
+        IExpirationsOutlookSender outlookSender,
+        IExpirationsSendHistoryRepository sendHistory)
     {
         var expirationsWindow = new ExpirationsWindow(
             currentUser,
@@ -404,7 +407,8 @@ public partial class App : Application
             generationService,
             emailSettingsService,
             sendPreparationService,
-            outlookSender);
+            outlookSender,
+            sendHistory);
         MainWindow = expirationsWindow;
         var restarting = false;
         expirationsWindow.LogoutRequested += (_, _) =>

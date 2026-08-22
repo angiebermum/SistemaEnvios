@@ -500,7 +500,8 @@ public partial class ExpirationsWindow : Window
             PersistReplacement,
             Unlink,
             AddManual,
-            async () => { _ = await EvaluateSendPreflightAsync(); })
+            async () => { _ = await EvaluateSendPreflightAsync(); },
+            row.IsParticipant)
         {
             Owner = this
         }.ShowDialog();
@@ -993,9 +994,14 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         get
         {
-            if (_eligibleBrokerIds.Count == 0 || _selectedBrokerIds.Count == 0)
+            if (_eligibleBrokerIds.Count == 0)
                 return false;
-            return _selectedBrokerIds.Count == _eligibleBrokerIds.Count ? true : null;
+            var selectedEligibleCount = _eligibleBrokerIds.Count(_selectedBrokerIds.Contains);
+            return selectedEligibleCount == 0
+                ? false
+                : selectedEligibleCount == _eligibleBrokerIds.Count
+                    ? true
+                    : null;
         }
         set => SelectAllEligible(value == true);
     }
@@ -1357,11 +1363,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         _sendPreparation = preparation ?? throw new ArgumentNullException(nameof(preparation));
         _eligibleBrokerIds.Clear();
-        _eligibleBrokerIds.UnionWith(preparation.EligibleBrokerIds.Count > 0
-            ? preparation.EligibleBrokerIds
-            : preparation.CanSend
-                ? preparation.Requests.Select(request => request.BrokerId)
-                : []);
+        _eligibleBrokerIds.UnionWith(preparation.EligibleBrokerIds);
         if (_resetSelectionOnNextPreparation)
         {
             _selectedBrokerIds.Clear();
@@ -1370,7 +1372,9 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         }
         else
         {
-            _selectedBrokerIds.IntersectWith(_eligibleBrokerIds);
+            _selectedBrokerIds.IntersectWith(_snapshot.Catalog
+                .Where(broker => broker.IsActive)
+                .Select(broker => broker.BrokerId));
         }
         RebuildBrokerRows();
         NotifyAllState();
@@ -1466,7 +1470,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         _isBulkSelectionUpdate = true;
         try
         {
-            _selectedBrokerIds.Clear();
+            _selectedBrokerIds.ExceptWith(_eligibleBrokerIds);
             if (selected)
                 _selectedBrokerIds.UnionWith(_eligibleBrokerIds);
             foreach (var row in _brokerRows)
@@ -1483,7 +1487,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         if (_isBulkSelectionUpdate)
             return;
-        if (row.IsEligible && row.IsSelected)
+        if (row.CanSelectForSend && row.IsSelected)
             _selectedBrokerIds.Add(row.BrokerId);
         else
             _selectedBrokerIds.Remove(row.BrokerId);
@@ -1501,17 +1505,28 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     private void RebuildBrokerRows()
     {
         var distribution = _snapshot.Distribution.ToDictionary(item => item.BrokerId);
-        _selectedBrokerIds.IntersectWith(_eligibleBrokerIds);
+        var activeBrokerIds = _snapshot.Catalog
+            .Where(item => item.IsActive)
+            .Select(item => item.BrokerId)
+            .ToHashSet();
+        if (_generationBatch is null)
+            _selectedBrokerIds.Clear();
+        else
+            _selectedBrokerIds.IntersectWith(activeBrokerIds);
         _brokerRows.Clear();
         foreach (var broker in _snapshot.Catalog.Where(item => item.IsActive)
                      .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
         {
             distribution.TryGetValue(broker.BrokerId, out var preview);
+            var isParticipant = _generationBatch is not null &&
+                (_generationBatch.ParticipatingBrokerIds.Count > 0
+                    ? _generationBatch.ParticipatingBrokerIds.Contains(broker.BrokerId)
+                    : preview is not null);
             _sendStatuses.TryGetValue(broker.BrokerId, out var sendResult);
             var files = (_generationBatch?.Files ?? []).Where(file => file.BrokerId == broker.BrokerId)
                 .OrderBy(file => file.Variant).ToList();
             var warnings = files.SelectMany(file => file.Warnings).Distinct(StringComparer.Ordinal).ToList();
-            if (_generationBatch is not null && preview is not null && files.Count == 0)
+            if (_generationBatch is not null && isParticipant && files.Count == 0)
                 warnings.Add("Falta el archivo obligatorio del batch actual.");
             if (warnings.Count == 0 && preview is not null && PendingItems.Count > 0)
                 warnings.Add("El análisis contiene elementos pendientes de resolver.");
@@ -1530,10 +1545,13 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
                 { } => "Fallido",
                 _ when files.Count > 0 && warnings.Count > 0 => "Con advertencia",
                 _ when _eligibleBrokerIds.Contains(broker.BrokerId) => "Pendiente / No enviado",
+                _ when _generationBatch is not null && !isParticipant &&
+                    files.Any(file => file.Variant == ExpirationsGeneratedFileVariant.Manual) =>
+                    "Archivo manual asociado",
                 _ when files.Count > 0 => "Generado",
-                _ when _generationBatch is not null && preview is not null => "Con advertencia",
+                _ when _generationBatch is not null && isParticipant => "Con advertencia",
                 _ when _snapshot.Analysis is null => "Sin analizar",
-                _ when preview is null => "No participa",
+                _ when preview is null => "No participa en el Excel",
                 _ when PendingItems.Count > 0 => "Pendiente de resolver",
                 _ when _snapshot.Analysis.CanGenerate => "Listo para generar",
                 _ => "Con advertencia"
@@ -1550,7 +1568,9 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
                 string.Join(Environment.NewLine, warnings),
                 _eligibleBrokerIds.Contains(broker.BrokerId),
                 _selectedBrokerIds.Contains(broker.BrokerId),
-                _generationBatch is not null && (files.Count > 0 || preview is not null),
+                _generationBatch is not null,
+                _generationBatch is not null,
+                isParticipant,
                 BrokerSelectionChanged));
         }
         _brokerRowsView.Refresh();
@@ -1614,6 +1634,8 @@ internal sealed class ExpirationsBrokerRow : INotifyPropertyChanged
         bool isEligible,
         bool isSelected,
         bool canManageFiles,
+        bool canSelectForSend,
+        bool isParticipant,
         Action<ExpirationsBrokerRow> selectionChanged)
     {
         BrokerId = brokerId;
@@ -1625,7 +1647,9 @@ internal sealed class ExpirationsBrokerRow : INotifyPropertyChanged
         StatusText = statusText;
         WarningText = warningText;
         IsEligible = isEligible;
-        _isSelected = isEligible && isSelected;
+        CanSelectForSend = canSelectForSend;
+        IsParticipant = isParticipant;
+        _isSelected = canSelectForSend && isSelected;
         CanManageFiles = canManageFiles;
         _selectionChanged = selectionChanged;
     }
@@ -1640,12 +1664,14 @@ internal sealed class ExpirationsBrokerRow : INotifyPropertyChanged
     public string WarningText { get; }
     public bool IsEligible { get; }
     public bool CanManageFiles { get; }
+    public bool CanSelectForSend { get; }
+    public bool IsParticipant { get; }
     public bool IsSelected
     {
         get => _isSelected;
         set
         {
-            var normalized = IsEligible && value;
+            var normalized = CanSelectForSend && value;
             if (_isSelected == normalized)
                 return;
             _isSelected = normalized;
@@ -1656,7 +1682,7 @@ internal sealed class ExpirationsBrokerRow : INotifyPropertyChanged
 
     public void SetSelected(bool value)
     {
-        var normalized = IsEligible && value;
+        var normalized = CanSelectForSend && value;
         if (_isSelected == normalized)
             return;
         _isSelected = normalized;
@@ -1667,7 +1693,13 @@ internal sealed class ExpirationsBrokerRow : INotifyPropertyChanged
     public bool CanViewFiles => CanManageFiles;
     public string SelectionHint => IsEligible
         ? "Incluye este corredor en Enviar seleccionados."
-        : "El corredor no tiene todos sus archivos obligatorios válidos.";
+        : !CanSelectForSend
+            ? "Genere un batch antes de seleccionar este corredor."
+            : !IsParticipant && GeneratedFiles.All(file => file.Variant != ExpirationsGeneratedFileVariant.Manual)
+                ? "Agregue al menos un archivo manual antes de enviarlo."
+                : IsParticipant
+                    ? "El corredor no tiene todos sus archivos obligatorios válidos."
+                    : "Incluye este corredor en Enviar seleccionados para un envío manual.";
 
     public event PropertyChangedEventHandler? PropertyChanged;
 }

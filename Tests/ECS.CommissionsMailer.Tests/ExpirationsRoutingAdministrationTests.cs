@@ -360,6 +360,70 @@ public sealed class ExpirationsRoutingAdministrationTests
     }
 
     [Fact]
+    public async Task KnownIdentifiersShowDetectedCodeOnceWithExactRawExcelTrace()
+    {
+        var alias = Observed(ShortBroker, "Adriana Arroyo/AAV - 90");
+        var code = Observed(ShortBroker, "AAV - 90");
+        code.Kind = ExpirationsAssociationKind.Code;
+        var observations = new FakeObservedRepository([
+            Stored(alias, "o-alias"),
+            Stored(code, "o-code")
+        ]);
+        var service = Service(
+            new FakeAssociationRepository([]),
+            new FakeExclusionRepository([]),
+            new FakeConfigurationService(
+                BrokerConfiguration(ShortBroker, "Adriana Arroyo", "adriana@example.test")),
+            observations);
+
+        var items = await service.ListKnownIdentifiersAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, items.Count);
+        var detected = Assert.Single(items, item => item.IsObserved);
+        Assert.Equal(ExpirationsAssociationKind.Code, detected.Kind);
+        Assert.Equal("AAV - 90", detected.Value);
+        Assert.Equal("Detectado", detected.StatusText);
+        Assert.Equal("Visto en el Excel como: Adriana Arroyo/AAV - 90", detected.DetailText);
+        Assert.Equal(2, observations.Documents.Count);
+    }
+
+    [Fact]
+    public async Task KnownIdentifiersNeverFuzzyGroupAndExposeOnlyContextualActions()
+    {
+        var alias = Observed(ShortBroker, "Adriana Arroyo/AAV90");
+        var code = Observed(ShortBroker, "AAV - 90");
+        code.Kind = ExpirationsAssociationKind.Code;
+        var association = Association(ShortBroker, "Adriana");
+        var service = Service(
+            new FakeAssociationRepository([Stored(association, "a-1")]),
+            new FakeExclusionRepository([]),
+            new FakeConfigurationService(
+                BrokerConfiguration(ShortBroker, "Adriana Arroyo", "adriana@example.test")),
+            new FakeObservedRepository([Stored(alias, "o-alias"), Stored(code, "o-code")]));
+        var items = await service.ListKnownIdentifiersAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, items.Count);
+        Assert.Equal(2, items.Count(item => item.IsObserved));
+        var state = new ExpirationsRoutingAdministrationState();
+        state.SetKnownData(items, [BrokerConfiguration(
+            ShortBroker, "Adriana Arroyo", "adriana@example.test")], ShortBroker);
+
+        state.SelectedKnownIdentifier = items.Single(item => item.IsMaster);
+        Assert.Equal(Visibility.Collapsed, state.AssociationActionsVisibility);
+        Assert.Equal(Visibility.Collapsed, state.ObservedActionsVisibility);
+        Assert.Equal(Visibility.Collapsed, state.ReassignActionsVisibility);
+
+        state.SelectedKnownIdentifier = items.Single(item => item.IsAssociation);
+        Assert.Equal(Visibility.Visible, state.AssociationActionsVisibility);
+        Assert.Equal(Visibility.Collapsed, state.ObservedActionsVisibility);
+
+        state.SelectedKnownIdentifier = items.First(item => item.IsObserved);
+        Assert.Equal(Visibility.Collapsed, state.AssociationActionsVisibility);
+        Assert.Equal(Visibility.Visible, state.ObservedActionsVisibility);
+        Assert.Equal("Reasignar y usar como asociación", state.ReassignButtonText);
+    }
+
+    [Fact]
     public async Task ObservedIdentifiersCanBeConfirmedReassignedAndIgnoredWithoutBecomingResolverInput()
     {
         var associations = new FakeAssociationRepository([]);

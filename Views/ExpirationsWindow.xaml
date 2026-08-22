@@ -250,7 +250,7 @@
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                      IsEnabled="{Binding IsEligible}" ToolTip="{Binding SelectionHint}"
+                                      IsEnabled="{Binding CanSelectForSend}" ToolTip="{Binding SelectionHint}"
                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>

@@ -19,7 +19,7 @@
         <StackPanel>
             <TextBlock Text="Identificadores conocidos — Vencimientos"
                        Style="{StaticResource PageTitleTextStyle}" />
-            <TextBlock Text="Revise la identidad maestra, asociaciones y valores detectados para cada corredor."
+            <TextBlock Text="Los valores identificados de forma segura no requieren ninguna acción. Intervenga sólo para corregir o crear una asociación permanente."
                        Style="{StaticResource PageSubtitleTextStyle}" Margin="0,4,0,0" />
         </StackPanel>
 
@@ -80,9 +80,27 @@
                   IsReadOnly="True" AutoGenerateColumns="False" IsEnabled="{Binding IsUiEnabled}">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Tipo" Binding="{Binding KindText}" Width="110" />
-                <DataGridTextColumn Header="Valor" Binding="{Binding Value}" Width="300" />
-                <DataGridTextColumn Header="Origen" Binding="{Binding OriginText}" Width="190" />
-                <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="100" />
+                <DataGridTemplateColumn Header="Identificador" Width="*" MinWidth="340">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,3">
+                                <TextBlock Text="{Binding Value}" />
+                                <TextBlock Text="{Binding DetailText}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource MutedTextStyle}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding DetailText}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="110" />
                 <DataGridTextColumn Header="Actualizado" Binding="{Binding UpdatedAtUtc, StringFormat={}{0:g}}" Width="145" />
             </DataGrid.Columns>
         </DataGrid>
@@ -91,24 +109,32 @@
             <Button Content="Agregar asociación" Click="AddAssociation_Click"
                     IsEnabled="{Binding CanAddAssociation}" Style="{StaticResource PrimaryButtonStyle}" />
             <Button Content="Editar" Click="EditAssociation_Click"
-                    IsEnabled="{Binding CanEditAssociation}" Style="{StaticResource CompactButtonStyle}" />
+                    IsEnabled="{Binding CanEditAssociation}" Visibility="{Binding AssociationActionsVisibility}"
+                    Style="{StaticResource CompactButtonStyle}" />
             <Button Content="Inactivar" Click="DeactivateAssociation_Click"
-                    IsEnabled="{Binding CanDeactivateAssociation}" Style="{StaticResource CompactButtonStyle}" />
+                    IsEnabled="{Binding CanDeactivateAssociation}" Visibility="{Binding DeactivateActionVisibility}"
+                    Style="{StaticResource CompactButtonStyle}" />
             <Button Content="Reactivar" Click="ReactivateAssociation_Click"
-                    IsEnabled="{Binding CanReactivateAssociation}" Style="{StaticResource CompactButtonStyle}" />
+                    IsEnabled="{Binding CanReactivateAssociation}" Visibility="{Binding ReactivateActionVisibility}"
+                    Style="{StaticResource CompactButtonStyle}" />
             <Button Content="Eliminar" Click="DeleteAssociation_Click"
-                    IsEnabled="{Binding CanDeleteAssociation}" Style="{StaticResource CompactButtonStyle}" />
-            <Button Content="Confirmar" Click="ConfirmObserved_Click"
-                    IsEnabled="{Binding CanConfirmObserved}" Style="{StaticResource CompactButtonStyle}" />
+                    IsEnabled="{Binding CanDeleteAssociation}" Visibility="{Binding AssociationActionsVisibility}"
+                    Style="{StaticResource CompactButtonStyle}" />
+            <Button Content="Usar como asociación" Click="ConfirmObserved_Click"
+                    IsEnabled="{Binding CanConfirmObserved}" Visibility="{Binding ObservedActionsVisibility}"
+                    Style="{StaticResource CompactButtonStyle}" />
             <Button Content="Ignorar" Click="IgnoreObserved_Click"
-                    IsEnabled="{Binding CanIgnoreObserved}" Style="{StaticResource CompactButtonStyle}" />
+                    IsEnabled="{Binding CanIgnoreObserved}" Visibility="{Binding ObservedActionsVisibility}"
+                    Style="{StaticResource CompactButtonStyle}" />
             <TextBlock Text="Reasignar a" Style="{StaticResource CaptionTextStyle}"
-                       VerticalAlignment="Center" Margin="14,0,8,0" />
+                       VerticalAlignment="Center" Margin="14,0,8,0"
+                       Visibility="{Binding ReassignActionsVisibility}" />
             <ComboBox Width="270" ItemsSource="{Binding DestinationBrokers}"
                       SelectedItem="{Binding SelectedDestinationBroker, Mode=TwoWay}"
-                      DisplayMemberPath="DisplayText" />
+                      DisplayMemberPath="DisplayText" Visibility="{Binding ReassignActionsVisibility}" />
             <Button Content="{Binding ReassignButtonText}" Click="ReassignAssociation_Click"
-                    IsEnabled="{Binding CanReassign}" Style="{StaticResource CompactButtonStyle}" />
+                    IsEnabled="{Binding CanReassign}" Visibility="{Binding ReassignActionsVisibility}"
+                    Style="{StaticResource CompactButtonStyle}" />
         </WrapPanel>
 
         <Grid Grid.Row="6" Margin="0,14,0,0">

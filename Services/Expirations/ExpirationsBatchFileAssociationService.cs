@@ -207,6 +207,7 @@ public sealed class ExpirationsBatchFileAssociationService
         SourceWorkbookPath = source.SourceWorkbookPath,
         SourceWorkbookSha256 = source.SourceWorkbookSha256,
         OutputDirectory = source.OutputDirectory,
+        ParticipatingBrokerIds = source.ParticipatingBrokerIds.ToHashSet(),
         Files = files,
         Warnings = source.Warnings.ToList()
     };

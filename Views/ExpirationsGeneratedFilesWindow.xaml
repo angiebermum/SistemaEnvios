@@ -17,6 +17,8 @@
                        TextWrapping="Wrap" />
             <TextBlock Text="{Binding FileCountText}" Style="{StaticResource MutedTextStyle}"
                        Margin="0,5,0,0" />
+            <TextBlock Text="{Binding EmptyFilesText}" Style="{StaticResource MutedTextStyle}"
+                       Visibility="{Binding EmptyFilesVisibility}" TextWrapping="Wrap" Margin="0,5,0,0" />
         </StackPanel>
 
         <DataGrid x:Name="GeneratedFilesGrid" Grid.Row="1" Margin="0,18,0,0"

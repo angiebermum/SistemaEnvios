@@ -1,5 +1,6 @@
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Firestore;
 using ECS.CommissionsMailer.Models.Expirations;
+using System.Text.RegularExpressions;
 
 namespace ECS.CommissionsMailer.Services.Expirations;
 
@@ -58,6 +59,9 @@ public interface IExpirationsRoutingAdministrationService
 
 public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutingAdministrationService
 {
+    private static readonly Regex StrictCodePattern = new(
+        @"(?:^|/)\s*(?<letters>[A-Za-z]{2,10})\s*-\s*(?<digits>[0-9]{1,6})\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private readonly IExpirationsBrokerAssociationRepository _associations;
     private readonly IExpirationsExclusionRepository _exclusions;
     private readonly IExpirationsBrokerConfigurationService _brokers;
@@ -91,6 +95,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         await Task.WhenAll(associationsTask, brokersTask, observedTask);
         var brokers = (await brokersTask).ToDictionary(item => item.BrokerId);
         var associationItems = await associationsTask;
+        var observedDocuments = await observedTask;
         var associationNormalizedValues = associationItems
             .Select(item => Normalize(item.Association.NormalizedValue, item.Association.Value))
             .ToHashSet(StringComparer.Ordinal);
@@ -112,7 +117,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 Value = broker.Name,
                 NormalizedValue = _normalizer.Normalize(broker.Name),
                 OriginText = "Maestro",
-                StatusText = broker.IsActive ? "Activo" : "Inactivo",
+                StatusText = broker.IsActive ? "En uso" : "Inactivo",
                 UpdatedAtUtc = broker.ProfileUpdatedAtUtc,
                 IsMaster = true
             });
@@ -130,14 +135,17 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 Value = item.Association.Value,
                 NormalizedValue = Normalize(item.Association.NormalizedValue, item.Association.Value),
                 OriginText = item.OriginText,
-                StatusText = item.Association.IsActive ? "Activo" : "Inactivo",
+                StatusText = item.Association.IsActive ? "En uso" : "Inactivo",
                 UpdatedAtUtc = item.Association.UpdatedAtUtc,
                 AssociationItem = item
             }));
 
-        foreach (var document in await observedTask)
+        var observedPairs = BuildObservedPairs(observedDocuments);
+        foreach (var document in observedDocuments)
         {
             var observed = document.Value;
+            if (observedPairs.PairedAliasIds.Contains(observed.Id))
+                continue;
             var normalized = Normalize(observed.NormalizedValue, observed.Value);
             if (observed.IsIgnored || associationNormalizedValues.Contains(normalized) ||
                 masterNormalizedValues.Contains(normalized))
@@ -160,8 +168,13 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 Value = observed.Value,
                 NormalizedValue = normalized,
                 OriginText = "Detectado automáticamente",
-                StatusText = "Pendiente",
-                UpdatedAtUtc = observed.LastSeenAtUtc,
+                StatusText = "Detectado",
+                DetailText = observedPairs.AliasByCodeId.TryGetValue(observed.Id, out var pairedAlias)
+                    ? $"Visto en el Excel como: {pairedAlias.Value.Value}"
+                    : string.Empty,
+                UpdatedAtUtc = observedPairs.AliasByCodeId.TryGetValue(observed.Id, out pairedAlias)
+                    ? new[] { observed.LastSeenAtUtc, pairedAlias.Value.LastSeenAtUtc }.Max()
+                    : observed.LastSeenAtUtc,
                 ObservedItem = item
             });
         }
@@ -173,6 +186,49 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             .ThenBy(item => item.NormalizedValue, StringComparer.Ordinal)
             .ToList();
     }
+
+    private ObservedPairs BuildObservedPairs(
+        IReadOnlyList<FirestoreStoredDocument<ExpirationsObservedIdentifier>> documents)
+    {
+        var codes = documents
+            .Where(document => document.Value.Kind == ExpirationsAssociationKind.Code)
+            .GroupBy(document => (
+                document.Value.BrokerId,
+                NormalizedValue: Normalize(document.Value.NormalizedValue, document.Value.Value)))
+            .ToDictionary(group => group.Key, group => group.ToList());
+        var aliases = documents
+            .Where(document => document.Value.Kind == ExpirationsAssociationKind.Alias)
+            .Select(document => (Document: document, Code: ExtractStrictCode(document.Value.Value)))
+            .Where(item => item.Code is not null)
+            .GroupBy(item => (item.Document.Value.BrokerId, NormalizedValue: item.Code!))
+            .ToDictionary(group => group.Key, group => group.Select(item => item.Document).ToList());
+        var aliasByCodeId = new Dictionary<Guid, FirestoreStoredDocument<ExpirationsObservedIdentifier>>();
+        var pairedAliasIds = new HashSet<Guid>();
+        foreach (var pair in codes)
+        {
+            if (pair.Value.Count != 1 || !aliases.TryGetValue(pair.Key, out var matchingAliases) ||
+                matchingAliases.Count != 1)
+            {
+                continue;
+            }
+            aliasByCodeId[pair.Value[0].Value.Id] = matchingAliases[0];
+            pairedAliasIds.Add(matchingAliases[0].Value.Id);
+        }
+        return new ObservedPairs(aliasByCodeId, pairedAliasIds);
+    }
+
+    private string? ExtractStrictCode(string value)
+    {
+        var match = StrictCodePattern.Match(value.Trim());
+        if (!match.Success)
+            return null;
+        var code = $"{match.Groups["letters"].Value.ToUpperInvariant()} - {match.Groups["digits"].Value}";
+        return _normalizer.Normalize(code);
+    }
+
+    private sealed record ObservedPairs(
+        IReadOnlyDictionary<Guid, FirestoreStoredDocument<ExpirationsObservedIdentifier>> AliasByCodeId,
+        IReadOnlySet<Guid> PairedAliasIds);
 
     public async Task<IReadOnlyList<ExpirationsAssociationAdministrationItem>> ListAssociationsAsync(
         CancellationToken cancellationToken = default)

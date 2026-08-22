@@ -80,6 +80,7 @@ public sealed class ExpirationsGenerationBatch
     public string SourceWorkbookPath { get; init; } = string.Empty;
     public string SourceWorkbookSha256 { get; init; } = string.Empty;
     public string OutputDirectory { get; init; } = string.Empty;
+    public IReadOnlySet<Guid> ParticipatingBrokerIds { get; init; } = new HashSet<Guid>();
     public IReadOnlyList<ExpirationsGeneratedFile> Files { get; init; } = [];
     public IReadOnlyList<string> Warnings { get; init; } = [];
 }

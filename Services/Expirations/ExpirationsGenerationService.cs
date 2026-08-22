@@ -150,6 +150,9 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                 SourceWorkbookPath = request.Context.SourceWorkbookPath,
                 SourceWorkbookSha256 = request.Context.SourceWorkbookSha256,
                 OutputDirectory = finalDirectory,
+                ParticipatingBrokerIds = targets
+                    .Select(target => target.Broker.BrokerId)
+                    .ToHashSet(),
                 Files = files,
                 Warnings = files.SelectMany(file => file.Warnings).Distinct().ToList()
             };

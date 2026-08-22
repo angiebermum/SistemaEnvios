@@ -20,6 +20,7 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
     private readonly Action<ExpirationsGeneratedFile> _unlinkFile;
     private readonly Func<string, ExpirationsManualFileAddResult> _addManualFile;
     private readonly Func<Task> _afterMutation;
+    private readonly bool _isParticipant;
 
     public ExpirationsGeneratedFilesWindow(
         string brokerName,
@@ -29,7 +30,8 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
         Action<ExpirationsGeneratedFile, string> persistReplacement,
         Action<ExpirationsGeneratedFile> unlinkFile,
         Func<string, ExpirationsManualFileAddResult> addManualFile,
-        Func<Task> afterMutation)
+        Func<Task> afterMutation,
+        bool isParticipant = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(brokerName);
         _brokerName = brokerName;
@@ -40,6 +42,7 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
         _unlinkFile = unlinkFile ?? throw new ArgumentNullException(nameof(unlinkFile));
         _addManualFile = addManualFile ?? throw new ArgumentNullException(nameof(addManualFile));
         _afterMutation = afterMutation ?? throw new ArgumentNullException(nameof(afterMutation));
+        _isParticipant = isParticipant;
         InitializeComponent();
         DataContext = this;
         RefreshFiles();
@@ -48,6 +51,10 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
     public ObservableCollection<ExpirationsGeneratedFileDisplay> Files { get; } = [];
     public string TitleText => $"Archivos asociados — {_brokerName}";
     public string FileCountText => Files.Count == 1 ? "1 archivo asociado" : $"{Files.Count} archivos asociados";
+    public string EmptyFilesText => _isParticipant
+        ? "No hay archivos asociados a este corredor."
+        : "Este corredor no participa en el reporte actual. Puede agregar archivos manuales para un envío puntual.";
+    public Visibility EmptyFilesVisibility => Files.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     private void ViewFile_Click(object sender, RoutedEventArgs e)
     {
@@ -234,6 +241,7 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
         }
         GeneratedFilesGrid?.Items.Refresh();
         OnPropertyChanged(nameof(FileCountText));
+        OnPropertyChanged(nameof(EmptyFilesVisibility));
     }
 
     private static void ShowEditStartError(WorkbookEditStartResult result)

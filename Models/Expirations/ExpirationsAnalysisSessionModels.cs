@@ -174,6 +174,7 @@ public sealed class ExpirationsKnownIdentifierAdministrationItem
     public string NormalizedValue { get; init; } = string.Empty;
     public string OriginText { get; init; } = string.Empty;
     public string StatusText { get; init; } = string.Empty;
+    public string DetailText { get; init; } = string.Empty;
     public DateTimeOffset? UpdatedAtUtc { get; init; }
     public ExpirationsAssociationAdministrationItem? AssociationItem { get; init; }
     public ExpirationsObservedIdentifierAdministrationItem? ObservedItem { get; init; }

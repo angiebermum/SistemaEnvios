@@ -50,6 +50,9 @@ public sealed class ExpirationsGenerationServiceTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(7, batch.Files.Count);
+        Assert.Equal(
+            batch.Files.Select(file => file.BrokerId).Distinct().OrderBy(id => id),
+            batch.ParticipatingBrokerIds.OrderBy(id => id));
         Assert.Equal(1, batch.Files.Single(file => file.BrokerId == Ana).RowCount);
         Assert.Equal([8U], batch.Files.Single(file => file.BrokerId == Ana).SourceRowNumbers);
         Assert.Equal([8U], batch.Files.Single(file => file.BrokerId == Jerrika).SourceRowNumbers);

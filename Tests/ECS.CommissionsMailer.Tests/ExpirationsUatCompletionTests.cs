@@ -133,6 +133,163 @@ public sealed class ExpirationsUatCompletionTests
         Assert.Equal(3, state.SelectedBrokerIds.Count);
     }
 
+    [Theory]
+    [InlineData(ExpirationsProcess.PreviousMonth)]
+    [InlineData(ExpirationsProcess.NextMonth)]
+    public async Task ActiveNonparticipantSupportsExplicitManualOnlySendWithoutEnteringSendAll(
+        ExpirationsProcess process)
+    {
+        using var files = new ExpirationsTestFiles();
+        var standard = files.File(BrokerOne, "participante.xlsx", ExpirationsGeneratedFileVariant.Standard);
+        var batch = files.BatchWithParticipants(process, [BrokerOne], standard);
+        var service = PreparationService(
+            [Directory(BrokerOne, "Participante"), Directory(BrokerThree, "Angie prueba")],
+            []);
+        var state = new ExpirationsWindowState(ExpirationsUser());
+        state.ApplySnapshot(new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = process,
+            Catalog = [Catalog(BrokerOne, "Participante"), Catalog(BrokerThree, "Angie prueba")],
+            Distribution = [Preview(BrokerOne, "Participante")],
+            Analysis = new ExpirationsWorkbookAnalysisResult
+            {
+                TotalRows = 1,
+                ResolvedRows = 1,
+                CanGenerate = true
+            }
+        });
+        state.ApplyGenerationBatch(batch);
+        var automatic = await service.PrepareAsync(batch, TestContext.Current.CancellationToken);
+        state.ApplySendPreparation(automatic);
+
+        Assert.Equal([BrokerOne], automatic.EligibleBrokerIds);
+        Assert.Equal([BrokerOne], automatic.Requests.Select(request => request.BrokerId));
+        var rows = state.BrokerRowsView.Cast<ExpirationsBrokerRow>().ToList();
+        Assert.True(rows.Single(row => row.BrokerId == BrokerOne).IsSelected);
+        var angie = rows.Single(row => row.BrokerId == BrokerThree);
+        Assert.False(angie.IsSelected);
+        Assert.True(angie.CanSelectForSend);
+        Assert.True(angie.CanViewFiles);
+        Assert.Equal("No participa en el Excel", angie.StatusText);
+        Assert.Contains("Agregue al menos un archivo manual", angie.SelectionHint, StringComparison.Ordinal);
+
+        angie.IsSelected = true;
+        Assert.Contains(BrokerThree, state.SelectedBrokerIds);
+        state.ApplySendPreparation(automatic);
+        Assert.Contains(BrokerThree, state.SelectedBrokerIds);
+
+        var withoutManual = await service.PrepareSelectedAsync(
+            batch,
+            [BrokerThree],
+            null,
+            TestContext.Current.CancellationToken);
+        Assert.False(withoutManual.CanSend);
+        Assert.Contains(
+            "Angie prueba no participa en el reporte actual y no tiene archivos manuales asociados.",
+            withoutManual.Errors);
+
+        var association = new ExpirationsBatchFileAssociationService();
+        var added = association.AddManual(
+            batch,
+            BrokerThree,
+            "Angie prueba",
+            files.CreateWorkbook("prueba.xlsx"));
+        Assert.True(added.Succeeded, added.ErrorMessage);
+        Assert.Equal([BrokerOne], added.Batch.ParticipatingBrokerIds);
+        Assert.Equal(ExpirationsGeneratedFileVariant.Manual, added.File!.Variant);
+        Assert.True(added.File.RequiresReview);
+        state.ReplaceGenerationBatch(added.Batch);
+        var afterManualAutomatic = await service.PrepareAsync(
+            added.Batch,
+            TestContext.Current.CancellationToken);
+        state.ApplySendPreparation(afterManualAutomatic);
+        Assert.Contains(BrokerThree, state.SelectedBrokerIds);
+        Assert.DoesNotContain(BrokerThree, afterManualAutomatic.EligibleBrokerIds);
+        Assert.DoesNotContain(afterManualAutomatic.Requests, request => request.BrokerId == BrokerThree);
+
+        var selectedManual = await service.PrepareSelectedAsync(
+            added.Batch,
+            [BrokerThree],
+            null,
+            TestContext.Current.CancellationToken);
+        Assert.True(selectedManual.CanSend, string.Join(Environment.NewLine, selectedManual.Errors));
+        var manualRequest = Assert.Single(selectedManual.Requests);
+        Assert.Equal(BrokerThree, manualRequest.BrokerId);
+        Assert.True(manualRequest.RequiresReview);
+        Assert.Single(manualRequest.AttachmentPaths);
+    }
+
+    [Fact]
+    public async Task ManualOnlyNonparticipantStillHonorsMaximumAttachmentCount()
+    {
+        using var files = new ExpirationsTestFiles();
+        var manuals = Enumerable.Range(1, ExpirationsSendPreparationService.MaximumAttachmentsPerBroker + 1)
+            .Select(index => files.File(
+                BrokerThree,
+                $"manual-{index}.xlsx",
+                ExpirationsGeneratedFileVariant.Manual))
+            .ToArray();
+        var batch = files.BatchWithParticipants(
+            ExpirationsProcess.PreviousMonth,
+            [BrokerOne],
+            manuals);
+        var result = await PreparationService(
+                [Directory(BrokerThree, "Angie prueba")],
+                [])
+            .PrepareSelectedAsync(
+                batch,
+                [BrokerThree],
+                null,
+                TestContext.Current.CancellationToken);
+
+        Assert.False(result.CanSend);
+        Assert.Contains(result.Errors, error => error.Contains(
+            $"máximo de {ExpirationsSendPreparationService.MaximumAttachmentsPerBroker}",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task InactiveNonparticipantCannotBeSelectedOrPrepared()
+    {
+        using var files = new ExpirationsTestFiles();
+        var manual = files.File(BrokerThree, "manual.xlsx", ExpirationsGeneratedFileVariant.Manual);
+        var batch = files.BatchWithParticipants(
+            ExpirationsProcess.PreviousMonth,
+            [BrokerOne],
+            manual);
+        var inactiveProfile = Profile(BrokerThree);
+        inactiveProfile.IsActive = false;
+        var service = PreparationService(
+            [Directory(BrokerThree, "Angie prueba")],
+            [inactiveProfile]);
+        var preparation = await service.PrepareSelectedAsync(
+            batch,
+            [BrokerThree],
+            null,
+            TestContext.Current.CancellationToken);
+        Assert.False(preparation.CanSend);
+        Assert.Contains(preparation.Errors, error => error.Contains(
+            "está inactivo",
+            StringComparison.CurrentCultureIgnoreCase));
+
+        var state = new ExpirationsWindowState(ExpirationsUser());
+        state.ApplySnapshot(new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = ExpirationsProcess.PreviousMonth,
+            Catalog =
+            [
+                new ExpirationsBrokerCatalogItem
+                {
+                    BrokerId = BrokerThree,
+                    Name = "Angie prueba",
+                    IsActive = false
+                }
+            ]
+        });
+        state.ApplyGenerationBatch(batch);
+        Assert.Empty(state.BrokerRowsView.Cast<ExpirationsBrokerRow>());
+    }
+
     [Fact]
     public async Task SelectedPreparationUsesMarkedBrokerIdsWhileAllUsesEveryEligibleBroker()
     {
@@ -169,7 +326,7 @@ public sealed class ExpirationsUatCompletionTests
         using var files = new ExpirationsTestFiles();
         var sourceManual = files.CreateWorkbook("external-manual.xlsx");
         var standard = files.File(BrokerOne, "standard.xlsx", ExpirationsGeneratedFileVariant.Standard);
-        var batch = files.Batch(ExpirationsProcess.PreviousMonth, standard);
+        var batch = files.BatchWithParticipants(ExpirationsProcess.PreviousMonth, [BrokerOne], standard);
         var service = new ExpirationsBatchFileAssociationService();
 
         var added = service.AddManual(batch, BrokerOne, "Uno", sourceManual);
@@ -183,6 +340,7 @@ public sealed class ExpirationsUatCompletionTests
         Assert.StartsWith(Path.Combine(files.Directory, "Manual"), manual.OutputPath, StringComparison.OrdinalIgnoreCase);
         Assert.True(File.Exists(manual.OutputPath));
         var withoutStandard = service.Remove(added.Batch, standard);
+        Assert.Equal([BrokerOne], withoutStandard.ParticipatingBrokerIds);
         Assert.DoesNotContain(withoutStandard.Files, file => file.Variant == ExpirationsGeneratedFileVariant.Standard);
         Assert.True(File.Exists(standard.OutputPath));
         var eligibility = await PreparationService([Directory(BrokerOne, "Uno")], [])
@@ -305,7 +463,7 @@ public sealed class ExpirationsUatCompletionTests
     {
         BrokerId = id,
         Name = name,
-        PrimaryEmailAddresses = [email ?? $"{name.ToLowerInvariant()}@example.test"]
+        PrimaryEmailAddresses = [email ?? $"{name.ToLowerInvariant().Replace(' ', '.')}@example.test"]
     };
 
     private static ExpirationsBrokerProfile Profile(
@@ -323,7 +481,7 @@ public sealed class ExpirationsUatCompletionTests
     {
         BrokerId = id,
         Name = name,
-        PrimaryEmailAddresses = [$"{name.ToLowerInvariant()}@example.test"],
+        PrimaryEmailAddresses = [$"{name.ToLowerInvariant().Replace(' ', '.')}@example.test"],
         IsActive = true
     };
 
@@ -403,6 +561,19 @@ public sealed class ExpirationsUatCompletionTests
             Process = process,
             CreatedAtUtc = DateTimeOffset.UtcNow,
             OutputDirectory = Directory,
+            Files = generatedFiles
+        };
+
+        public ExpirationsGenerationBatch BatchWithParticipants(
+            ExpirationsProcess process,
+            IEnumerable<Guid> participatingBrokerIds,
+            params ExpirationsGeneratedFile[] generatedFiles) => new()
+        {
+            Id = Guid.NewGuid(),
+            Process = process,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            OutputDirectory = Directory,
+            ParticipatingBrokerIds = participatingBrokerIds.ToHashSet(),
             Files = generatedFiles
         };
 

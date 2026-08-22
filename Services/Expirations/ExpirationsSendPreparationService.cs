@@ -83,8 +83,11 @@ public sealed class ExpirationsSendPreparationService
         var filesByBroker = batch.Files
             .GroupBy(file => file.BrokerId)
             .ToDictionary(group => group.Key, group => group.ToList());
+        var participatingBrokerIds = batch.ParticipatingBrokerIds.Count > 0
+            ? batch.ParticipatingBrokerIds.ToHashSet()
+            : batch.Files.Select(file => file.BrokerId).ToHashSet();
         var targets = selectedBrokerIds is null
-            ? filesByBroker.Keys.OrderBy(id => id).ToList()
+            ? participatingBrokerIds.OrderBy(id => id).ToList()
             : selectedBrokerIds.Distinct().OrderBy(id => id).ToList();
         var requests = new List<EmailSendRequest>();
         var preparedItems = new List<ExpirationsPreparedSendItem>();
@@ -107,11 +110,19 @@ public sealed class ExpirationsSendPreparationService
             }
 
             var files = filesByBroker.GetValueOrDefault(brokerId) ?? [];
+            var isParticipant = participatingBrokerIds.Contains(brokerId);
             var eligibilityErrors = new List<string>();
-            ValidateEligibilityFiles(batch, broker, files, eligibilityErrors);
-            if (eligibilityErrors.Count == 0)
-                eligibleBrokerIds.Add(brokerId);
-            ValidateRequiredFiles(batch.Process, broker, files, itemErrors);
+            if (isParticipant)
+            {
+                ValidateEligibilityFiles(batch, broker, files, eligibilityErrors);
+                if (eligibilityErrors.Count == 0)
+                    eligibleBrokerIds.Add(brokerId);
+                ValidateRequiredFiles(batch.Process, broker, files, itemErrors);
+            }
+            else
+            {
+                ValidateManualOnlyFiles(broker, files, itemErrors);
+            }
             ValidateAttachments(batch, files, itemErrors);
             if (itemErrors.Contains(ChangedAttachmentMessage, StringComparer.Ordinal))
                 errors.Add(ChangedAttachmentMessage);
@@ -121,7 +132,10 @@ public sealed class ExpirationsSendPreparationService
             itemErrors.AddRange(resolution.Errors);
             if (itemErrors.Count > 0)
             {
-                errors.AddRange(itemErrors.Select(error => $"{broker.Name}: {error}"));
+                errors.AddRange(itemErrors.Select(error =>
+                    error.StartsWith($"{broker.Name} ", StringComparison.CurrentCultureIgnoreCase)
+                        ? error
+                        : $"{broker.Name}: {error}"));
                 continue;
             }
             if (!settingsAreValid)
@@ -174,7 +188,7 @@ public sealed class ExpirationsSendPreparationService
         if (batch.Files.Count == 0)
             errors.Add("El lote actual no contiene archivos asociados.");
         if (selectedBrokerIds is { Count: 0 })
-            errors.Add("Seleccione al menos un corredor elegible.");
+            errors.Add("Seleccione al menos un corredor.");
 
         return new ExpirationsSendPreparationResult
         {
@@ -186,6 +200,19 @@ public sealed class ExpirationsSendPreparationService
             Errors = errors.Distinct(StringComparer.Ordinal).ToList(),
             Warnings = warnings
         };
+    }
+
+    private static void ValidateManualOnlyFiles(
+        ExpirationsBrokerCatalogItem broker,
+        IReadOnlyList<ExpirationsGeneratedFile> files,
+        ICollection<string> errors)
+    {
+        if (!files.Any(file => file.Variant == ExpirationsGeneratedFileVariant.Manual))
+        {
+            errors.Add($"{broker.Name} no participa en el reporte actual y no tiene archivos manuales asociados.");
+        }
+        if (files.Any(file => file.Variant != ExpirationsGeneratedFileVariant.Manual))
+            errors.Add("Un corredor que no participa sólo puede enviarse con archivos manuales asociados.");
     }
 
     private void ValidateAttachments(

@@ -136,10 +136,10 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
         if (known.ObservedItem is { } observed)
         {
             var observedConfirmation =
-                $"El valor \"{known.Value}\" se confirmará para {destination.DisplayText}.\n\n¿Desea continuar?";
+                $"Este identificador se utilizará en futuros análisis para identificar a {destination.DisplayText}.\n\n¿Desea continuar?";
             if (MessageBox.Show(
                     observedConfirmation,
-                    "Reasignar y confirmar identificador",
+                    "Reasignar y usar como asociación",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 return;
@@ -169,6 +169,12 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
     private async void ConfirmObserved_Click(object sender, RoutedEventArgs e)
     {
         if (State.SelectedKnownIdentifier?.ObservedItem is not { } observed)
+            return;
+        if (MessageBox.Show(
+                $"Este identificador se utilizará en futuros análisis para identificar a {observed.BrokerName}.\n\n¿Desea continuar?",
+                "Usar como asociación",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
         await RunMutationAsync(() => _associations.ConfirmObservedIdentifierAsync(
             observed.Identifier.Id,
@@ -258,12 +264,28 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
         SelectedKnownIdentifier?.AssociationItem?.Association.IsActive == false;
     public bool CanConfirmObserved => !_isBusy && SelectedKnownIdentifier?.IsObserved == true;
     public bool CanIgnoreObserved => !_isBusy && SelectedKnownIdentifier?.IsObserved == true;
+    public Visibility AssociationActionsVisibility => SelectedKnownIdentifier?.IsAssociation == true
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public Visibility ObservedActionsVisibility => SelectedKnownIdentifier?.IsObserved == true
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public Visibility ReassignActionsVisibility =>
+        SelectedKnownIdentifier?.IsAssociation == true || SelectedKnownIdentifier?.IsObserved == true
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    public Visibility DeactivateActionVisibility => CanDeactivateAssociation
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public Visibility ReactivateActionVisibility => CanReactivateAssociation
+        ? Visibility.Visible
+        : Visibility.Collapsed;
     public bool CanReassign => !_isBusy &&
         (SelectedKnownIdentifier?.IsAssociation == true || SelectedKnownIdentifier?.IsObserved == true) &&
         SelectedDestinationBroker is not null &&
         SelectedDestinationBroker.BrokerId != SelectedKnownIdentifier.BrokerId;
     public string ReassignButtonText => SelectedKnownIdentifier?.IsObserved == true
-        ? "Reasignar y confirmar"
+        ? "Reasignar y usar como asociación"
         : "Reasignar";
 
     public string AssociationSearchText
@@ -330,7 +352,7 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
                 Value = broker.Name,
                 NormalizedValue = new ExpirationsBrokerNormalizer().Normalize(broker.Name),
                 OriginText = "Maestro",
-                StatusText = broker.IsActive ? "Activo" : "Inactivo",
+                StatusText = broker.IsActive ? "En uso" : "Inactivo",
                 UpdatedAtUtc = broker.ProfileUpdatedAtUtc,
                 IsMaster = true
             })
@@ -343,7 +365,7 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
                 Value = item.Association.Value,
                 NormalizedValue = item.Association.NormalizedValue,
                 OriginText = item.OriginText,
-                StatusText = item.Association.IsActive ? "Activo" : "Inactivo",
+                StatusText = item.Association.IsActive ? "En uso" : "Inactivo",
                 UpdatedAtUtc = item.Association.UpdatedAtUtc,
                 AssociationItem = item
             }));
@@ -412,6 +434,7 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
                       item.KindText.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
                       item.BrokerName.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
                       item.BrokerPrimaryEmail.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                      item.DetailText.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
                       item.OriginText.Contains(term, StringComparison.CurrentCultureIgnoreCase))))
         {
             VisibleKnownIdentifiers.Add(known);
@@ -442,6 +465,11 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
         Notify(nameof(CanReassign));
         Notify(nameof(CanConfirmObserved));
         Notify(nameof(CanIgnoreObserved));
+        Notify(nameof(AssociationActionsVisibility));
+        Notify(nameof(ObservedActionsVisibility));
+        Notify(nameof(ReassignActionsVisibility));
+        Notify(nameof(DeactivateActionVisibility));
+        Notify(nameof(ReactivateActionVisibility));
         Notify(nameof(ReassignButtonText));
     }
 

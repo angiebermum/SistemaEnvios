@@ -232,9 +232,7 @@ internal sealed class ExpirationsSendReviewItem : INotifyPropertyChanged
     {
         if (result is null)
             return;
-        _resultText = result.WasSuccessful
-            ? $"✓ {BrokerName}"
-            : $"✗ {BrokerName} — {result.ErrorMessage}";
+        _resultText = result.StatusText;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));
     }
 

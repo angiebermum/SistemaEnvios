@@ -285,6 +285,25 @@ public sealed class ExpirationsEmailSendingTests
     }
 
     [Fact]
+    public void ReviewShowsUnconfirmedResultAsUnknownInsteadOfFailed()
+    {
+        var request = Request(BrokerOne, "Uno");
+        var item = new ExpirationsSendReviewItem(request);
+
+        item.ApplyResult(new ExpirationsSendResultItem(
+            request.RequestId,
+            request.BrokerId,
+            request.BrokerName,
+            WasSuccessful: false,
+            "Outlook no devolvió un resultado confirmado.",
+            IsConfirmed: false));
+
+        Assert.StartsWith("? ", item.ResultText, StringComparison.Ordinal);
+        Assert.Contains("resultado no confirmado", item.ResultText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("✗", item.ResultText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SettingsChangeInvalidatesOnlyPreviewWhileProcessChangeClearsSendResult()
     {
         var state = new ExpirationsWindowState(new AppUser

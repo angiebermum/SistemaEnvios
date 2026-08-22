@@ -4,7 +4,9 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Authorization;
 using ECS.CommissionsMailer.Infrastructure.FirebaseClient.Firestore;
+using ECS.CommissionsMailer.Models;
 using ECS.CommissionsMailer.Models.Expirations;
+using ECS.CommissionsMailer.Services;
 using ECS.CommissionsMailer.Services.Expirations;
 using ECS.CommissionsMailer.Views;
 
@@ -88,33 +90,33 @@ internal static class ModuleWindowUiSmokeRunner
             var nextMonthNoPeriodPath = Path.Combine(
                 Path.GetTempPath(),
                 "ECSCommissionsMailer-expirations-next-month-no-period-ui-smoke.png");
+            var emailSettingsPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-email-settings-ui-smoke.png");
+            var sendReviewNormalPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-send-review-normal-ui-smoke.png");
+            var sendReviewSpecialPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-send-review-special-ui-smoke.png");
+            var sendReviewBusyPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-send-review-busy-ui-smoke.png");
+            var sendReviewResultPath = Path.Combine(
+                Path.GetTempPath(),
+                "ECSCommissionsMailer-expirations-send-review-result-ui-smoke.png");
 
             Render(new ModuleSelectionWindow(user), selectorPath);
             Render(
-                new ExpirationsWindow(
-                    user,
-                    new NonOperationalAppUserRepository(),
-                    new SmokeCoordinator(new ExpirationsAnalysisSessionSnapshot()),
-                    new SmokeConfigurationService(),
-                    new SmokeGenerationService()),
+                ExpirationsWindow(user, new ExpirationsAnalysisSessionSnapshot()),
                 expirationsInitialPath);
             var readySnapshot = ReadySnapshot();
             Render(
-                new ExpirationsWindow(
-                    user,
-                    new NonOperationalAppUserRepository(),
-                    new SmokeCoordinator(readySnapshot),
-                    new SmokeConfigurationService(),
-                    new SmokeGenerationService()),
+                ExpirationsWindow(user, readySnapshot),
                 expirationsReadyPath);
             var pendingSnapshot = PendingSnapshot();
             Render(
-                new ExpirationsWindow(
-                    user,
-                    new NonOperationalAppUserRepository(),
-                    new SmokeCoordinator(pendingSnapshot),
-                    new SmokeConfigurationService(),
-                    new SmokeGenerationService()),
+                ExpirationsWindow(user, pendingSnapshot),
                 expirationsPendingPath);
             Render(
                 new ExpirationsBrokerResolutionWindow(
@@ -192,6 +194,56 @@ internal static class ModuleWindowUiSmokeRunner
                         false);
                     state.ApplyGenerationBatch(nextMonthBatch);
                 });
+            var settingsWindow = new ExpirationsEmailSettingsWindow(
+                new SmokeEmailSettingsService(),
+                ExpirationsProcess.PreviousMonth);
+            settingsWindow.State.Load(SettingsSnapshot(ExpirationsProcess.PreviousMonth));
+            Render(settingsWindow, emailSettingsPath);
+
+            Render(
+                new ExpirationsSendReviewWindow(
+                    ReviewPreparation(special: false),
+                    new SmokeOutlookSender(
+                        new OutlookConnectionInfo(
+                            true,
+                            "Seleccione explícitamente una cuenta.",
+                            null,
+                            ["operaciones@example.test", "vencimientos@example.test"]))),
+                sendReviewNormalPath);
+            Render(
+                new ExpirationsSendReviewWindow(
+                    ReviewPreparation(special: true),
+                    new SmokeOutlookSender()),
+                sendReviewSpecialPath);
+            var busyReview = new ExpirationsSendReviewWindow(
+                ReviewPreparation(special: false),
+                new SmokeOutlookSender());
+            busyReview.State.ApplyOutlook(AvailableOutlook());
+            busyReview.State.SetBusy(true, "Enviando correo 1 de 2...");
+            Render(busyReview, sendReviewBusyPath);
+            var resultPreparation = ReviewPreparation(special: false, brokerCount: 2);
+            var resultReview = new ExpirationsSendReviewWindow(resultPreparation, new SmokeOutlookSender());
+            resultReview.State.ApplyOutlook(AvailableOutlook());
+            resultReview.State.ApplyResults(new ExpirationsSendExecutionResult
+            {
+                SendingAccount = "vencimientos@example.test",
+                Items =
+                [
+                    new ExpirationsSendResultItem(
+                        resultPreparation.Requests[0].RequestId,
+                        resultPreparation.Requests[0].BrokerId,
+                        resultPreparation.Requests[0].BrokerName,
+                        true,
+                        string.Empty),
+                    new ExpirationsSendResultItem(
+                        resultPreparation.Requests[1].RequestId,
+                        resultPreparation.Requests[1].BrokerId,
+                        resultPreparation.Requests[1].BrokerName,
+                        false,
+                        "Outlook rechazó el destinatario")
+                ]
+            });
+            Render(resultReview, sendReviewResultPath);
             bindingListener.Flush();
             var hasBindingErrors = new FileInfo(bindingLogPath).Length > 0;
             File.WriteAllText(
@@ -215,6 +267,11 @@ internal static class ModuleWindowUiSmokeRunner
                     $"GENERACION_COMPLETADA_CON_WARNINGS={generationCompletedPath}",
                     $"NEXT_MONTH_SIN_PERIODO={nextMonthNoPeriodPath}",
                     $"NEXT_MONTH_LISTO_NORMAL_MAS_ESPECIAL={nextMonthReadyPath}",
+                    $"CONFIGURACION_CORREO={emailSettingsPath}",
+                    $"REVISION_NORMAL_SELECCION_CUENTA={sendReviewNormalPath}",
+                    $"REVISION_ESPECIAL_DOS_ADJUNTOS={sendReviewSpecialPath}",
+                    $"ENVIO_BUSY={sendReviewBusyPath}",
+                    $"RESULTADO_SUCCESS_FAILURE={sendReviewResultPath}",
                     $"LOG_BINDINGS={bindingLogPath}"));
             return !hasBindingErrors;
         }
@@ -311,12 +368,70 @@ internal static class ModuleWindowUiSmokeRunner
 
     private static ExpirationsWindow ExpirationsWindow(
         AppUser user,
-        ExpirationsAnalysisSessionSnapshot snapshot) => new(
+        ExpirationsAnalysisSessionSnapshot snapshot)
+    {
+        var settingsRepository = new SmokeProcessSettingsRepository();
+        var catalog = new ExpirationsBrokerCatalogService(
+            new SmokeDirectoryRepository(),
+            new SmokeProfileRepository());
+        return new ExpirationsWindow(
             user,
             new NonOperationalAppUserRepository(),
             new SmokeCoordinator(snapshot),
             new SmokeConfigurationService(),
-            new SmokeGenerationService());
+            new SmokeGenerationService(),
+            new SmokeEmailSettingsService(),
+            new ExpirationsSendPreparationService(settingsRepository, catalog),
+            new SmokeOutlookSender());
+    }
+
+    private static ExpirationsEmailSettingsSnapshot SettingsSnapshot(ExpirationsProcess process) => new(
+        process,
+        new ExpirationsProcessSettings
+        {
+            DefaultSubject = process == ExpirationsProcess.PreviousMonth
+                ? "Pendientes de pólizas — mes anterior"
+                : "Vencimientos de pólizas — mes siguiente",
+            DefaultMessage = "Buen día,\n\nAdjuntamos el reporte de pólizas correspondiente.",
+            CommonCcAddresses = ["supervision@example.test"],
+            UpdatedAtUtc = DateTimeOffset.UtcNow
+        },
+        "smoke-version");
+
+    private static ExpirationsSendPreparationResult ReviewPreparation(
+        bool special,
+        int brokerCount = 1)
+    {
+        var process = special ? ExpirationsProcess.NextMonth : ExpirationsProcess.PreviousMonth;
+        var requests = Enumerable.Range(1, brokerCount).Select(index => new EmailSendRequest
+        {
+            BrokerId = Guid.Parse($"{index:D8}-1111-1111-1111-111111111111"),
+            BrokerName = index == 1 ? "Corredor Ejemplo" : "Corredor con fallo",
+            BrokerPrimaryRecipients = [$"corredor{index}@example.test"],
+            AssistantRecipients = [$"asistente{index}@example.test"],
+            ToRecipients = [$"corredor{index}@example.test", $"asistente{index}@example.test"],
+            CcRecipients = ["supervision@example.test"],
+            Subject = SettingsSnapshot(process).Settings.DefaultSubject,
+            Body = SettingsSnapshot(process).Settings.DefaultMessage,
+            AttachmentPaths = special
+                ? [@"C:\Generados\ORDENADO ALFABETICAMENTE.xlsx", @"C:\Generados\ORDENADO POR VENCIMIENTO.xlsx"]
+                : [$@"C:\Generados\Corredor {index}.xlsx"],
+            ReviewConfirmed = true
+        }).ToList();
+        return new ExpirationsSendPreparationResult
+        {
+            Process = process,
+            Settings = SettingsSnapshot(process).Settings,
+            Requests = requests,
+            Warnings = special ? ["El formato especial incluye dos archivos en un solo correo."] : []
+        };
+    }
+
+    private static OutlookConnectionInfo AvailableOutlook() => new(
+        true,
+        "Cuenta disponible.",
+        "vencimientos@example.test",
+        ["vencimientos@example.test"]);
 
     private static ExpirationsAnalysisSessionSnapshot PendingSnapshot()
     {
@@ -573,5 +688,98 @@ internal static class ModuleWindowUiSmokeRunner
                 Outcome = ExpirationsBrokerConfigurationSaveOutcome.NoChanges,
                 Configuration = configuration
             });
+    }
+
+    private sealed class SmokeEmailSettingsService : IExpirationsEmailSettingsService
+    {
+        public Task<ExpirationsEmailSettingsSnapshot> LoadAsync(
+            ExpirationsProcess process,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(SettingsSnapshot(process));
+
+        public Task<ExpirationsEmailSettingsSaveResult> SaveAsync(
+            ExpirationsEmailSettingsSnapshot snapshot,
+            string? subject,
+            string? message,
+            string? commonCcText,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ExpirationsEmailSettingsSaveResult
+            {
+                Outcome = ExpirationsEmailSettingsSaveOutcome.Updated,
+                Snapshot = snapshot,
+                Message = "Configuración guardada."
+            });
+    }
+
+    private sealed class SmokeOutlookSender(
+        OutlookConnectionInfo? connection = null) : IExpirationsOutlookSender
+    {
+        private readonly OutlookConnectionInfo _connection = connection ?? AvailableOutlook();
+
+        public Task<OutlookConnectionInfo> CheckAvailabilityAsync() => Task.FromResult(_connection);
+
+        public string SelectSendingAccount(string emailAddress) => emailAddress;
+
+        public Task<IReadOnlyList<EmailSendResult>> SendBatchAsync(
+            IReadOnlyList<EmailSendRequest> requests,
+            IProgress<OutlookSendProgress>? progress = null) =>
+            Task.FromResult<IReadOnlyList<EmailSendResult>>(requests.Select(request => new EmailSendResult
+            {
+                RequestId = request.RequestId,
+                WasSuccessful = true
+            }).ToList());
+    }
+
+    private sealed class SmokeProcessSettingsRepository : IExpirationsProcessSettingsRepository
+    {
+        public Task<FirestoreStoredDocument<ExpirationsProcessSettings>?> GetAsync(
+            ExpirationsProcess process,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<FirestoreStoredDocument<ExpirationsProcessSettings>?>(new(
+                SettingsSnapshot(process).Settings,
+                $"modules/vencimientos/settings/{process}",
+                "smoke-version"));
+
+        public Task<FirestoreStoredDocument<ExpirationsProcessSettings>> CreateAsync(
+            ExpirationsProcess process,
+            ExpirationsProcessSettings value,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<FirestoreStoredDocument<ExpirationsProcessSettings>> UpdateAsync(
+            ExpirationsProcess process,
+            ExpirationsProcessSettings value,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class SmokeDirectoryRepository : IExpirationsBrokerDirectoryRepository
+    {
+        public Task<FirestoreStoredDocument<ExpirationsBrokerDirectoryEntry>?> GetAsync(
+            Guid brokerId,
+            CancellationToken cancellationToken = default) => Task.FromResult<FirestoreStoredDocument<ExpirationsBrokerDirectoryEntry>?>(null);
+
+        public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerDirectoryEntry>>> ListAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerDirectoryEntry>>>([]);
+    }
+
+    private sealed class SmokeProfileRepository : IExpirationsBrokerProfileRepository
+    {
+        public Task<FirestoreStoredDocument<ExpirationsBrokerProfile>?> GetAsync(
+            Guid brokerId,
+            CancellationToken cancellationToken = default) => Task.FromResult<FirestoreStoredDocument<ExpirationsBrokerProfile>?>(null);
+
+        public Task<IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerProfile>>> ListAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsBrokerProfile>>>([]);
+
+        public Task<FirestoreStoredDocument<ExpirationsBrokerProfile>> CreateAsync(
+            ExpirationsBrokerProfile value,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<FirestoreStoredDocument<ExpirationsBrokerProfile>> UpdateAsync(
+            ExpirationsBrokerProfile value,
+            string expectedUpdateTime,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

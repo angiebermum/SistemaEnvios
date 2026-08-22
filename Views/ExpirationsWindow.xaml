@@ -71,11 +71,15 @@
                                 <TextBlock Text="Seleccione el proceso y el reporte general que desea analizar."
                                            Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0" />
                             </StackPanel>
-                            <Button Grid.Column="1" Content="Configurar corredores"
-                                    Click="ConfigureBrokers_Click"
-                                    IsEnabled="{Binding CanConfigureBrokers}"
-                                    Style="{StaticResource CompactButtonStyle}" Margin="12,0,0,0"
-                                    VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0"
+                                        VerticalAlignment="Center">
+                                <Button Content="Configurar correo" Click="ConfigureEmail_Click"
+                                        IsEnabled="{Binding CanConfigureEmail}"
+                                        Style="{StaticResource CompactButtonStyle}" />
+                                <Button Content="Configurar corredores" Click="ConfigureBrokers_Click"
+                                        IsEnabled="{Binding CanConfigureBrokers}"
+                                        Style="{StaticResource CompactButtonStyle}" Margin="0" />
+                            </StackPanel>
                         </Grid>
 
                         <Grid Grid.Row="1" Margin="0,16,0,0">
@@ -249,9 +253,30 @@
                                            Style="{StaticResource MutedTextStyle}" Margin="0,2,0,0" />
                                 <TextBlock Text="{Binding GenerationWarningsText}" TextWrapping="Wrap"
                                            Style="{StaticResource MutedTextStyle}" Margin="0,5,0,0" />
-                                <Button Content="Abrir carpeta" Click="OpenGeneratedFolder_Click"
-                                        Style="{StaticResource CompactButtonStyle}"
-                                        HorizontalAlignment="Left" Margin="0,8,0,0" />
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Content="Abrir carpeta" Click="OpenGeneratedFolder_Click"
+                                            IsEnabled="{Binding CanSelectFile}"
+                                            Style="{StaticResource CompactButtonStyle}" />
+                                    <Button Content="Revisar y enviar" Click="ReviewAndSend_Click"
+                                            IsEnabled="{Binding CanReviewAndSend}"
+                                            Style="{StaticResource PrimaryButtonStyle}" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding SendReadinessText}" TextWrapping="Wrap"
+                                           Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource InfoPanelStyle}" Margin="0,12,0,0"
+                                Visibility="{Binding SendResultVisibility}">
+                            <StackPanel>
+                                <TextBlock Text="Resultado del último envío" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding SendSummaryText}" Margin="0,4,0,0" />
+                                <ItemsControl ItemsSource="{Binding SendResultItems}" Margin="0,5,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </StackPanel>
                         </Border>
                     </StackPanel>

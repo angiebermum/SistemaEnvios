@@ -1,0 +1,62 @@
+<Window x:Class="ECS.CommissionsMailer.Views.ExpirationsEmailSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Configurar correo — Vencimientos"
+        Width="760" Height="620" MinWidth="680" MinHeight="540"
+        WindowStartupLocation="CenterOwner" Loaded="Window_Loaded"
+        Style="{StaticResource DialogWindowStyle}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Configurar correo — Vencimientos" Style="{StaticResource PageTitleTextStyle}" />
+            <TextBlock Text="{Binding ProcessText}" Style="{StaticResource PageSubtitleTextStyle}" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,18,0,0">
+            <TextBlock Text="Asunto" Style="{StaticResource CaptionTextStyle}" />
+            <TextBox Text="{Binding Subject, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     IsEnabled="{Binding CanEdit}" Margin="0,5,0,0" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Margin="0,14,0,0">
+            <TextBlock Text="Mensaje" Style="{StaticResource CaptionTextStyle}" />
+            <TextBlock Text="Se utilizará el mismo mensaje para cada corredor del lote."
+                       Style="{StaticResource MutedTextStyle}" Margin="0,3,0,0" />
+        </StackPanel>
+        <TextBox Grid.Row="3" Text="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                 AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                 IsEnabled="{Binding CanEdit}" Margin="0,6,0,0" MinHeight="180" />
+
+        <StackPanel Grid.Row="4" Margin="0,14,0,0">
+            <TextBlock Text="CC generales" Style="{StaticResource CaptionTextStyle}" />
+            <TextBox Text="{Binding CommonCcText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     AcceptsReturn="True" TextWrapping="Wrap" Height="74"
+                     IsEnabled="{Binding CanEdit}" Margin="0,5,0,0" />
+            <TextBlock Text="Separe direcciones con punto y coma, coma o una línea nueva."
+                       Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <Grid Grid.Row="5" Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="{Binding StatusText}" Style="{StaticResource CaptionTextStyle}"
+                       VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="Cancelar" Click="Cancel_Click" IsEnabled="{Binding CanEdit}"
+                        Style="{StaticResource CompactButtonStyle}" />
+                <Button Content="Guardar" Click="Save_Click" IsDefault="True"
+                        IsEnabled="{Binding CanSave}" Style="{StaticResource PrimaryButtonStyle}" Margin="0" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

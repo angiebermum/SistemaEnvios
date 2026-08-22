@@ -17,6 +17,9 @@ public partial class ExpirationsWindow : Window
     private readonly IExpirationsAnalysisCoordinator _coordinator;
     private readonly IExpirationsBrokerConfigurationService _configurationService;
     private readonly IExpirationsGenerationService _generationService;
+    private readonly IExpirationsEmailSettingsService _emailSettingsService;
+    private readonly ExpirationsSendPreparationService _sendPreparationService;
+    private readonly IExpirationsOutlookSender _outlookSender;
     private readonly ExpirationsWindowState _state;
     private int _readinessVersion;
     private CancellationTokenSource? _readinessCancellation;
@@ -26,12 +29,18 @@ public partial class ExpirationsWindow : Window
         IAppUserRepository appUsers,
         IExpirationsAnalysisCoordinator coordinator,
         IExpirationsBrokerConfigurationService configurationService,
-        IExpirationsGenerationService generationService)
+        IExpirationsGenerationService generationService,
+        IExpirationsEmailSettingsService emailSettingsService,
+        ExpirationsSendPreparationService sendPreparationService,
+        IExpirationsOutlookSender outlookSender)
     {
         ArgumentNullException.ThrowIfNull(appUsers);
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _configurationService = configurationService ?? throw new ArgumentNullException(nameof(configurationService));
         _generationService = generationService ?? throw new ArgumentNullException(nameof(generationService));
+        _emailSettingsService = emailSettingsService ?? throw new ArgumentNullException(nameof(emailSettingsService));
+        _sendPreparationService = sendPreparationService ?? throw new ArgumentNullException(nameof(sendPreparationService));
+        _outlookSender = outlookSender ?? throw new ArgumentNullException(nameof(outlookSender));
         _state = new ExpirationsWindowState(currentUser);
         _appUsers = appUsers;
         InitializeComponent();
@@ -176,6 +185,19 @@ public partial class ExpirationsWindow : Window
         });
     }
 
+    private async void ConfigureEmail_Click(object sender, RoutedEventArgs e)
+    {
+        if (_state.SelectedProcessOption?.Value is not { } process)
+            return;
+        var settings = new ExpirationsEmailSettingsWindow(_emailSettingsService, process) { Owner = this };
+        _ = settings.ShowDialog();
+        if (!settings.HasSavedChanges)
+            return;
+
+        _state.InvalidateSendPreview();
+        await EvaluateSendPreflightAsync();
+    }
+
     private async void NextMonthPeriod_Changed(object sender, RoutedEventArgs e)
     {
         _state.InvalidateGenerationReadiness(
@@ -314,12 +336,58 @@ public partial class ExpirationsWindow : Window
                     _state.PremiumColumnOptions),
                 progress);
             _state.ApplyGenerationBatch(batch);
+            await EvaluateSendPreflightAsync();
             MessageBox.Show(
                 $"Generación completada.\n\nCorredores con archivos: {batch.Files.Select(file => file.BrokerId).Distinct().Count()}\nArchivos generados: {batch.Files.Count}\nCarpeta: {batch.OutputDirectory}",
                 "Generación de Vencimientos",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         });
+    }
+
+    private async void ReviewAndSend_Click(object sender, RoutedEventArgs e)
+    {
+        await RunBusyAsync("Validando el lote antes de abrir Outlook...", async () =>
+        {
+            var preparation = await EvaluateSendPreflightAsync();
+            if (preparation?.CanSend != true)
+            {
+                MessageBox.Show(
+                    preparation is null
+                        ? "No existe un lote generado para revisar."
+                        : string.Join(Environment.NewLine, preparation.Errors),
+                    "Preflight de Vencimientos",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var review = new ExpirationsSendReviewWindow(preparation, _outlookSender) { Owner = this };
+            _ = review.ShowDialog();
+            if (review.CompletedResult is { } result)
+                _state.ApplySendResult(result);
+        });
+    }
+
+    private async Task<ExpirationsSendPreparationResult?> EvaluateSendPreflightAsync()
+    {
+        if (_state.GenerationBatch is not { } batch)
+            return null;
+        ExpirationsSendPreparationResult preparation;
+        try
+        {
+            preparation = await _sendPreparationService.PrepareAsync(batch);
+        }
+        catch (Exception ex)
+        {
+            preparation = new ExpirationsSendPreparationResult
+            {
+                Process = batch.Process,
+                Errors = [$"No fue posible preparar el envío: {ex.Message}"]
+            };
+        }
+        _state.ApplySendPreparation(preparation);
+        return preparation;
     }
 
     private void OpenGeneratedFolder_Click(object sender, RoutedEventArgs e)
@@ -389,6 +457,8 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     private bool _isBusy;
     private string _operationStatusText = string.Empty;
     private ExpirationsGenerationBatch? _generationBatch;
+    private ExpirationsSendPreparationResult? _sendPreparation;
+    private ExpirationsSendExecutionResult? _sendResult;
     private ExpirationsMonthOption? _selectedMonthOption;
     private string _nextMonthYearText = string.Empty;
     private ExpirationsPremiumColumnOptions? _premiumColumnOptions;
@@ -429,6 +499,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public bool IsBusy => _isBusy;
     public bool CanSelectFile => !IsBusy;
     public bool CanConfigureBrokers => !IsBusy;
+    public bool CanConfigureEmail => !IsBusy && SelectedProcessOption is not null;
     public bool CanAnalyze => !IsBusy && SelectedProcessOption is not null && SourcePath.Length > 0;
     public bool CanResolve => !IsBusy && SelectedPendingIssue?.CanResolve == true;
     public bool CanSelectPremiumColumns => !IsBusy &&
@@ -439,6 +510,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         _snapshot.Distribution.Count > 0 &&
         (_snapshot.Process == ExpirationsProcess.PreviousMonth ||
          (_snapshot.Process == ExpirationsProcess.NextMonth && _nextMonthGenerationReady));
+    public bool CanReviewAndSend => !IsBusy && _generationBatch is not null && _sendPreparation?.CanSend == true;
     public Visibility BusyVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;
     public string OperationStatusText => _operationStatusText;
     public Visibility ResultVisibility =>
@@ -456,6 +528,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public Visibility GenerationVisibility => AnalysisVisibility;
     public Visibility GenerationResultVisibility =>
         _generationBatch is null ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility SendResultVisibility => _sendResult is null ? Visibility.Collapsed : Visibility.Visible;
     public Visibility NextMonthPeriodVisibility =>
         SelectedProcessOption?.Value == ExpirationsProcess.NextMonth
             ? Visibility.Visible
@@ -493,7 +566,20 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public string GenerationWarningsText => _generationBatch is { Warnings.Count: > 0 }
         ? string.Join(Environment.NewLine, _generationBatch.Warnings)
         : "Sin advertencias.";
+    public string SendReadinessText => _generationBatch switch
+    {
+        null => "Genere los archivos antes de preparar el envío.",
+        _ when _sendPreparation is null => "El preview de envío debe reconstruirse.",
+        _ when _sendPreparation.CanSend =>
+            $"Preflight completo: {_sendPreparation.Requests.Count} correo(s) listo(s) para revisión.",
+        _ => string.Join(Environment.NewLine, _sendPreparation.Errors)
+    };
+    public string SendSummaryText => _sendResult is null
+        ? string.Empty
+        : $"Enviados correctamente: {_sendResult.SuccessfulCount} · Fallidos: {_sendResult.FailedCount}";
+    public IReadOnlyList<ExpirationsSendResultItem> SendResultItems => _sendResult?.Items ?? [];
     public ExpirationsPremiumColumnOptions? PremiumColumnOptions => _premiumColumnOptions;
+    internal ExpirationsGenerationBatch? GenerationBatch => _generationBatch;
 
     public ExpirationsMonthOption? SelectedMonthOption
     {
@@ -503,6 +589,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             if (Equals(_selectedMonthOption, value)) return;
             _selectedMonthOption = value;
             _generationBatch = null;
+            ClearSendState();
             InvalidateGenerationReadiness("Validación pendiente para el período seleccionado.");
             Notify();
         }
@@ -516,6 +603,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             if (string.Equals(_nextMonthYearText, value, StringComparison.Ordinal)) return;
             _nextMonthYearText = value;
             _generationBatch = null;
+            ClearSendState();
             InvalidateGenerationReadiness("Validación pendiente para el período seleccionado.");
             Notify();
         }
@@ -530,6 +618,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             _selectedProcessOption = value;
             _selectedPendingIssue = null;
             _generationBatch = null;
+            ClearSendState();
             InvalidateGenerationReadiness(
                 "Seleccione un mes y año para validar la configuración especial y las primas.");
             Notify();
@@ -558,6 +647,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         _snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
         _generationBatch = null;
+        ClearSendState();
         if (snapshot.Process is { } process)
             _selectedProcessOption = ProcessOptions.Single(option => option.Value == process);
         _selectedPendingIssue = null;
@@ -567,6 +657,25 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public void ApplyGenerationBatch(ExpirationsGenerationBatch batch)
     {
         _generationBatch = batch ?? throw new ArgumentNullException(nameof(batch));
+        ClearSendState();
+        NotifyAllState();
+    }
+
+    public void ApplySendPreparation(ExpirationsSendPreparationResult preparation)
+    {
+        _sendPreparation = preparation ?? throw new ArgumentNullException(nameof(preparation));
+        NotifyAllState();
+    }
+
+    public void InvalidateSendPreview()
+    {
+        _sendPreparation = null;
+        NotifyAllState();
+    }
+
+    public void ApplySendResult(ExpirationsSendExecutionResult result)
+    {
+        _sendResult = result ?? throw new ArgumentNullException(nameof(result));
         NotifyAllState();
     }
 
@@ -591,6 +700,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         _premiumColumnOptions = options ?? throw new ArgumentNullException(nameof(options));
         _generationBatch = null;
+        ClearSendState();
         InvalidateGenerationReadiness("Validando las columnas Prima y Moneda seleccionadas...");
     }
 
@@ -598,6 +708,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     {
         _premiumColumnOptions = null;
         _generationBatch = null;
+        ClearSendState();
         InvalidateGenerationReadiness("Seleccione un mes y año para validar la generación.");
     }
 
@@ -621,6 +732,12 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
         _isBusy = value;
         _operationStatusText = value ? operationStatus ?? _operationStatusText : string.Empty;
         NotifyAllState();
+    }
+
+    private void ClearSendState()
+    {
+        _sendPreparation = null;
+        _sendResult = null;
     }
 
     public void SetOperationStatus(string value)

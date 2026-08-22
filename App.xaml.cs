@@ -254,6 +254,7 @@ public partial class App : Application
                 var directoryRepository = new ExpirationsBrokerDirectoryRepository(firestoreClient);
                 var profileRepository = new ExpirationsBrokerProfileRepository(firestoreClient);
                 var associationRepository = new ExpirationsBrokerAssociationRepository(firestoreClient);
+                var settingsRepository = new ExpirationsProcessSettingsRepository(firestoreClient);
                 var catalogService = new ExpirationsBrokerCatalogService(
                     directoryRepository,
                     profileRepository);
@@ -264,6 +265,11 @@ public partial class App : Application
                     catalogService,
                     associationRepository);
                 var generationService = new ExpirationsGenerationService();
+                var emailSettingsService = new ExpirationsEmailSettingsService(settingsRepository);
+                var sendPreparationService = new ExpirationsSendPreparationService(
+                    settingsRepository,
+                    catalogService);
+                var outlookSender = new ExpirationsOutlookSender(new OutlookEmailService(paths, logger));
                 ShowExpirationsWindow(
                     paths,
                     logger,
@@ -274,7 +280,10 @@ public partial class App : Application
                     profile.Value,
                     coordinator,
                     configurationService,
-                    generationService);
+                    generationService,
+                    emailSettingsService,
+                    sendPreparationService,
+                    outlookSender);
                 return;
             }
 
@@ -382,14 +391,20 @@ public partial class App : Application
         AppUser currentUser,
         IExpirationsAnalysisCoordinator coordinator,
         IExpirationsBrokerConfigurationService configurationService,
-        IExpirationsGenerationService generationService)
+        IExpirationsGenerationService generationService,
+        IExpirationsEmailSettingsService emailSettingsService,
+        ExpirationsSendPreparationService sendPreparationService,
+        IExpirationsOutlookSender outlookSender)
     {
         var expirationsWindow = new ExpirationsWindow(
             currentUser,
             appUsers,
             coordinator,
             configurationService,
-            generationService);
+            generationService,
+            emailSettingsService,
+            sendPreparationService,
+            outlookSender);
         MainWindow = expirationsWindow;
         var restarting = false;
         expirationsWindow.LogoutRequested += (_, _) =>

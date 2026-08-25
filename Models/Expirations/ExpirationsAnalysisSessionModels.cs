@@ -98,6 +98,7 @@ public enum ExpirationsAssociationConfirmationOutcome
 {
     Created,
     ExistingActive,
+    Updated,
     Reactivated,
     SessionOverride,
     ConcurrencyConflict,
@@ -111,6 +112,7 @@ public sealed class ExpirationsAssociationConfirmationResult
     public string Message { get; init; } = string.Empty;
     public ExpirationsAnalysisSessionSnapshot Snapshot { get; init; } = new();
     public bool Persisted => Outcome is ExpirationsAssociationConfirmationOutcome.Created or
+        ExpirationsAssociationConfirmationOutcome.Updated or
         ExpirationsAssociationConfirmationOutcome.Reactivated;
 }
 

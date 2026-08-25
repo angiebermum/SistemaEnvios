@@ -141,6 +141,193 @@ public sealed class ExpirationsAnalysisCoordinatorTests
     }
 
     [Fact]
+    public async Task PendingResolutionPersistsAlbertoPrincipalAcrossOccurrencesReanalysisAndNewInstance()
+    {
+        const string value = "Alberto Volio/AVS - 213";
+        var associations = new FakeAssociationRepository([
+            Stored(Association(1, BrokerA, ExpirationsAssociationKind.Alias, "Alberto Volio"))
+        ]);
+        var reader = new FakeWorkbookReader(SuccessfulRead(
+            SourceRow(10, value),
+            SourceRow(20, value),
+            SourceRow(30, value)));
+        var brokers = new[] { Broker(BrokerA, "Alberto Volio S") };
+        var coordinator = Coordinator(reader, associations, brokers);
+        Prepare(coordinator, "alberto-213.xlsx");
+
+        var before = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, before.PendingIssues.Count);
+        Assert.All(before.PendingIssues,
+            issue => Assert.Equal(ExpirationsBrokerResolutionStatus.Ambiguous, issue.Status));
+        Assert.Empty(associations.Created);
+
+        var result = await coordinator.ConfirmAssociationAsync(
+            new ExpirationsAssociationConfirmation(
+                10,
+                0,
+                BrokerA,
+                ExpirationsAssociationKind.Code,
+                ExpirationsDestinationGroup.Principal),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsAssociationConfirmationOutcome.Created, result.Outcome);
+        Assert.Empty(result.Snapshot.PendingIssues);
+        Assert.Equal(new uint[] { 10, 20, 30 }, Assert.Single(
+            result.Snapshot.Analysis!.ResolvedRowNumbersByDestination).Value);
+        var created = Assert.Single(associations.Created);
+        Assert.Equal("ALBERTO VOLIO AVS 213", created.NormalizedValue);
+        Assert.Equal(ExpirationsDestinationGroup.Principal, created.DestinationGroup);
+
+        var reanalyzed = await coordinator.AnalyzeAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Empty(reanalyzed.PendingIssues);
+
+        var newRepositoryInstance = new FakeAssociationRepository(associations.Documents.ToList());
+        var newCoordinator = Coordinator(reader, newRepositoryInstance, brokers);
+        Prepare(newCoordinator, "alberto-213-next.xlsx");
+        var fromPersistence = await newCoordinator.AnalyzeAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Empty(fromPersistence.PendingIssues);
+        Assert.True(fromPersistence.CanGenerate);
+        Assert.Empty(newRepositoryInstance.Created);
+    }
+
+    [Fact]
+    public async Task PendingResolutionCompletesLegacyActiveAssociationWithoutDuplicate()
+    {
+        const string value = "Alberto Volio/AVS - 213";
+        var associations = new FakeAssociationRepository([
+            Stored(Association(
+                1,
+                BrokerA,
+                ExpirationsAssociationKind.Code,
+                value,
+                destinationGroup: null), "version-legacy")
+        ]);
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(10, value))),
+            associations,
+            [Broker(BrokerA, "Alberto Volio S")]);
+        Prepare(coordinator, "alberto-legacy.xlsx");
+        var before = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(ExpirationsBrokerResolutionStatus.Ambiguous, Assert.Single(before.PendingIssues).Status);
+
+        var result = await coordinator.ConfirmAssociationAsync(
+            new ExpirationsAssociationConfirmation(
+                10,
+                0,
+                BrokerA,
+                ExpirationsAssociationKind.Code,
+                ExpirationsDestinationGroup.Principal),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsAssociationConfirmationOutcome.Updated, result.Outcome);
+        Assert.True(result.Persisted);
+        Assert.Empty(result.Snapshot.PendingIssues);
+        Assert.Empty(associations.Created);
+        var update = Assert.Single(associations.Updated);
+        Assert.Equal("version-legacy", update.ExpectedUpdateTime);
+        Assert.Equal(ExpirationsDestinationGroup.Principal, update.Value.DestinationGroup);
+        Assert.Single(associations.Documents);
+    }
+
+    [Fact]
+    public async Task PendingResolutionPersistsAndresAgencias()
+    {
+        const string value = "NUEVO XX AS35 - 200";
+        var associations = new FakeAssociationRepository([]);
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(40, value))),
+            associations,
+            [Broker(BrokerA, "Andrés Steimberg - Agent for EssentialGroupLA")]);
+        Prepare(coordinator, "andres-agencias.xlsx");
+        var before = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Single(before.PendingIssues);
+
+        var result = await coordinator.ConfirmAssociationAsync(
+            new ExpirationsAssociationConfirmation(
+                40,
+                0,
+                BrokerA,
+                ExpirationsAssociationKind.Code,
+                ExpirationsDestinationGroup.Agencias),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsAssociationConfirmationOutcome.Created, result.Outcome);
+        Assert.Empty(result.Snapshot.PendingIssues);
+        var created = Assert.Single(associations.Created);
+        Assert.Equal(ExpirationsDestinationGroup.Agencias, created.DestinationGroup);
+        Assert.Equal(ExpirationsDestinationGroup.Agencias,
+            Assert.Single(result.Snapshot.Analysis!.ResolvedRowNumbersByDestination).Key.DestinationGroup);
+    }
+
+    [Fact]
+    public async Task PendingResolutionIsIdempotentAcrossStaleCoordinatorInstances()
+    {
+        const string value = "CÓDIGO REUTILIZABLE 501";
+        var associations = new FakeAssociationRepository([]);
+        var reader = new FakeWorkbookReader(SuccessfulRead(SourceRow(50, value)));
+        var brokers = new[] { Broker(BrokerA, "Broker A") };
+        var first = Coordinator(reader, associations, brokers);
+        var second = Coordinator(reader, associations, brokers);
+        Prepare(first, "first-session.xlsx");
+        Prepare(second, "second-session.xlsx");
+        _ = await first.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        _ = await second.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        var firstResult = await first.ConfirmAssociationAsync(
+            new ExpirationsAssociationConfirmation(50, 0, BrokerA, ExpirationsAssociationKind.Code),
+            TestContext.Current.CancellationToken);
+        var secondResult = await second.ConfirmAssociationAsync(
+            new ExpirationsAssociationConfirmation(50, 0, BrokerA, ExpirationsAssociationKind.Code),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsAssociationConfirmationOutcome.Created, firstResult.Outcome);
+        Assert.Equal(ExpirationsAssociationConfirmationOutcome.ExistingActive, secondResult.Outcome);
+        Assert.Single(associations.Created);
+        Assert.Single(associations.Documents);
+        Assert.Empty(secondResult.Snapshot.PendingIssues);
+    }
+
+    [Fact]
+    public async Task PendingResolutionDoesNotOverwriteConflictingActiveDestinationGroup()
+    {
+        const string value = "Alberto Volio/AVS - 213";
+        var associations = new FakeAssociationRepository([]);
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(60, value))),
+            associations,
+            [Broker(BrokerA, "Alberto Volio S")]);
+        Prepare(coordinator, "alberto-conflict.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        associations.Documents.Add(Stored(Association(
+            1,
+            BrokerA,
+            ExpirationsAssociationKind.Code,
+            value,
+            destinationGroup: ExpirationsDestinationGroup.PcGuanacaste)));
+
+        var result = await coordinator.ConfirmAssociationAsync(
+            new ExpirationsAssociationConfirmation(
+                60,
+                0,
+                BrokerA,
+                ExpirationsAssociationKind.Code,
+                ExpirationsDestinationGroup.Principal),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsAssociationConfirmationOutcome.SessionOverride, result.Outcome);
+        Assert.Contains("no se sobrescribió", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("reasignación", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(associations.Created);
+        Assert.Empty(associations.Updated);
+        Assert.Equal(ExpirationsDestinationGroup.PcGuanacaste,
+            Assert.Single(associations.Documents).Value.DestinationGroup);
+    }
+
+    [Fact]
     public async Task ExistingActiveAssociationForSameBrokerIsNotDuplicated()
     {
         var associations = new FakeAssociationRepository([]);
@@ -154,7 +341,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             1,
             BrokerA,
             ExpirationsAssociationKind.Alias,
-            "ALIAS EXISTENTE")));
+            "ALIAS EXISTENTE",
+            destinationGroup: ExpirationsDestinationGroup.Principal)));
 
         var result = await coordinator.ConfirmAssociationAsync(
             new ExpirationsAssociationConfirmation(11, 0, BrokerA, ExpirationsAssociationKind.Alias),
@@ -630,13 +818,15 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         Guid brokerId,
         ExpirationsAssociationKind kind,
         string value,
-        bool active = true) => new()
+        bool active = true,
+        ExpirationsDestinationGroup? destinationGroup = null) => new()
     {
         Id = Guid.Parse($"{id:x8}-0000-0000-0000-000000000000"),
         BrokerId = brokerId,
         Kind = kind,
         Value = value,
         NormalizedValue = new ExpirationsBrokerNormalizer().Normalize(value),
+        DestinationGroup = destinationGroup,
         IsActive = active,
         CreatedAtUtc = Now,
         UpdatedAtUtc = Now

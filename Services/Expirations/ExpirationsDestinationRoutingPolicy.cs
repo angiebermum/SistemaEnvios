@@ -10,6 +10,8 @@ public sealed class ExpirationsDestinationRoutingPolicy
 {
     private const string AndresName = "ANDRES STEIMBERG AGENT FOR ESSENTIALGROUPLA";
     private const string AndresLegacyName = "ANDRES STEIMBERG SEGURU";
+    private const string AndresShortName = "ANDRES STEIMBERG";
+    private const string AndresAlternateSpelling = "ANDRES STEINBERG";
     private const string AlbertoName = "ALBERTO VOLIO S";
     private const string JavierName = "JAVIER MARTINEZ";
     private const string PcGuanacasteName = "PC GUANACASTE";
@@ -50,7 +52,12 @@ public sealed class ExpirationsDestinationRoutingPolicy
         ArgumentNullException.ThrowIfNull(catalog);
         _normalizer = normalizer ?? new ExpirationsBrokerNormalizer();
         var items = catalog.ToList();
-        _andresId = FindUnique(items, AndresName, AndresLegacyName);
+        _andresId = FindPreferredUnique(
+            items,
+            AndresName,
+            AndresLegacyName,
+            AndresShortName,
+            AndresAlternateSpelling);
         _albertoId = FindUnique(items, AlbertoName);
         _javierId = FindUnique(items, JavierName);
     }
@@ -71,7 +78,7 @@ public sealed class ExpirationsDestinationRoutingPolicy
         ExpirationsBrokerNormalizer? normalizer = null)
     {
         var normalized = (normalizer ?? new ExpirationsBrokerNormalizer()).Normalize(brokerName);
-        if (normalized is AndresName or AndresLegacyName)
+        if (normalized is AndresName or AndresLegacyName or AndresShortName or AndresAlternateSpelling)
             return AndresGroups;
         if (normalized == AlbertoName)
             return AlbertoGroups;
@@ -104,7 +111,7 @@ public sealed class ExpirationsDestinationRoutingPolicy
         }
         if (normalizedIdentifier == VariosCoriMotorsName && _albertoId is { } albertoVarios)
         {
-            destination = new(albertoVarios, ExpirationsDestinationGroup.VariosCoriMotors);
+            destination = new(albertoVarios, ExpirationsDestinationGroup.ContadoCoriMotors);
             return true;
         }
         if (normalizedIdentifier == HernanVarelaName && _javierId is { } javier)
@@ -140,16 +147,51 @@ public sealed class ExpirationsDestinationRoutingPolicy
     {
         diagnostic = null;
         var allowed = AvailableGroups(brokerId);
-        var explicitGroups = matchingAssociations
-            .Where(association => association.BrokerId == brokerId && association.DestinationGroup.HasValue)
+        var brokerAssociations = matchingAssociations
+            .Where(association => association.BrokerId == brokerId)
+            .ToList();
+        if (_andresId == brokerId)
+        {
+            var deterministicAndresGroup = InferDeterministicGroup(
+                brokerId,
+                normalizedIdentifier,
+                out diagnostic);
+            if (deterministicAndresGroup.HasValue)
+            {
+                var conflictingExactGroup = brokerAssociations
+                    .Where(association =>
+                        association.DestinationGroup.HasValue &&
+                        _normalizer.Normalize(association.NormalizedValue.Length > 0
+                            ? association.NormalizedValue
+                            : association.Value) == normalizedIdentifier)
+                    .Select(association => association.DestinationGroup!.Value)
+                    .Distinct()
+                    .Any(group => group != deterministicAndresGroup.Value);
+                if (conflictingExactGroup)
+                {
+                    diagnostic = "La asociación específica de Andrés contradice el archivo destino determinado por la identificación.";
+                    return null;
+                }
+                return deterministicAndresGroup;
+            }
+            if (!string.IsNullOrWhiteSpace(diagnostic))
+                return null;
+        }
+
+        var persistedGroups = brokerAssociations
+            .Where(association => association.DestinationGroup.HasValue)
             .Select(association => association.DestinationGroup!.Value)
             .Distinct()
             .ToList();
-        if (explicitGroups.Any(group => !allowed.Contains(group)))
+        if (persistedGroups.Any(group => !allowed.Contains(group)))
         {
             diagnostic = "La asociación usa un archivo destino que no corresponde al corredor.";
             return null;
         }
+        var explicitGroups = persistedGroups
+            .Select(Canonicalize)
+            .Distinct()
+            .ToList();
         if (explicitGroups.Count > 1)
         {
             diagnostic = "Existen asociaciones activas incompatibles para el mismo corredor y archivo destino.";
@@ -196,13 +238,13 @@ public sealed class ExpirationsDestinationRoutingPolicy
 
         if (_albertoId == brokerId)
         {
-            var candidates = new List<ExpirationsDestinationGroup>();
+            var candidates = new HashSet<ExpirationsDestinationGroup>();
             if (ContainsTokenPhrase(normalizedIdentifier, PcGuanacasteName))
                 candidates.Add(ExpirationsDestinationGroup.PcGuanacaste);
             if (ContainsTokenPhrase(normalizedIdentifier, ContadoCoriMotorsName))
                 candidates.Add(ExpirationsDestinationGroup.ContadoCoriMotors);
             if (ContainsTokenPhrase(normalizedIdentifier, VariosCoriMotorsName))
-                candidates.Add(ExpirationsDestinationGroup.VariosCoriMotors);
+                candidates.Add(ExpirationsDestinationGroup.ContadoCoriMotors);
             if (normalizedIdentifier == AlbertoName)
                 candidates.Add(ExpirationsDestinationGroup.Principal);
             if (candidates.Count > 1)
@@ -210,7 +252,7 @@ public sealed class ExpirationsDestinationRoutingPolicy
                 diagnostic = "La identificación de Alberto contiene marcadores de más de un archivo destino.";
                 return null;
             }
-            return candidates.Count == 1 ? candidates[0] : null;
+            return candidates.Count == 1 ? candidates.Single() : null;
         }
 
         if (_javierId == brokerId)
@@ -223,6 +265,28 @@ public sealed class ExpirationsDestinationRoutingPolicy
         }
 
         return ExpirationsDestinationGroup.Principal;
+    }
+
+    private static ExpirationsDestinationGroup Canonicalize(ExpirationsDestinationGroup group) =>
+        group == ExpirationsDestinationGroup.VariosCoriMotors
+            ? ExpirationsDestinationGroup.ContadoCoriMotors
+            : group;
+
+    private Guid? FindPreferredUnique(
+        IReadOnlyList<ExpirationsBrokerCatalogItem> catalog,
+        string preferredName,
+        params string[] fallbackNames)
+    {
+        var preferredMatches = catalog
+            .Where(item => _normalizer.Normalize(item.Name) == preferredName)
+            .Select(item => item.BrokerId)
+            .Distinct()
+            .ToList();
+        if (preferredMatches.Count == 1)
+            return preferredMatches[0];
+        if (preferredMatches.Count > 1)
+            return null;
+        return FindUnique(catalog, fallbackNames);
     }
 
     private Guid? FindUnique(

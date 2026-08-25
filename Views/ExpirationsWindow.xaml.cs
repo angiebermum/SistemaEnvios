@@ -241,23 +241,6 @@ public partial class ExpirationsWindow : Window
         if (dialog.ShowDialog() != true || dialog.SelectedBrokerId is not { } brokerId)
             return;
 
-        if (issue.Status == ExpirationsBrokerResolutionStatus.Ambiguous)
-        {
-            var result = _coordinator.ApplyManualOverrideWithDestination(
-                issue.RowNumber,
-                issue.ComponentIndex,
-                brokerId,
-                dialog.SelectedDestinationGroup);
-            _state.ApplySnapshot(result.Snapshot);
-            await EvaluateNextMonthReadinessAsync();
-            MessageBox.Show(
-                result.Message,
-                "Resolución manual",
-                MessageBoxButton.OK,
-                result.Applied ? MessageBoxImage.Information : MessageBoxImage.Warning);
-            return;
-        }
-
         await RunBusyAsync("Actualizando asociaciones...", async () =>
         {
             var result = await _coordinator.ConfirmAssociationAsync(new ExpirationsAssociationConfirmation(

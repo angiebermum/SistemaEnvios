@@ -28,7 +28,9 @@ public partial class ExpirationsBrokerResolutionWindow : Window
     {
         if (State.SelectedBroker is null)
             return;
-        if (State.Issue.Status == ExpirationsBrokerResolutionStatus.Unresolved &&
+        if (State.Issue.Status is (
+                ExpirationsBrokerResolutionStatus.Unresolved or
+                ExpirationsBrokerResolutionStatus.Ambiguous) &&
             MessageBox.Show(
                 State.ConfirmationSummary +
                 "\n\nEsta asociación se utilizará en ambos tipos de Vencimientos.\n\n¿Desea continuar?",
@@ -95,13 +97,12 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
             ? Visibility.Visible
             : Visibility.Collapsed;
     public Visibility AssociationTypeVisibility =>
-        Issue.Status == ExpirationsBrokerResolutionStatus.Unresolved
+        Issue.Status is (
+                ExpirationsBrokerResolutionStatus.Unresolved or
+                ExpirationsBrokerResolutionStatus.Ambiguous)
             ? Visibility.Visible
             : Visibility.Collapsed;
-    public string ConfirmButtonText =>
-        Issue.Status == ExpirationsBrokerResolutionStatus.Ambiguous
-            ? "Aplicar a esta fila"
-            : "Confirmar asociación";
+    public string ConfirmButtonText => "Confirmar asociación";
     public string AssociationHelpText => SelectedKind.Value switch
     {
         ExpirationsAssociationKind.Name => "Nombre: nombre con el que se identifica al corredor.",

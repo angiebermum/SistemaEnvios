@@ -15,12 +15,14 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
     private static readonly Guid Javier = Guid.Parse("33333333-3333-3333-3333-333333333333");
     private static readonly Guid Pc = Guid.Parse("44444444-4444-4444-4444-444444444444");
     private static readonly Guid Normal = Guid.Parse("55555555-5555-5555-5555-555555555555");
+    private static readonly Guid LegacyAndres = Guid.Parse("66666666-6666-6666-6666-666666666666");
 
     [Theory]
-    [InlineData("107", ExpirationsDestinationGroup.Personales)]
-    [InlineData("189", ExpirationsDestinationGroup.Personales)]
-    [InlineData("94", ExpirationsDestinationGroup.Generales)]
-    [InlineData("172", ExpirationsDestinationGroup.Generales)]
+    [Trait("Area", "AndresUatRouting")]
+    [InlineData("XYZ - 107", ExpirationsDestinationGroup.Personales)]
+    [InlineData("XYZ - 189", ExpirationsDestinationGroup.Personales)]
+    [InlineData("XYZ - 94", ExpirationsDestinationGroup.Generales)]
+    [InlineData("XYZ - 172", ExpirationsDestinationGroup.Generales)]
     [InlineData("BANCARI DA AS20 - 146", ExpirationsDestinationGroup.Agencias)]
     [InlineData("NUEVOS CC AS28 - 176", ExpirationsDestinationGroup.Agencias)]
     [InlineData("NUEVOS CM AS10 - 136", ExpirationsDestinationGroup.Agencias)]
@@ -38,7 +40,9 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
     }
 
     [Theory]
+    [Trait("Area", "AndresUatRouting")]
     [InlineData("1070")]
+    [InlineData("108")]
     [InlineData("941")]
     [InlineData("DATO SIN MARCADOR")]
     [InlineData("COMERCIAL")]
@@ -51,10 +55,11 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
     }
 
     [Fact]
+    [Trait("Area", "AndresUatRouting")]
     public void AndresConflictingGroupsRemainPendingAndSameGroupIsDeduplicated()
     {
-        var conflict = Analyze(["107, DA"]);
-        var sameGroup = Analyze(["DA, CC"]);
+        var conflict = Analyze(["XYZ - 107, NUEVOS DA AS4 - 102"]);
+        var sameGroup = Analyze(["AGENCIAS DIRECTO/AS24 - 167, BANCARI DA AS20 - 146"]);
 
         Assert.False(conflict.CanGenerate);
         Assert.Equal(1, conflict.RowsWithBlockingIssues);
@@ -62,6 +67,82 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
         var agencias = Assert.Single(sameGroup.ResolvedRowNumbersByDestination);
         Assert.Equal(ExpirationsDestinationGroup.Agencias, agencias.Key.DestinationGroup);
         Assert.Equal([2U], agencias.Value);
+    }
+
+    [Theory]
+    [Trait("Area", "AndresUatRouting")]
+    [Trait("Area", "LimitedUatRouting")]
+    [InlineData("Andres Stein/VeinsaAS5 - 107", "Andres Stein", ExpirationsDestinationGroup.Personales)]
+    [InlineData("Andres Steinberg/AS - 94", "Andres Steinberg", ExpirationsDestinationGroup.Generales)]
+    [InlineData("NUEVOS DA AS4 - 102", "NUEVOS", ExpirationsDestinationGroup.Agencias)]
+    public void AndresDeterministicSignalOverridesLegacyAssociationGroupWithoutMutatingIt(
+        string identifier,
+        string genericAssociation,
+        ExpirationsDestinationGroup expectedGroup)
+    {
+        var association = Association(Andres, genericAssociation, ExpirationsDestinationGroup.Principal);
+
+        var analysis = Analyze([identifier], [association]);
+
+        Assert.Equal(expectedGroup,
+            Assert.Single(analysis.ResolvedRowNumbersByDestination).Key.DestinationGroup);
+        Assert.Equal(ExpirationsDestinationGroup.Principal, association.DestinationGroup);
+    }
+
+    [Fact]
+    [Trait("Area", "LimitedUatRouting")]
+    public void AndresSpecificAssociationConflictRemainsPending()
+    {
+        const string identifier = "Andres Stein/VeinsaAS5 - 107";
+        var conflict = Association(Andres, identifier, ExpirationsDestinationGroup.Principal);
+
+        var analysis = Analyze([identifier], [conflict]);
+
+        Assert.False(analysis.CanGenerate);
+        Assert.Equal(ExpirationsBrokerResolutionStatus.Ambiguous,
+            Assert.Single(Assert.Single(analysis.RowResolutions).Components).Status);
+        Assert.Empty(analysis.ResolvedRowNumbersByDestination);
+    }
+
+    [Fact]
+    [Trait("Area", "AndresUatRouting")]
+    [Trait("Area", "LimitedUatRouting")]
+    public void AndresCanonicalIdentityKeepsThreeGroupsWhenSeparateLegacyCatalogEntryExists()
+    {
+        string[] identifiers =
+        [
+            "XYZ - 107",
+            "XYZ - 189",
+            "XYZ - 94",
+            "XYZ - 172",
+            "NUEVOS DA AS4 - 102",
+            "NUEVOS CC AS28 - 176",
+            "NUEVOS CM AS10 - 136",
+            "NUEVOS QM AS15 - 141",
+            "AGENCIAS DIRECTO/AS24 - 167"
+        ];
+        var legacyAssociations = new[]
+        {
+            Association(Andres, "XYZ", ExpirationsDestinationGroup.Principal),
+            Association(Andres, "NUEVOS", ExpirationsDestinationGroup.Principal),
+            Association(Andres, "BANCARI", ExpirationsDestinationGroup.Principal),
+            Association(Andres, "AGENCIAS DIRECTO", ExpirationsDestinationGroup.Principal)
+        };
+        var catalog = Catalog()
+            .Append(Broker(LegacyAndres, "Andrés Steimberg - Seguru"))
+            .ToList();
+
+        var analysis = Analyze(identifiers, legacyAssociations, catalog);
+
+        Assert.True(analysis.CanGenerate);
+        var byGroup = analysis.ResolvedRowNumbersByDestination
+            .Where(item => item.Key.BrokerId == Andres)
+            .ToDictionary(item => item.Key.DestinationGroup, item => item.Value);
+        Assert.Equal(3, byGroup.Count);
+        Assert.Equal([2U, 3U], byGroup[ExpirationsDestinationGroup.Personales]);
+        Assert.Equal([4U, 5U], byGroup[ExpirationsDestinationGroup.Generales]);
+        Assert.Equal([6U, 7U, 8U, 9U, 10U], byGroup[ExpirationsDestinationGroup.Agencias]);
+        Assert.DoesNotContain(ExpirationsDestinationGroup.Principal, byGroup.Keys);
     }
 
     [Fact]
@@ -77,7 +158,7 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
     [Theory]
     [InlineData("PC Guanacaste", "Alberto Volio S", ExpirationsDestinationGroup.PcGuanacaste)]
     [InlineData("Contado Cori Motors", "Alberto Volio S", ExpirationsDestinationGroup.ContadoCoriMotors)]
-    [InlineData("Varios Cori Motors", "Alberto Volio S", ExpirationsDestinationGroup.VariosCoriMotors)]
+    [InlineData("Varios Cori Motors", "Alberto Volio S", ExpirationsDestinationGroup.ContadoCoriMotors)]
     [InlineData("Hernán Varela", "Javier Martinez", ExpirationsDestinationGroup.HernanVarela)]
     public void SpecialBusinessIdentitiesUseRecipientAndSeparateFile(
         string identifier,
@@ -146,6 +227,8 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
     }
 
     [Fact]
+    [Trait("Area", "AndresUatRouting")]
+    [Trait("Area", "LimitedUatRouting")]
     public async Task GenerationMaterializesDistinctGroupsAndPersistsRequiredSlotsWithoutEmptyPrincipal()
     {
         using var directory = new ExpirationsGenerationTestDirectory();
@@ -162,10 +245,106 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
 
         Assert.Equal(3, batch.Files.Count);
         Assert.Equal(3, batch.Files.Select(file => file.DestinationGroup).Distinct().Count());
+        Assert.Equal(3, batch.Files.Select(file => file.OutputPath).Distinct(
+            StringComparer.OrdinalIgnoreCase).Count());
         Assert.All(batch.Files, file => Assert.Equal(ExpirationsGeneratedFileVariant.Standard, file.Variant));
         Assert.Equal(3, batch.RequiredAttachmentSlots.Count);
         Assert.All(batch.Files, file => Assert.True(File.Exists(file.OutputPath)));
+        Assert.Equal([8U], batch.Files.Single(file =>
+            file.DestinationGroup == ExpirationsDestinationGroup.Personales).SourceRowNumbers);
+        Assert.Equal([9U], batch.Files.Single(file =>
+            file.DestinationGroup == ExpirationsDestinationGroup.Generales).SourceRowNumbers);
+        Assert.Equal([10U], batch.Files.Single(file =>
+            file.DestinationGroup == ExpirationsDestinationGroup.Agencias).SourceRowNumbers);
         Assert.DoesNotContain(batch.Files, file => file.DestinationGroup == ExpirationsDestinationGroup.Principal);
+    }
+
+    [Fact]
+    [Trait("Area", "LimitedUatRouting")]
+    public void AlbertoContadoAndVariosShareOneEffectiveDestination()
+    {
+        var analysis = Analyze(["Contado Cori Motors", "Varios Cori Motors"]);
+
+        var destination = Assert.Single(analysis.ResolvedRowNumbersByDestination);
+        Assert.Equal(Alberto, destination.Key.BrokerId);
+        Assert.Equal(ExpirationsDestinationGroup.ContadoCoriMotors, destination.Key.DestinationGroup);
+        Assert.Equal([2U, 3U], destination.Value);
+    }
+
+    [Fact]
+    [Trait("Area", "LimitedUatRouting")]
+    public async Task AlbertoGenerationCreatesPrincipalAndOneCoriMotorsFileForSameBroker()
+    {
+        using var directory = new ExpirationsGenerationTestDirectory();
+        var source = Path.Combine(directory.Path, "alberto-cori.xlsx");
+        ExpirationsGenerationTestWorkbook.Create(source);
+        var context = GroupedContext(source, Alberto,
+            (ExpirationsDestinationGroup.Principal, new uint[] { 8 }),
+            (ExpirationsDestinationGroup.ContadoCoriMotors, new uint[] { 9, 10 }));
+
+        var batch = await new ExpirationsGenerationService().GenerateAsync(
+            new ExpirationsGenerationRequest(context, directory.Path),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, batch.Files.Count);
+        Assert.All(batch.Files, file => Assert.Equal(Alberto, file.BrokerId));
+        Assert.Contains(batch.Files, file => Path.GetFileName(file.OutputPath)
+            .EndsWith("Alberto Volio S.xlsx", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(batch.Files, file => Path.GetFileName(file.OutputPath)
+            .EndsWith("Cori Motors.xlsx", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    [Trait("Area", "AndresUatRouting")]
+    public async Task AndresGenerationDoesNotCreateAnEmptyMissingGroup()
+    {
+        using var directory = new ExpirationsGenerationTestDirectory();
+        var source = Path.Combine(directory.Path, "groups-present.xlsx");
+        ExpirationsGenerationTestWorkbook.Create(source);
+        var context = GroupedContext(source, Andres,
+            (ExpirationsDestinationGroup.Personales, new uint[] { 8 }),
+            (ExpirationsDestinationGroup.Agencias, new uint[] { 10 }));
+
+        var batch = await new ExpirationsGenerationService().GenerateAsync(
+            new ExpirationsGenerationRequest(context, directory.Path),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, batch.Files.Count);
+        Assert.DoesNotContain(batch.Files,
+            file => file.DestinationGroup == ExpirationsDestinationGroup.Generales);
+        Assert.Equal(2, batch.Files.Select(file => file.OutputPath).Distinct(
+            StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    [Trait("Area", "AndresUatRouting")]
+    public async Task AndresThreeGroupsPrepareOneEmailWithThreeAttachments()
+    {
+        using var files = new SlotFiles();
+        ExpirationsDestinationGroup[] groups =
+        [
+            ExpirationsDestinationGroup.Personales,
+            ExpirationsDestinationGroup.Generales,
+            ExpirationsDestinationGroup.Agencias
+        ];
+        var generated = groups.Select(group => files.Generated(
+            Andres,
+            $"{group}.xlsx",
+            group)).ToList();
+        var slots = groups.Select(group => Slot(Andres, group)).ToList();
+
+        var result = await PreparationService(
+                Andres,
+                "Andrés Steimberg - Agent for EssentialGroupLA")
+            .PrepareSelectedAsync(
+                files.Batch(generated, slots),
+                [Andres],
+                null,
+                TestContext.Current.CancellationToken);
+
+        Assert.True(result.CanSend);
+        Assert.Equal(3, Assert.Single(result.Requests).AttachmentPaths.Count);
+        Assert.Equal(3, Assert.Single(result.PreparedItems).Attachments.Count);
     }
 
     [Fact]
@@ -394,7 +573,8 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
 
     private static ExpirationsWorkbookAnalysisResult Analyze(
         IReadOnlyList<string> values,
-        IReadOnlyList<ExpirationsBrokerAssociation>? associations = null)
+        IReadOnlyList<ExpirationsBrokerAssociation>? associations = null,
+        IReadOnlyList<ExpirationsBrokerCatalogItem>? catalog = null)
     {
         var rows = values.Select((value, index) => new ExpirationsSourceRow
         {
@@ -413,7 +593,7 @@ public sealed class ExpirationsPostUatRoutingAndSlotsTests
                     Rows = rows
                 }
             },
-            Catalog(),
+            catalog ?? Catalog(),
             associations ?? []);
     }
 

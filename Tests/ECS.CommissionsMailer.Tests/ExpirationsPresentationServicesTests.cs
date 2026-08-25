@@ -158,7 +158,8 @@ public sealed class ExpirationsPresentationServicesTests
         Assert.Equal(ExpirationsAssociationKind.Code, codeState.SelectedKind.Value);
         Assert.Equal(ExpirationsAssociationKind.Alias, aliasState.SelectedKind.Value);
         Assert.Equal(Visibility.Visible, ambiguousState.AmbiguityWarningVisibility);
-        Assert.Equal(Visibility.Collapsed, ambiguousState.AssociationTypeVisibility);
+        Assert.Equal(Visibility.Visible, ambiguousState.AssociationTypeVisibility);
+        Assert.Equal("Confirmar asociación", ambiguousState.ConfirmButtonText);
     }
 
     [Fact]

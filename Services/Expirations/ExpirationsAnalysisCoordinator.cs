@@ -346,11 +346,13 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
             return Confirmation(ExpirationsAssociationConfirmationOutcome.Rejected,
                 "No existe un análisis activo para confirmar la asociación.");
         var component = FindComponent(confirmation.RowNumber, confirmation.ComponentIndex);
-        if (component is null || component.Status != ExpirationsBrokerResolutionStatus.Unresolved ||
+        if (component is null || component.Status is not (
+                ExpirationsBrokerResolutionStatus.Unresolved or
+                ExpirationsBrokerResolutionStatus.Ambiguous) ||
             string.IsNullOrWhiteSpace(component.RawValue))
         {
             return Confirmation(ExpirationsAssociationConfirmationOutcome.Rejected,
-                "Solo los valores no reconocidos y no vacíos pueden guardarse como asociación.");
+                "Solo los valores pendientes y no vacíos pueden guardarse como asociación.");
         }
         if (!IsActiveCatalogBroker(confirmation.BrokerId))
         {
@@ -412,8 +414,34 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                         : manual.Message);
             }
 
-            if (exact.FirstOrDefault(document =>
-                    document.Value.IsActive && document.Value.BrokerId == confirmation.BrokerId) is not null)
+            var activeForBroker = exact
+                .Where(document =>
+                    document.Value.IsActive && document.Value.BrokerId == confirmation.BrokerId)
+                .ToList();
+            var activeGroups = activeForBroker
+                .Select(document => document.Value.DestinationGroup)
+                .OfType<ExpirationsDestinationGroup>()
+                .Distinct()
+                .ToList();
+            if (activeGroups.Count > 1 ||
+                (activeGroups.Count == 1 && activeGroups[0] != confirmation.DestinationGroup))
+            {
+                _associationDocuments = latest;
+                var manual = ApplyManualOverrideWithDestination(
+                    confirmation.RowNumber,
+                    confirmation.ComponentIndex,
+                    confirmation.BrokerId,
+                    confirmation.DestinationGroup);
+                return Confirmation(
+                    ExpirationsAssociationConfirmationOutcome.SessionOverride,
+                    manual.Applied
+                        ? "El valor ya tiene una asociación activa con otro archivo destino. " +
+                          "No se sobrescribió; la selección se aplicó solo a esta fila. " +
+                          "Use Identificadores conocidos para confirmar la reasignación permanente."
+                        : manual.Message);
+            }
+
+            if (activeGroups.Count == 1)
             {
                 _associationDocuments = latest;
                 Snapshot = BuildSnapshot();
@@ -422,11 +450,33 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                     "La asociación activa ya existía; no se creó un duplicado.");
             }
 
+            if (activeForBroker.Count > 0)
+            {
+                var existing = activeForBroker[0];
+                var updated = CopyAssociation(existing.Value);
+                updated.Kind = confirmation.Kind;
+                updated.Value = component.RawValue;
+                updated.NormalizedValue = normalizedValue;
+                updated.DestinationGroup = confirmation.DestinationGroup;
+                updated.UpdatedAtUtc = _timeProvider.GetUtcNow();
+                await _associations.UpdateAsync(
+                    updated,
+                    existing.UpdateTime,
+                    cancellationToken);
+                _associationDocuments = await _associations.ListAsync(cancellationToken);
+                Snapshot = BuildSnapshot();
+                return Confirmation(
+                    ExpirationsAssociationConfirmationOutcome.Updated,
+                    "La asociación existente fue completada con el archivo destino y el archivo se analizó nuevamente.");
+            }
+
             var inactive = exact.FirstOrDefault(document =>
                 !document.Value.IsActive && document.Value.BrokerId == confirmation.BrokerId);
+            inactive ??= exact.FirstOrDefault(document => !document.Value.IsActive);
             if (inactive is not null)
             {
                 var reactivated = CopyAssociation(inactive.Value);
+                reactivated.BrokerId = confirmation.BrokerId;
                 reactivated.Kind = confirmation.Kind;
                 reactivated.Value = component.RawValue;
                 reactivated.NormalizedValue = normalizedValue;

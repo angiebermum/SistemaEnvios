@@ -129,6 +129,11 @@ public sealed class ExpirationsFileNameService
         var safeBroker = _sanitizer.SanitizePart(brokerName);
         if (group == ExpirationsDestinationGroup.Principal)
             return safeBroker;
+        if (group is ExpirationsDestinationGroup.ContadoCoriMotors or
+            ExpirationsDestinationGroup.VariosCoriMotors)
+        {
+            return "Cori Motors";
+        }
         var safeGroup = _sanitizer.SanitizePart(ExpirationsDestinationGroups.DisplayName(group));
         return group == ExpirationsDestinationGroup.HernanVarela ||
                group is ExpirationsDestinationGroup.PcGuanacaste or

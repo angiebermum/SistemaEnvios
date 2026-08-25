@@ -65,12 +65,10 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
             Assert.Equal(ExpirationsPremiumTotalsSheetService.Title, cells[0].InlineString!.InnerText);
             Assert.Equal(ExpirationsPremiumTotalsSheetService.CrcLabel, cells[2].InlineString!.InnerText);
             Assert.Equal(ExpirationsPremiumTotalsSheetService.UsdLabel, cells[4].InlineString!.InnerText);
-            Assert.Equal(
-                "SUMPRODUCT(--('Detalle'!$I$8:$I$10=\"CRC\"),'Detalle'!$H$8:$H$10)",
-                cells[3].CellFormula!.Text);
-            Assert.Equal(
-                "SUMPRODUCT(--('Detalle'!$I$8:$I$10=\"USD\"),'Detalle'!$H$8:$H$10)",
-                cells[5].CellFormula!.Text);
+            Assert.Contains("'Detalle'!$I:$I", cells[3].CellFormula!.Text, StringComparison.Ordinal);
+            Assert.Contains("'Detalle'!$H:$H", cells[3].CellFormula!.Text, StringComparison.Ordinal);
+            Assert.Contains("\"CRC\"", cells[3].CellFormula!.Text, StringComparison.Ordinal);
+            Assert.Contains("\"USD\"", cells[5].CellFormula!.Text, StringComparison.Ordinal);
             Assert.Equal(3, totals.GetFirstChild<SheetData>()!.Elements<Row>().Count());
             Assert.Equal("B2:C2", Assert.Single(totals.Elements<MergeCells>().Single().Elements<MergeCell>()).Reference!.Value);
             Assert.All(cells, cell => Assert.True(cell.StyleIndex?.Value > 0U));
@@ -116,18 +114,18 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
             var totals = document.WorkbookPart!.Workbook!.Sheets!.Elements<Sheet>().Last();
             var formula = ((WorksheetPart)document.WorkbookPart.GetPartById(totals.Id!)).Worksheet!
                 .Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C3").CellFormula!.Text;
-            Assert.Contains("$H$8:$H$10", formula, StringComparison.Ordinal);
+            Assert.Contains("$H:$H", formula, StringComparison.Ordinal);
+            Assert.DoesNotContain("$H$8:$H$10", formula, StringComparison.Ordinal);
             Assert.DoesNotContain("300", formula, StringComparison.Ordinal);
             Assert.DoesNotContain("500", formula, StringComparison.Ordinal);
         }
     }
 
     [Theory]
-    [InlineData("CRC", false)]
-    [InlineData("USD", true)]
-    public void AlwaysCreatesBothFormulaCellsAndUsesConstantZeroForAbsentCurrency(
-        string currency,
-        bool crcIsAbsent)
+    [InlineData("CRC")]
+    [InlineData("USD")]
+    public void AlwaysCreatesBothDynamicFormulaCellsForAllRecognizedLabels(
+        string currency)
     {
         using var directory = new ExpirationsGenerationTestDirectory();
         var source = Path.Combine(directory.Path, $"only-{currency}.xlsx");
@@ -153,8 +151,10 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
         var usdFormula = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C4").CellFormula;
         Assert.NotNull(crcFormula);
         Assert.NotNull(usdFormula);
-        Assert.Equal(crcIsAbsent ? "0" : null, crcIsAbsent ? crcFormula.Text : null);
-        Assert.Equal(crcIsAbsent ? null : "0", crcIsAbsent ? null : usdFormula.Text);
+        Assert.Contains("\"CRC\"", crcFormula!.Text, StringComparison.Ordinal);
+        Assert.Contains("\"USD\"", usdFormula!.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("$B$2:$B$2", crcFormula.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("$B$2:$B$2", usdFormula.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -192,17 +192,14 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
         var totals = ((WorksheetPart)document.WorkbookPart.GetPartById(totalsSheet.Id!)).Worksheet!;
         var crc = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C3").CellFormula!.Text;
         var usd = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C4").CellFormula!.Text;
-        Assert.Contains("=\"CRC\"", crc, StringComparison.Ordinal);
-        Assert.Contains("=\"Colones\"", crc, StringComparison.Ordinal);
-        Assert.Contains("=\"₡\"", crc, StringComparison.Ordinal);
-        Assert.Equal(1, Occurrences(crc, "=\"CRC\""));
-        Assert.DoesNotContain("=\"crc\"", crc, StringComparison.Ordinal);
-        Assert.Contains("=\"USD\"", usd, StringComparison.Ordinal);
-        Assert.Contains("=\"Dólares\"", usd, StringComparison.Ordinal);
-        Assert.Contains("=\"$\"", usd, StringComparison.Ordinal);
-        Assert.DoesNotContain("=\"usd\"", usd, StringComparison.Ordinal);
-        Assert.Contains("'Detalle'!$R$2:$R$10", crc, StringComparison.Ordinal);
-        Assert.Contains("'Detalle'!$C$2:$C$10", usd, StringComparison.Ordinal);
+        Assert.Contains("\"CRC\"", crc, StringComparison.Ordinal);
+        Assert.Contains("\"COLONES\"", crc, StringComparison.Ordinal);
+        Assert.Contains("\"₡\"", crc, StringComparison.Ordinal);
+        Assert.Contains("\"USD\"", usd, StringComparison.Ordinal);
+        Assert.Contains("\"DÓLARES\"", usd, StringComparison.Ordinal);
+        Assert.Contains("\"$\"", usd, StringComparison.Ordinal);
+        Assert.Contains("'Detalle'!$R:$R", crc, StringComparison.Ordinal);
+        Assert.Contains("'Detalle'!$C:$C", usd, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -271,8 +268,8 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
             .Select(row => row.RowIndex!.Value));
         var totals = ((WorksheetPart)document.WorkbookPart.GetPartById(sheets[1].Id!)).Worksheet!;
         var formula = totals.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "C3").CellFormula!.Text;
-        Assert.Contains("$B$2:$B$4", formula, StringComparison.Ordinal);
-        Assert.Contains("$C$2:$C$4", formula, StringComparison.Ordinal);
+        Assert.Contains("$B:$B", formula, StringComparison.Ordinal);
+        Assert.Contains("$C:$C", formula, StringComparison.Ordinal);
         Assert.DoesNotContain("$B$2:$B$35", formula, StringComparison.Ordinal);
         Assert.Equal(1, Occurrences(formula, "SUMPRODUCT"));
     }
@@ -300,7 +297,7 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
             source, jerrikaOutput, "Reporte", 1, [10]), TestContext.Current.CancellationToken);
 
         Assert.Equal(TotalsFormula(anaOutput, "C3"), TotalsFormula(jerrikaOutput, "C3"));
-        Assert.Contains("$B$2:$B$2", TotalsFormula(anaOutput, "C3"), StringComparison.Ordinal);
+        Assert.Contains("$B:$B", TotalsFormula(anaOutput, "C3"), StringComparison.Ordinal);
         Assert.Contains("ANA + JERRIKA", ReadPackageText(anaOutput), StringComparison.Ordinal);
         Assert.Contains("ANA + JERRIKA", ReadPackageText(jerrikaOutput), StringComparison.Ordinal);
     }
@@ -332,8 +329,8 @@ public sealed class ExpirationsNextMonthWorkbookGenerationTests
 
         Assert.Contains("PC→ALBERTO", ReadPackageText(albertoOutput), StringComparison.Ordinal);
         Assert.Contains("HERNÁN→JAVIER", ReadPackageText(javierOutput), StringComparison.Ordinal);
-        Assert.Equal("0", TotalsFormula(albertoOutput, "C4"));
-        Assert.Equal("0", TotalsFormula(javierOutput, "C3"));
+        Assert.Contains("\"USD\"", TotalsFormula(albertoOutput, "C4"), StringComparison.Ordinal);
+        Assert.Contains("\"CRC\"", TotalsFormula(javierOutput, "C3"), StringComparison.Ordinal);
     }
 
     [Theory]

@@ -32,6 +32,22 @@ public sealed class ExpirationsCurrencyClassifier : IExpirationsCurrencyClassifi
         "$"
     };
 
+    public static IReadOnlyList<string> FormulaLabels(ExpirationsCurrency currency) => currency switch
+    {
+        ExpirationsCurrency.Crc =>
+        [
+            "CRC", "COLON", "COLÓN", "COLONES", "COLON COSTARRICENSE",
+            "COLÓN COSTARRICENSE", "COLONES COSTARRICENSES", "₡"
+        ],
+        ExpirationsCurrency.Usd =>
+        [
+            "USD", "DOLAR", "DÓLAR", "DOLARES", "DÓLARES",
+            "DOLAR ESTADOUNIDENSE", "DÓLAR ESTADOUNIDENSE",
+            "DOLARES ESTADOUNIDENSES", "DÓLARES ESTADOUNIDENSES", "US$", "$"
+        ],
+        _ => []
+    };
+
     public ExpirationsCurrency Classify(string? rawValue)
     {
         var normalized = Normalize(rawValue);

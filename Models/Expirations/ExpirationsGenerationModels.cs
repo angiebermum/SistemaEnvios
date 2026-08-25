@@ -20,15 +20,19 @@ public sealed class ExpirationsGenerationContext
             throw new ArgumentException("El análisis no está completo para generar.", nameof(analysis));
         if (sourceWorkbook.HeaderRowNumber == 0 || string.IsNullOrWhiteSpace(sourceWorkbook.WorksheetName))
             throw new ArgumentException("El workbook analizado no identifica una hoja y encabezado válidos.", nameof(sourceWorkbook));
-        if (analysis.ResolvedRowNumbersByBroker.Count == 0 ||
-            analysis.ResolvedRowNumbersByBroker.All(item => item.Value.Count == 0))
+        var destinations = analysis.ResolvedRowNumbersByDestination.Count > 0
+            ? analysis.ResolvedRowNumbersByDestination
+            : analysis.ResolvedRowNumbersByBroker.ToDictionary(
+                item => new ExpirationsDestinationKey(item.Key, ExpirationsDestinationGroup.Principal),
+                item => item.Value);
+        if (destinations.Count == 0 || destinations.All(item => item.Value.Count == 0))
         {
             throw new ArgumentException("El análisis no contiene corredores destino.", nameof(analysis));
         }
-        if (analysis.ResolvedRowNumbersByBroker.Any(item => item.Value.Count == 0))
+        if (destinations.Any(item => item.Value.Count == 0))
             throw new ArgumentException("El análisis contiene un corredor destino sin filas.", nameof(analysis));
         var availableRows = sourceWorkbook.Rows.Select(row => row.RowNumber).ToHashSet();
-        var distributedRows = analysis.ResolvedRowNumbersByBroker.Values
+        var distributedRows = destinations.Values
             .SelectMany(rows => rows)
             .Distinct()
             .ToList();
@@ -42,7 +46,7 @@ public sealed class ExpirationsGenerationContext
         var catalogById = brokerCatalog
             .GroupBy(item => item.BrokerId)
             .ToDictionary(group => group.Key, group => group.ToList());
-        foreach (var brokerId in analysis.ResolvedRowNumbersByBroker.Keys)
+        foreach (var brokerId in destinations.Keys.Select(key => key.BrokerId).Distinct())
         {
             if (!catalogById.TryGetValue(brokerId, out var matches) || matches.Count != 1)
                 throw new ArgumentException($"El corredor destino '{brokerId:D}' no existe de forma única en el catálogo.", nameof(brokerCatalog));
@@ -81,6 +85,7 @@ public sealed class ExpirationsGenerationBatch
     public string SourceWorkbookSha256 { get; init; } = string.Empty;
     public string OutputDirectory { get; init; } = string.Empty;
     public IReadOnlySet<Guid> ParticipatingBrokerIds { get; init; } = new HashSet<Guid>();
+    public IReadOnlyList<ExpirationsRequiredAttachmentSlot> RequiredAttachmentSlots { get; init; } = [];
     public IReadOnlyList<ExpirationsGeneratedFile> Files { get; init; } = [];
     public IReadOnlyList<string> Warnings { get; init; } = [];
 }
@@ -91,12 +96,28 @@ public sealed class ExpirationsGeneratedFile
     public string BrokerName { get; init; } = string.Empty;
     public string OutputPath { get; init; } = string.Empty;
     public ExpirationsGeneratedFileVariant Variant { get; init; }
+    public ExpirationsDestinationGroup DestinationGroup { get; init; } = ExpirationsDestinationGroup.Principal;
+    public ExpirationsAttachmentSlotKey? ReplacesSlot { get; init; }
     public int RowCount { get; init; }
     public string Sha256 { get; init; } = string.Empty;
     public IReadOnlyList<uint> SourceRowNumbers { get; init; } = [];
     public IReadOnlyList<string> Warnings { get; init; } = [];
     public bool IsManuallyEdited { get; init; }
     public bool RequiresReview { get; init; }
+}
+
+public readonly record struct ExpirationsAttachmentSlotKey(
+    Guid BrokerId,
+    ExpirationsDestinationGroup DestinationGroup,
+    ExpirationsGeneratedFileVariant ExpectedVariant);
+
+public sealed record ExpirationsRequiredAttachmentSlot(
+    Guid BrokerId,
+    ExpirationsDestinationGroup DestinationGroup,
+    ExpirationsGeneratedFileVariant ExpectedVariant)
+{
+    public ExpirationsAttachmentSlotKey Key => new(BrokerId, DestinationGroup, ExpectedVariant);
+    public string DisplayName => ExpirationsDestinationGroups.DisplayName(DestinationGroup);
 }
 
 public enum ExpirationsGeneratedFileVariant

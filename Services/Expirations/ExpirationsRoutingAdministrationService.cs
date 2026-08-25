@@ -17,12 +17,27 @@ public interface IExpirationsRoutingAdministrationService
         ExpirationsAssociationKind kind,
         string value,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> CreateAssociationWithDestinationAsync(
+        Guid brokerId,
+        ExpirationsAssociationKind kind,
+        string value,
+        ExpirationsDestinationGroup destinationGroup,
+        CancellationToken cancellationToken = default) =>
+        CreateAssociationAsync(brokerId, kind, value, cancellationToken);
     Task<ExpirationsRoutingAdministrationResult> EditAssociationAsync(
         Guid associationId,
         ExpirationsAssociationKind kind,
         string value,
         string expectedUpdateTime,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> EditAssociationWithDestinationAsync(
+        Guid associationId,
+        ExpirationsAssociationKind kind,
+        string value,
+        ExpirationsDestinationGroup destinationGroup,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        EditAssociationAsync(associationId, kind, value, expectedUpdateTime, cancellationToken);
     Task<ExpirationsRoutingAdministrationResult> SetAssociationActiveAsync(
         Guid associationId,
         bool isActive,
@@ -33,6 +48,13 @@ public interface IExpirationsRoutingAdministrationService
         Guid destinationBrokerId,
         string expectedUpdateTime,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> ReassignWithDestinationAsync(
+        Guid associationId,
+        Guid destinationBrokerId,
+        ExpirationsDestinationGroup destinationGroup,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        ReassignAsync(associationId, destinationBrokerId, expectedUpdateTime, cancellationToken);
     Task<ExpirationsRoutingAdministrationResult> DeleteAssociationAsync(
         Guid associationId,
         string expectedUpdateTime,
@@ -41,11 +63,28 @@ public interface IExpirationsRoutingAdministrationService
         Guid identifierId,
         string expectedUpdateTime,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> ConfirmObservedIdentifierWithDestinationAsync(
+        Guid identifierId,
+        ExpirationsDestinationGroup destinationGroup,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        ConfirmObservedIdentifierAsync(identifierId, expectedUpdateTime, cancellationToken);
     Task<ExpirationsRoutingAdministrationResult> ReassignAndConfirmObservedIdentifierAsync(
         Guid identifierId,
         Guid destinationBrokerId,
         string expectedUpdateTime,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsRoutingAdministrationResult> ReassignAndConfirmObservedIdentifierWithDestinationAsync(
+        Guid identifierId,
+        Guid destinationBrokerId,
+        ExpirationsDestinationGroup destinationGroup,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        ReassignAndConfirmObservedIdentifierAsync(
+            identifierId,
+            destinationBrokerId,
+            expectedUpdateTime,
+            cancellationToken);
     Task<ExpirationsRoutingAdministrationResult> IgnoreObservedIdentifierAsync(
         Guid identifierId,
         string expectedUpdateTime,
@@ -94,6 +133,13 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             Task.FromResult<IReadOnlyList<FirestoreStoredDocument<ExpirationsObservedIdentifier>>>([]);
         await Task.WhenAll(associationsTask, brokersTask, observedTask);
         var brokers = (await brokersTask).ToDictionary(item => item.BrokerId);
+        var destinationPolicy = new ExpirationsDestinationRoutingPolicy(brokers.Values.Select(item =>
+            new ExpirationsBrokerCatalogItem
+            {
+                BrokerId = item.BrokerId,
+                Name = item.Name,
+                IsActive = item.IsActive
+            }));
         var associationItems = await associationsTask;
         var observedDocuments = await observedTask;
         var associationNormalizedValues = associationItems
@@ -107,6 +153,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
 
         foreach (var broker in brokers.Values)
         {
+            var masterGroups = ExpirationsDestinationRoutingPolicy.AvailableGroupsForBrokerName(broker.Name);
             result.Add(new ExpirationsKnownIdentifierAdministrationItem
             {
                 BrokerId = broker.BrokerId,
@@ -119,6 +166,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 OriginText = "Maestro",
                 StatusText = broker.IsActive ? "En uso" : "Inactivo",
                 UpdatedAtUtc = broker.ProfileUpdatedAtUtc,
+                DestinationGroup = masterGroups.Count == 1 ? masterGroups[0] : null,
                 IsMaster = true
             });
         }
@@ -137,6 +185,11 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 OriginText = item.OriginText,
                 StatusText = item.Association.IsActive ? "En uso" : "Inactivo",
                 UpdatedAtUtc = item.Association.UpdatedAtUtc,
+                DestinationGroup = item.Association.DestinationGroup ??
+                    destinationPolicy.InferDeterministicGroup(
+                        item.Association.BrokerId,
+                        Normalize(item.Association.NormalizedValue, item.Association.Value),
+                        out _),
                 AssociationItem = item
             }));
 
@@ -277,6 +330,21 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             kind,
             value,
             ExpirationsAssociationOrigin.ManuallyAdded,
+            ExpirationsDestinationGroup.Principal,
+            cancellationToken);
+
+    public Task<ExpirationsRoutingAdministrationResult> CreateAssociationWithDestinationAsync(
+        Guid brokerId,
+        ExpirationsAssociationKind kind,
+        string value,
+        ExpirationsDestinationGroup destinationGroup,
+        CancellationToken cancellationToken = default) =>
+        CreateAssociationCoreAsync(
+            brokerId,
+            kind,
+            value,
+            ExpirationsAssociationOrigin.ManuallyAdded,
+            destinationGroup,
             cancellationToken);
 
     private async Task<ExpirationsRoutingAdministrationResult> CreateAssociationCoreAsync(
@@ -284,6 +352,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         ExpirationsAssociationKind kind,
         string value,
         ExpirationsAssociationOrigin origin,
+        ExpirationsDestinationGroup destinationGroup,
         CancellationToken cancellationToken)
     {
         var validation = ValidateAssociationInput(kind, value);
@@ -296,6 +365,13 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 ExpirationsRoutingAdministrationOutcome.Rejected,
                 "El corredor seleccionado no existe o está inactivo en Vencimientos.");
         }
+        if (!ExpirationsDestinationRoutingPolicy.AvailableGroupsForBrokerName(broker.Name)
+            .Contains(destinationGroup))
+        {
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Rejected,
+                "El archivo destino seleccionado no corresponde al corredor.");
+        }
 
         var now = _timeProvider.GetUtcNow();
         var association = new ExpirationsBrokerAssociation
@@ -306,6 +382,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             Value = value.Trim(),
             NormalizedValue = _normalizer.Normalize(value),
             Origin = origin,
+            DestinationGroup = destinationGroup,
             IsActive = true,
             CreatedAtUtc = now,
             UpdatedAtUtc = now
@@ -338,6 +415,26 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         string expectedUpdateTime,
         CancellationToken cancellationToken = default)
     {
+        var stored = await _associations.GetAsync(associationId, cancellationToken);
+        if (stored is null)
+            return Result(ExpirationsRoutingAdministrationOutcome.NotFound, "La asociación ya no existe.");
+        return await EditAssociationWithDestinationAsync(
+            associationId,
+            kind,
+            value,
+            stored.Value.DestinationGroup ?? ExpirationsDestinationGroup.Principal,
+            expectedUpdateTime,
+            cancellationToken);
+    }
+
+    public async Task<ExpirationsRoutingAdministrationResult> EditAssociationWithDestinationAsync(
+        Guid associationId,
+        ExpirationsAssociationKind kind,
+        string value,
+        ExpirationsDestinationGroup destinationGroup,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default)
+    {
         var validation = ValidateAssociationInput(kind, value);
         if (validation is not null)
             return validation;
@@ -351,6 +448,15 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         candidate.Kind = kind;
         candidate.Value = value.Trim();
         candidate.NormalizedValue = _normalizer.Normalize(value);
+        candidate.DestinationGroup = destinationGroup;
+        var broker = await _brokers.GetAsync(candidate.BrokerId, cancellationToken);
+        if (broker is null || !ExpirationsDestinationRoutingPolicy.AvailableGroupsForBrokerName(broker.Name)
+            .Contains(destinationGroup))
+        {
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Rejected,
+                "El archivo destino seleccionado no corresponde al corredor.");
+        }
         if (candidate.NormalizedValue.Length == 0)
             return Result(ExpirationsRoutingAdministrationOutcome.Rejected, "Digite un valor identificable.");
         var conflict = await ValidateAssociationActivationAsync(candidate, associationId, cancellationToken);
@@ -399,6 +505,19 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         Guid associationId,
         Guid destinationBrokerId,
         string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        await ReassignWithDestinationAsync(
+            associationId,
+            destinationBrokerId,
+            ExpirationsDestinationGroup.Principal,
+            expectedUpdateTime,
+            cancellationToken);
+
+    public async Task<ExpirationsRoutingAdministrationResult> ReassignWithDestinationAsync(
+        Guid associationId,
+        Guid destinationBrokerId,
+        ExpirationsDestinationGroup destinationGroup,
+        string expectedUpdateTime,
         CancellationToken cancellationToken = default)
     {
         var storedTask = _associations.GetAsync(associationId, cancellationToken);
@@ -415,10 +534,22 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 ExpirationsRoutingAdministrationOutcome.Rejected,
                 "El corredor de destino no existe o está inactivo en Vencimientos.");
         if (stored.Value.BrokerId == destinationBrokerId)
-            return Result(ExpirationsRoutingAdministrationOutcome.Rejected, "La asociación ya pertenece a ese corredor.");
+        {
+            if (stored.Value.DestinationGroup == destinationGroup)
+                return Result(ExpirationsRoutingAdministrationOutcome.Rejected, "La asociación ya usa ese corredor y archivo destino.");
+        }
+        if (destination is not null &&
+            !ExpirationsDestinationRoutingPolicy.AvailableGroupsForBrokerName(destination.Name)
+                .Contains(destinationGroup))
+        {
+            return Result(
+                ExpirationsRoutingAdministrationOutcome.Rejected,
+                "El archivo destino seleccionado no corresponde al corredor.");
+        }
 
         var candidate = Copy(stored.Value);
         candidate.BrokerId = destinationBrokerId;
+        candidate.DestinationGroup = destinationGroup;
         var conflict = await ValidateAssociationActivationAsync(candidate, associationId, cancellationToken);
         if (conflict is not null)
             return conflict;
@@ -457,6 +588,17 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
     public async Task<ExpirationsRoutingAdministrationResult> ConfirmObservedIdentifierAsync(
         Guid identifierId,
         string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        await ConfirmObservedIdentifierWithDestinationAsync(
+            identifierId,
+            ExpirationsDestinationGroup.Principal,
+            expectedUpdateTime,
+            cancellationToken);
+
+    public async Task<ExpirationsRoutingAdministrationResult> ConfirmObservedIdentifierWithDestinationAsync(
+        Guid identifierId,
+        ExpirationsDestinationGroup destinationGroup,
+        string expectedUpdateTime,
         CancellationToken cancellationToken = default)
     {
         var observed = await GetObservedAsync(identifierId, expectedUpdateTime, cancellationToken);
@@ -467,12 +609,26 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             observed.Document.Value.Kind,
             observed.Document.Value.Value,
             ExpirationsAssociationOrigin.ManuallyConfirmed,
+            destinationGroup,
             cancellationToken);
     }
 
     public async Task<ExpirationsRoutingAdministrationResult> ReassignAndConfirmObservedIdentifierAsync(
         Guid identifierId,
         Guid destinationBrokerId,
+        string expectedUpdateTime,
+        CancellationToken cancellationToken = default) =>
+        await ReassignAndConfirmObservedIdentifierWithDestinationAsync(
+            identifierId,
+            destinationBrokerId,
+            ExpirationsDestinationGroup.Principal,
+            expectedUpdateTime,
+            cancellationToken);
+
+    public async Task<ExpirationsRoutingAdministrationResult> ReassignAndConfirmObservedIdentifierWithDestinationAsync(
+        Guid identifierId,
+        Guid destinationBrokerId,
+        ExpirationsDestinationGroup destinationGroup,
         string expectedUpdateTime,
         CancellationToken cancellationToken = default)
     {
@@ -484,6 +640,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
             observed.Document!.Value.Kind,
             observed.Document.Value.Value,
             ExpirationsAssociationOrigin.ManuallyConfirmed,
+            destinationGroup,
             cancellationToken);
         if (!created.WasPersisted)
             return created;
@@ -700,6 +857,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         Value = value.Value,
         NormalizedValue = value.NormalizedValue,
         Origin = value.Origin,
+        DestinationGroup = value.DestinationGroup,
         IsActive = value.IsActive,
         CreatedAtUtc = value.CreatedAtUtc,
         UpdatedAtUtc = value.UpdatedAtUtc

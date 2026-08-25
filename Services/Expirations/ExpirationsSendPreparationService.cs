@@ -85,6 +85,8 @@ public sealed class ExpirationsSendPreparationService
             .ToDictionary(group => group.Key, group => group.ToList());
         var participatingBrokerIds = batch.ParticipatingBrokerIds.Count > 0
             ? batch.ParticipatingBrokerIds.ToHashSet()
+            : batch.RequiredAttachmentSlots.Count > 0
+                ? batch.RequiredAttachmentSlots.Select(slot => slot.BrokerId).ToHashSet()
             : batch.Files.Select(file => file.BrokerId).ToHashSet();
         var targets = selectedBrokerIds is null
             ? participatingBrokerIds.OrderBy(id => id).ToList()
@@ -117,7 +119,7 @@ public sealed class ExpirationsSendPreparationService
                 ValidateEligibilityFiles(batch, broker, files, eligibilityErrors);
                 if (eligibilityErrors.Count == 0)
                     eligibleBrokerIds.Add(brokerId);
-                ValidateRequiredFiles(batch.Process, broker, files, itemErrors);
+                ValidateRequiredFiles(batch, broker, files, itemErrors);
             }
             else
             {
@@ -271,24 +273,32 @@ public sealed class ExpirationsSendPreparationService
     }
 
     private static void ValidateRequiredFiles(
-        ExpirationsProcess process,
+        ExpirationsGenerationBatch batch,
         ExpirationsBrokerCatalogItem broker,
         IReadOnlyList<ExpirationsGeneratedFile> files,
         ICollection<string> errors)
     {
-        var required = RequiredVariants(process, broker);
-        foreach (var variant in required)
+        var required = RequiredSlots(batch, broker);
+        var usePersistedSlotNames = batch.RequiredAttachmentSlots.Count > 0;
+        foreach (var slot in required)
         {
-            var count = files.Count(file => file.Variant == variant);
-            if (count == 0)
-                errors.Add($"Falta el archivo obligatorio {VariantName(variant)}.");
-            else if (count > 1)
-                errors.Add($"El archivo obligatorio {VariantName(variant)} está duplicado.");
+            var automaticCount = files.Count(file => IsAutomaticForSlot(file, slot.Key));
+            var replacementCount = files.Count(file => IsReplacementForSlot(file, slot.Key));
+            if (automaticCount + replacementCount == 0)
+                errors.Add(MissingSlotMessage(slot, usePersistedSlotNames));
+            if (automaticCount > 1 || replacementCount > 1)
+                errors.Add($"El archivo {SlotName(slot, usePersistedSlotNames)} está duplicado.");
         }
         foreach (var generated in files.Where(file => file.Variant != ExpirationsGeneratedFileVariant.Manual))
         {
-            if (!required.Contains(generated.Variant))
-                errors.Add($"La variante {VariantName(generated.Variant)} no corresponde al corredor en este proceso.");
+            if (!required.Any(slot => IsAutomaticForSlot(generated, slot.Key)))
+                errors.Add($"El archivo {ExpirationsDestinationGroups.DisplayName(generated.DestinationGroup)} " +
+                           "no corresponde a un slot requerido del corredor en este proceso.");
+        }
+        foreach (var replacement in files.Where(file => file.ReplacesSlot.HasValue))
+        {
+            if (!required.Any(slot => slot.Key == replacement.ReplacesSlot!.Value))
+                errors.Add("Un archivo manual intenta reemplazar un slot que no pertenece al batch actual.");
         }
     }
 
@@ -298,19 +308,71 @@ public sealed class ExpirationsSendPreparationService
         IReadOnlyList<ExpirationsGeneratedFile> files,
         ICollection<string> errors)
     {
-        foreach (var variant in RequiredVariants(batch.Process, broker))
+        var usePersistedSlotNames = batch.RequiredAttachmentSlots.Count > 0;
+        foreach (var slot in RequiredSlots(batch, broker))
         {
-            var matches = files.Where(file => file.Variant == variant).ToList();
-            if (matches.Count != 1)
+            var automatic = files.Where(file => IsAutomaticForSlot(file, slot.Key)).ToList();
+            var replacements = files.Where(file => IsReplacementForSlot(file, slot.Key)).ToList();
+            if (automatic.Count + replacements.Count == 0 || automatic.Count > 1 || replacements.Count > 1)
             {
-                errors.Add(matches.Count == 0
-                    ? $"Falta el archivo obligatorio {VariantName(variant)}."
-                    : $"El archivo obligatorio {VariantName(variant)} está duplicado.");
+                errors.Add(automatic.Count + replacements.Count == 0
+                    ? MissingSlotMessage(slot, usePersistedSlotNames)
+                    : $"El archivo {SlotName(slot, usePersistedSlotNames)} está duplicado.");
                 continue;
             }
-            ValidateAttachments(batch, matches, errors);
+            ValidateAttachments(batch, automatic.Concat(replacements).ToList(), errors);
         }
     }
+
+    private static IReadOnlyList<ExpirationsRequiredAttachmentSlot> RequiredSlots(
+        ExpirationsGenerationBatch batch,
+        ExpirationsBrokerCatalogItem broker)
+    {
+        var persisted = batch.RequiredAttachmentSlots
+            .Where(slot => slot.BrokerId == broker.BrokerId)
+            .DistinctBy(slot => slot.Key)
+            .ToList();
+        return persisted.Count > 0
+            ? persisted
+            : RequiredVariants(batch.Process, broker)
+                .Select(variant => new ExpirationsRequiredAttachmentSlot(
+                    broker.BrokerId,
+                    ExpirationsDestinationGroup.Principal,
+                    variant))
+                .ToList();
+    }
+
+    private static bool IsAutomaticForSlot(
+        ExpirationsGeneratedFile file,
+        ExpirationsAttachmentSlotKey slot) =>
+        file.Variant == slot.ExpectedVariant &&
+        file.BrokerId == slot.BrokerId &&
+        file.DestinationGroup == slot.DestinationGroup &&
+        !file.ReplacesSlot.HasValue;
+
+    private static bool IsReplacementForSlot(
+        ExpirationsGeneratedFile file,
+        ExpirationsAttachmentSlotKey slot) =>
+        file.Variant == ExpirationsGeneratedFileVariant.Manual && file.ReplacesSlot == slot;
+
+    private static string SlotName(
+        ExpirationsRequiredAttachmentSlot slot,
+        bool usePersistedSlotNames)
+    {
+        var group = ExpirationsDestinationGroups.DisplayName(slot.DestinationGroup);
+        return slot.ExpectedVariant == ExpirationsGeneratedFileVariant.Standard
+            ? slot.DestinationGroup == ExpirationsDestinationGroup.Principal && !usePersistedSlotNames
+                ? "Standard"
+                : group
+            : $"{group} ({VariantName(slot.ExpectedVariant)})";
+    }
+
+    private static string MissingSlotMessage(
+        ExpirationsRequiredAttachmentSlot slot,
+        bool usePersistedSlotNames) =>
+        slot.DestinationGroup == ExpirationsDestinationGroup.Principal && !usePersistedSlotNames
+            ? $"Falta el archivo obligatorio {SlotName(slot, usePersistedSlotNames)}."
+            : $"Falta el archivo {SlotName(slot, usePersistedSlotNames)}.";
 
     private static IReadOnlyList<ExpirationsGeneratedFileVariant> RequiredVariants(
         ExpirationsProcess process,

@@ -77,7 +77,7 @@ service cloud.firestore {
         ]) &&
         request.resource.data.keys().hasOnly([
           'id', 'brokerId', 'kind', 'value', 'normalizedValue', 'isActive',
-          'createdAtUtc', 'updatedAtUtc', 'origin'
+          'createdAtUtc', 'updatedAtUtc', 'origin', 'destinationGroup'
         ]) &&
         request.resource.data.id is string &&
         request.resource.data.id == associationId &&
@@ -85,6 +85,10 @@ service cloud.firestore {
         request.resource.data.kind in ['Name', 'Alias', 'Code'] &&
         request.resource.data.get('origin', 'Confirmed') in [
           'Confirmed', 'Imported', 'ManuallyConfirmed', 'ManuallyAdded'
+        ] &&
+        request.resource.data.get('destinationGroup', 'Principal') in [
+          'Principal', 'Personales', 'Generales', 'Agencias', 'PcGuanacaste',
+          'ContadoCoriMotors', 'VariosCoriMotors', 'HernanVarela'
         ] &&
         request.resource.data.value is string &&
         request.resource.data.normalizedValue is string &&

@@ -43,6 +43,8 @@ public sealed class ExpirationsNextMonthPreflightResult
     public ExpirationsPremiumColumnResolution PremiumColumns { get; init; } = new();
     public IReadOnlyDictionary<Guid, ExpirationsPremiumTotalsPlan> PremiumTotalsPlansByBrokerId { get; init; } =
         new Dictionary<Guid, ExpirationsPremiumTotalsPlan>();
+    public IReadOnlyDictionary<ExpirationsDestinationKey, ExpirationsPremiumTotalsPlan> PremiumTotalsPlansByDestination { get; init; } =
+        new Dictionary<ExpirationsDestinationKey, ExpirationsPremiumTotalsPlan>();
     public Guid SpecialBrokerId { get; init; }
     public ExpirationsFelixGenerationPlan? FelixPlan { get; init; }
 }
@@ -50,11 +52,13 @@ public sealed class ExpirationsNextMonthPreflightResult
 public sealed record ExpirationsGeneratedFileNameRequest(
     Guid BrokerId,
     string BrokerName,
-    ExpirationsGeneratedFileVariant Variant);
+    ExpirationsGeneratedFileVariant Variant,
+    ExpirationsDestinationGroup DestinationGroup = ExpirationsDestinationGroup.Principal);
 
 public sealed record ExpirationsGeneratedFileNameKey(
     Guid BrokerId,
-    ExpirationsGeneratedFileVariant Variant);
+    ExpirationsGeneratedFileVariant Variant,
+    ExpirationsDestinationGroup DestinationGroup = ExpirationsDestinationGroup.Principal);
 
 public sealed record ExpirationsMonthOption(int Month, string DisplayName);
 

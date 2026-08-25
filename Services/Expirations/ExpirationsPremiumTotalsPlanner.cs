@@ -89,15 +89,13 @@ public sealed class ExpirationsPremiumTotalsPlanner(
                 columns.PremiumColumnReference,
                 columns.CurrencyColumnReference,
                 dataFirstRow,
-                dataLastRow,
-                crcLabels),
+                ExpirationsCurrencyClassifier.FormulaLabels(ExpirationsCurrency.Crc)),
             UsdFormula = BuildFormula(
                 worksheetName,
                 columns.PremiumColumnReference,
                 columns.CurrencyColumnReference,
                 dataFirstRow,
-                dataLastRow,
-                usdLabels)
+                ExpirationsCurrencyClassifier.FormulaLabels(ExpirationsCurrency.Usd))
         };
     }
 
@@ -122,7 +120,6 @@ public sealed class ExpirationsPremiumTotalsPlanner(
         string premiumColumn,
         string currencyColumn,
         uint firstRow,
-        uint lastRow,
         IEnumerable<string> labels)
     {
         var criteria = labels.ToArray();
@@ -130,11 +127,15 @@ public sealed class ExpirationsPremiumTotalsPlanner(
             return "0";
         var escapedSheet = worksheetName.Replace("'", "''", StringComparison.Ordinal);
         var sheetReference = $"'{escapedSheet}'!";
-        var premiumRange = $"{sheetReference}${premiumColumn}${firstRow}:${premiumColumn}${lastRow}";
-        var currencyRange = $"{sheetReference}${currencyColumn}${firstRow}:${currencyColumn}${lastRow}";
-        return string.Join(
-            "+",
-            criteria.Select(label =>
-                $"SUMPRODUCT(--({currencyRange}=\"{label.Replace("\"", "\"\"", StringComparison.Ordinal)}\"),{premiumRange})"));
+        var premiumColumnRange = $"{sheetReference}${premiumColumn}:${premiumColumn}";
+        var currencyColumnRange = $"{sheetReference}${currencyColumn}:${currencyColumn}";
+        var lastRow = $"MAX({firstRow},LOOKUP(2,1/({premiumColumnRange}<>\"\"),ROW({premiumColumnRange})))";
+        var premiumRange = $"{sheetReference}${premiumColumn}${firstRow}:INDEX({premiumColumnRange},{lastRow})";
+        var currencyRange = $"{sheetReference}${currencyColumn}${firstRow}:INDEX({currencyColumnRange},{lastRow})";
+        var criteriaArray = string.Join(",", criteria.Select(label =>
+            $"\"{label.Replace("\"", "\"\"", StringComparison.Ordinal)}\""));
+        return "SUMPRODUCT(--ISNUMBER(MATCH(" +
+               $"UPPER(TRIM(SUBSTITUTE({currencyRange},CHAR(160),\" \")))," +
+               $"{{{criteriaArray}}},0)),{premiumRange})";
     }
 }

@@ -19,6 +19,8 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
     private readonly Action<ExpirationsGeneratedFile, string> _persistReplacement;
     private readonly Action<ExpirationsGeneratedFile> _unlinkFile;
     private readonly Func<string, ExpirationsManualFileAddResult> _addManualFile;
+    private readonly Func<string, ExpirationsAttachmentSlotKey?, ExpirationsManualFileAddResult>? _addManualFileWithTarget;
+    private readonly IReadOnlyList<ExpirationsRequiredAttachmentSlot> _requiredSlots;
     private readonly Func<Task> _afterMutation;
     private readonly bool _isParticipant;
 
@@ -31,7 +33,9 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
         Action<ExpirationsGeneratedFile> unlinkFile,
         Func<string, ExpirationsManualFileAddResult> addManualFile,
         Func<Task> afterMutation,
-        bool isParticipant = true)
+        bool isParticipant = true,
+        Func<string, ExpirationsAttachmentSlotKey?, ExpirationsManualFileAddResult>? addManualFileWithTarget = null,
+        IReadOnlyList<ExpirationsRequiredAttachmentSlot>? requiredSlots = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(brokerName);
         _brokerName = brokerName;
@@ -41,6 +45,8 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
         _persistReplacement = persistReplacement ?? throw new ArgumentNullException(nameof(persistReplacement));
         _unlinkFile = unlinkFile ?? throw new ArgumentNullException(nameof(unlinkFile));
         _addManualFile = addManualFile ?? throw new ArgumentNullException(nameof(addManualFile));
+        _addManualFileWithTarget = addManualFileWithTarget;
+        _requiredSlots = requiredSlots ?? [];
         _afterMutation = afterMutation ?? throw new ArgumentNullException(nameof(afterMutation));
         _isParticipant = isParticipant;
         InitializeComponent();
@@ -49,6 +55,8 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
     }
 
     public ObservableCollection<ExpirationsGeneratedFileDisplay> Files { get; } = [];
+    public ObservableCollection<ExpirationsManualTargetOption> ManualTargetOptions { get; } = [];
+    public ExpirationsManualTargetOption? SelectedManualTarget { get; set; }
     public string TitleText => $"Archivos asociados — {_brokerName}";
     public string FileCountText => Files.Count == 1 ? "1 archivo asociado" : $"{Files.Count} archivos asociados";
     public string EmptyFilesText => _isParticipant
@@ -213,7 +221,9 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
         };
         if (dialog.ShowDialog(this) != true)
             return;
-        var result = _addManualFile(dialog.FileName);
+        var result = _addManualFileWithTarget is null
+            ? _addManualFile(dialog.FileName)
+            : _addManualFileWithTarget(dialog.FileName, SelectedManualTarget?.SlotKey);
         if (!result.Succeeded)
         {
             AppDialog.Show(result.ErrorMessage, "No se pudo agregar el archivo",
@@ -240,8 +250,38 @@ public partial class ExpirationsGeneratedFilesWindow : Window, INotifyPropertyCh
             Files.Add(new ExpirationsGeneratedFileDisplay(file));
         }
         GeneratedFilesGrid?.Items.Refresh();
+        RefreshManualTargets();
         OnPropertyChanged(nameof(FileCountText));
         OnPropertyChanged(nameof(EmptyFilesVisibility));
+    }
+
+    private void RefreshManualTargets()
+    {
+        ManualTargetOptions.Clear();
+        var additional = new ExpirationsManualTargetOption(null, "Archivo adicional");
+        ManualTargetOptions.Add(additional);
+        foreach (var slot in _requiredSlots.DistinctBy(slot => slot.Key))
+        {
+            ManualTargetOptions.Add(new ExpirationsManualTargetOption(
+                slot.Key,
+                $"Reemplaza: {slot.DisplayName}" +
+                (slot.ExpectedVariant == ExpirationsGeneratedFileVariant.Standard
+                    ? string.Empty
+                    : $" ({slot.ExpectedVariant})")));
+        }
+        var files = _loadFiles();
+        var missing = _requiredSlots.Where(slot =>
+                !files.Any(file =>
+                    (file.Variant == slot.ExpectedVariant &&
+                     file.DestinationGroup == slot.DestinationGroup &&
+                     !file.ReplacesSlot.HasValue) ||
+                    file.ReplacesSlot == slot.Key))
+            .DistinctBy(slot => slot.Key)
+            .ToList();
+        SelectedManualTarget = missing.Count == 1
+            ? ManualTargetOptions.First(option => option.SlotKey == missing[0].Key)
+            : additional;
+        OnPropertyChanged(nameof(SelectedManualTarget));
     }
 
     private static void ShowEditStartError(WorkbookEditStartResult result)
@@ -301,6 +341,9 @@ public sealed class ExpirationsGeneratedFileDisplay
         Path = file.OutputPath;
         FileName = string.IsNullOrWhiteSpace(Path) ? "(sin nombre)" : System.IO.Path.GetFileName(Path);
         OriginText = file.Variant == ExpirationsGeneratedFileVariant.Manual ? "Manual" : "Generado";
+        DestinationText = file.ReplacesSlot is { } replacement
+            ? $"Reemplaza {ExpirationsDestinationGroups.DisplayName(replacement.DestinationGroup)}"
+            : ExpirationsDestinationGroups.DisplayName(file.DestinationGroup);
         StatusText = GeneratedFileViewerService.GetAvailability(Path) == GeneratedFileAvailability.Available
             ? "Disponible"
             : "No encontrado";
@@ -325,7 +368,12 @@ public sealed class ExpirationsGeneratedFileDisplay
     public string Path { get; }
     public string FileName { get; }
     public string OriginText { get; }
+    public string DestinationText { get; }
     public string ModifiedText { get; }
     public string StatusText { get; }
     public string ReviewText { get; }
 }
+
+public sealed record ExpirationsManualTargetOption(
+    ExpirationsAttachmentSlotKey? SlotKey,
+    string DisplayName);

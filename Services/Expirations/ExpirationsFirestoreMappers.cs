@@ -242,8 +242,9 @@ internal sealed class ExpirationsBrokerProfileMapper : IFirestoreEntityMapper<Ex
 
 internal sealed class ExpirationsBrokerAssociationMapper : IFirestoreEntityMapper<ExpirationsBrokerAssociation>
 {
-    public IReadOnlyDictionary<string, FirestoreRestValue> ToFields(ExpirationsBrokerAssociation value) =>
-        new Dictionary<string, FirestoreRestValue>(StringComparer.Ordinal)
+    public IReadOnlyDictionary<string, FirestoreRestValue> ToFields(ExpirationsBrokerAssociation value)
+    {
+        var fields = new Dictionary<string, FirestoreRestValue>(StringComparer.Ordinal)
         {
             ["id"] = ExpirationsFirestoreFields.Guid(value.Id),
             ["brokerId"] = ExpirationsFirestoreFields.Guid(value.BrokerId),
@@ -255,6 +256,10 @@ internal sealed class ExpirationsBrokerAssociationMapper : IFirestoreEntityMappe
             ["createdAtUtc"] = FirestoreRestValue.Timestamp(value.CreatedAtUtc),
             ["updatedAtUtc"] = FirestoreRestValue.Timestamp(value.UpdatedAtUtc)
         };
+        if (value.DestinationGroup is { } destinationGroup)
+            fields["destinationGroup"] = FirestoreRestValue.String(destinationGroup.ToString());
+        return fields;
+    }
 
     public ExpirationsBrokerAssociation FromFields(IReadOnlyDictionary<string, FirestoreRestValue> fields)
     {
@@ -276,9 +281,29 @@ internal sealed class ExpirationsBrokerAssociationMapper : IFirestoreEntityMappe
             Value = fields.Required("value").RequireString("value"),
             NormalizedValue = fields.Required("normalizedValue").RequireString("normalizedValue"),
             Origin = ReadAssociationOrigin(fields),
+            DestinationGroup = ReadDestinationGroup(fields),
             IsActive = fields.Required("isActive").RequireBoolean("isActive"),
             CreatedAtUtc = fields.Required("createdAtUtc").RequireTimestamp("createdAtUtc"),
             UpdatedAtUtc = fields.Required("updatedAtUtc").RequireTimestamp("updatedAtUtc")
+        };
+    }
+
+    private static ExpirationsDestinationGroup? ReadDestinationGroup(
+        IReadOnlyDictionary<string, FirestoreRestValue> fields)
+    {
+        if (!fields.TryGetValue("destinationGroup", out var value))
+            return null;
+        return value.RequireString("destinationGroup") switch
+        {
+            nameof(ExpirationsDestinationGroup.Principal) => ExpirationsDestinationGroup.Principal,
+            nameof(ExpirationsDestinationGroup.Personales) => ExpirationsDestinationGroup.Personales,
+            nameof(ExpirationsDestinationGroup.Generales) => ExpirationsDestinationGroup.Generales,
+            nameof(ExpirationsDestinationGroup.Agencias) => ExpirationsDestinationGroup.Agencias,
+            nameof(ExpirationsDestinationGroup.PcGuanacaste) => ExpirationsDestinationGroup.PcGuanacaste,
+            nameof(ExpirationsDestinationGroup.ContadoCoriMotors) => ExpirationsDestinationGroup.ContadoCoriMotors,
+            nameof(ExpirationsDestinationGroup.VariosCoriMotors) => ExpirationsDestinationGroup.VariosCoriMotors,
+            nameof(ExpirationsDestinationGroup.HernanVarela) => ExpirationsDestinationGroup.HernanVarela,
+            _ => throw new InvalidDataException("El campo 'destinationGroup' contiene un destino no permitido.")
         };
     }
 

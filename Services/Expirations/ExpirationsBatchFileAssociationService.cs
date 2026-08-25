@@ -62,12 +62,22 @@ public sealed class ExpirationsBatchFileAssociationService
         ExpirationsGenerationBatch batch,
         Guid brokerId,
         string brokerName,
-        string sourcePath)
+        string sourcePath,
+        ExpirationsAttachmentSlotKey? replacesSlot = null)
     {
         ArgumentNullException.ThrowIfNull(batch);
         ArgumentException.ThrowIfNullOrWhiteSpace(brokerName);
         if (batch.Id == Guid.Empty || string.IsNullOrWhiteSpace(batch.OutputDirectory))
             return new ExpirationsManualFileAddResult(batch, null, "Primero genere un batch de Vencimientos.");
+        if (replacesSlot is { } replacement &&
+            (replacement.BrokerId != brokerId ||
+             !batch.RequiredAttachmentSlots.Any(slot => slot.Key == replacement)))
+        {
+            return new ExpirationsManualFileAddResult(
+                batch,
+                null,
+                "El archivo destino seleccionado no corresponde a un slot requerido del batch actual.");
+        }
 
         string sourceFullPath;
         string outputDirectory;
@@ -106,6 +116,8 @@ public sealed class ExpirationsBatchFileAssociationService
                 BrokerName = brokerName.Trim(),
                 OutputPath = destinationPath,
                 Variant = ExpirationsGeneratedFileVariant.Manual,
+                DestinationGroup = replacesSlot?.DestinationGroup ?? ExpirationsDestinationGroup.Principal,
+                ReplacesSlot = replacesSlot,
                 RowCount = 0,
                 SourceRowNumbers = [],
                 Sha256 = _hashService.ComputeSha256(destinationPath),
@@ -208,6 +220,7 @@ public sealed class ExpirationsBatchFileAssociationService
         SourceWorkbookSha256 = source.SourceWorkbookSha256,
         OutputDirectory = source.OutputDirectory,
         ParticipatingBrokerIds = source.ParticipatingBrokerIds.ToHashSet(),
+        RequiredAttachmentSlots = source.RequiredAttachmentSlots.ToList(),
         Files = files,
         Warnings = source.Warnings.ToList()
     };
@@ -222,6 +235,8 @@ public sealed class ExpirationsBatchFileAssociationService
         BrokerName = source.BrokerName,
         OutputPath = source.OutputPath,
         Variant = source.Variant,
+        DestinationGroup = source.DestinationGroup,
+        ReplacesSlot = source.ReplacesSlot,
         RowCount = source.RowCount,
         Sha256 = sha256 ?? source.Sha256,
         SourceRowNumbers = source.SourceRowNumbers.ToList(),

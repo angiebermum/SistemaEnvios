@@ -64,7 +64,12 @@ public sealed class ExpirationsNextMonthGenerationPreflightService(
             premiumColumnOptions);
         DemandResolvedColumns(columns);
 
-        var targetRows = context.Analysis.ResolvedRowNumbersByBroker
+        var rowsByDestination = context.Analysis.ResolvedRowNumbersByDestination.Count > 0
+            ? context.Analysis.ResolvedRowNumbersByDestination
+            : context.Analysis.ResolvedRowNumbersByBroker.ToDictionary(
+                item => new ExpirationsDestinationKey(item.Key, ExpirationsDestinationGroup.Principal),
+                item => item.Value);
+        var targetRows = rowsByDestination
             .Select(target => new
             {
                 target.Key,
@@ -87,7 +92,7 @@ public sealed class ExpirationsNextMonthGenerationPreflightService(
                 columns.CurrencyColumnReference,
                 cancellationToken);
         var inspectionsByRow = allInspections.ToDictionary(row => row.RowNumber);
-        var totalsPlans = new Dictionary<Guid, ExpirationsPremiumTotalsPlan>();
+        var totalsPlans = new Dictionary<ExpirationsDestinationKey, ExpirationsPremiumTotalsPlan>();
         foreach (var target in targetRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -102,13 +107,18 @@ public sealed class ExpirationsNextMonthGenerationPreflightService(
 
         var special = specialBrokers.Single();
         ExpirationsFelixGenerationPlan? felixPlan = null;
-        if (context.Analysis.ResolvedRowNumbersByBroker.TryGetValue(special.BrokerId, out var specialRows) &&
-            specialRows.Count > 0)
+        var specialRows = rowsByDestination
+            .Where(item => item.Key.BrokerId == special.BrokerId)
+            .SelectMany(item => item.Value)
+            .Distinct()
+            .Order()
+            .ToArray();
+        if (specialRows.Length > 0)
         {
             felixPlan = _felixSourceMappingService.CreatePlan(
                 context,
                 period,
-                specialRows.Distinct().Order().ToArray(),
+                specialRows,
                 columns,
                 cancellationToken);
         }
@@ -116,7 +126,10 @@ public sealed class ExpirationsNextMonthGenerationPreflightService(
         return new ExpirationsNextMonthPreflightResult
         {
             PremiumColumns = columns,
-            PremiumTotalsPlansByBrokerId = totalsPlans,
+            PremiumTotalsPlansByBrokerId = totalsPlans
+                .Where(item => item.Key.DestinationGroup == ExpirationsDestinationGroup.Principal)
+                .ToDictionary(item => item.Key.BrokerId, item => item.Value),
+            PremiumTotalsPlansByDestination = totalsPlans,
             SpecialBrokerId = special.BrokerId,
             FelixPlan = felixPlan
         };

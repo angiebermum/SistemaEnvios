@@ -75,9 +75,12 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
 
         var targets = BuildTargets(request.Context);
         var previousMonthFileNames = request.Context.Process == ExpirationsProcess.PreviousMonth
-            ? _fileNameService.CreateFileNames(
-                request.Context.Process,
-                targets.Select(target => target.Broker).ToList())
+            ? _fileNameService.CreatePreviousMonthFileNames(
+                targets.Select(target => new ExpirationsGeneratedFileNameRequest(
+                    target.Broker.BrokerId,
+                    target.Broker.Name,
+                    target.Variant,
+                    target.DestinationGroup)).ToList())
             : null;
         var nextMonthFileNames = request.Context.Process == ExpirationsProcess.NextMonth
             ? _fileNameService.CreateNextMonthFileNames(
@@ -85,7 +88,8 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                 targets.Select(target => new ExpirationsGeneratedFileNameRequest(
                     target.Broker.BrokerId,
                     target.Broker.Name,
-                    target.Variant)).ToList())
+                    target.Variant,
+                    target.DestinationGroup)).ToList())
             : null;
         var batchId = Guid.NewGuid();
         var stagingRoot = Path.Combine(parentDirectory, $".ECS-expirations-generation-{batchId:N}");
@@ -99,12 +103,18 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var target = targets[index];
-                progress?.Report(new ExpirationsGenerationProgress(index + 1, targets.Count, target.Broker.Name));
+                progress?.Report(new ExpirationsGenerationProgress(
+                    index + 1,
+                    targets.Count,
+                    $"{target.Broker.Name} — {ExpirationsDestinationGroups.DisplayName(target.DestinationGroup)}"));
                 var fileName = request.Context.Process == ExpirationsProcess.PreviousMonth
-                    ? previousMonthFileNames![target.Broker.BrokerId]
+                    ? previousMonthFileNames![new ExpirationsDestinationKey(
+                        target.Broker.BrokerId,
+                        target.DestinationGroup)]
                     : nextMonthFileNames![new ExpirationsGeneratedFileNameKey(
                         target.Broker.BrokerId,
-                        target.Variant)];
+                        target.Variant,
+                        target.DestinationGroup)];
                 var outputPath = Path.Combine(stagedDirectory, fileName);
                 await GenerateTargetAsync(
                     request,
@@ -118,6 +128,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                     outputPath,
                     target.RowNumbers,
                     target.Variant,
+                    target.DestinationGroup,
                     _hashService.ComputeSha256(outputPath),
                     warnings));
             }
@@ -137,6 +148,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                 BrokerName = file.Broker.Name,
                 OutputPath = Path.Combine(finalDirectory, Path.GetFileName(file.StagedPath)),
                 Variant = file.Variant,
+                DestinationGroup = file.DestinationGroup,
                 RowCount = file.RowNumbers.Count,
                 Sha256 = file.Sha256,
                 SourceRowNumbers = file.RowNumbers,
@@ -153,6 +165,10 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                 ParticipatingBrokerIds = targets
                     .Select(target => target.Broker.BrokerId)
                     .ToHashSet(),
+                RequiredAttachmentSlots = targets.Select(target => new ExpirationsRequiredAttachmentSlot(
+                    target.Broker.BrokerId,
+                    target.DestinationGroup,
+                    target.Variant)).ToList(),
                 Files = files,
                 Warnings = files.SelectMany(file => file.Warnings).Distinct().ToList()
             };
@@ -194,6 +210,8 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                 request.Context.SourceWorkbook.HeaderRowNumber,
                 target.RowNumbers,
                 request.PremiumColumnOptions,
+                nextMonthPreflight?.PremiumTotalsPlansByDestination.GetValueOrDefault(
+                    new ExpirationsDestinationKey(target.Broker.BrokerId, target.DestinationGroup)) ??
                 nextMonthPreflight?.PremiumTotalsPlansByBrokerId.GetValueOrDefault(target.Broker.BrokerId));
             await Task.Run(
                 () => _nextMonthWorkbookGenerator.Generate(materialization, cancellationToken),
@@ -230,14 +248,21 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         var catalog = context.BrokerCatalog
             .GroupBy(item => item.BrokerId)
             .ToDictionary(group => group.Key, group => group.Single());
-        return context.Analysis.ResolvedRowNumbersByBroker
+        var rowsByDestination = context.Analysis.ResolvedRowNumbersByDestination.Count > 0
+            ? context.Analysis.ResolvedRowNumbersByDestination
+            : context.Analysis.ResolvedRowNumbersByBroker.ToDictionary(
+                item => new ExpirationsDestinationKey(item.Key, ExpirationsDestinationGroup.Principal),
+                item => item.Value);
+        return rowsByDestination
             .SelectMany(item => BuildBrokerTargets(
                 context.Process,
-                catalog[item.Key],
+                catalog[item.Key.BrokerId],
+                item.Key.DestinationGroup,
                 item.Value.Distinct().Order().ToArray()))
             .Where(target => target.RowNumbers.Count > 0)
             .OrderBy(target => target.Broker.Name, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(target => target.Broker.BrokerId)
+            .ThenBy(target => target.DestinationGroup)
             .ThenBy(target => target.Variant)
             .ToList();
     }
@@ -245,6 +270,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
     private static IEnumerable<GenerationTarget> BuildBrokerTargets(
         ExpirationsProcess process,
         ExpirationsBrokerCatalogItem broker,
+        ExpirationsDestinationGroup destinationGroup,
         IReadOnlyList<uint> rowNumbers)
     {
         if (process == ExpirationsProcess.PreviousMonth ||
@@ -253,6 +279,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
             yield return new GenerationTarget(
                 broker,
                 rowNumbers,
+                destinationGroup,
                 ExpirationsGeneratedFileVariant.Standard);
             yield break;
         }
@@ -260,10 +287,12 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         yield return new GenerationTarget(
             broker,
             rowNumbers,
+            destinationGroup,
             ExpirationsGeneratedFileVariant.FelixAlphabetical);
         yield return new GenerationTarget(
             broker,
             rowNumbers,
+            destinationGroup,
             ExpirationsGeneratedFileVariant.FelixExpirationDate);
     }
 
@@ -312,6 +341,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
     private sealed record GenerationTarget(
         ExpirationsBrokerCatalogItem Broker,
         IReadOnlyList<uint> RowNumbers,
+        ExpirationsDestinationGroup DestinationGroup,
         ExpirationsGeneratedFileVariant Variant);
 
     private sealed record StagedFile(
@@ -319,6 +349,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         string StagedPath,
         IReadOnlyList<uint> RowNumbers,
         ExpirationsGeneratedFileVariant Variant,
+        ExpirationsDestinationGroup DestinationGroup,
         string Sha256,
         IReadOnlyList<string> Warnings);
 }

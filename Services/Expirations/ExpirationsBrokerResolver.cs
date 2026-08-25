@@ -9,6 +9,7 @@ public sealed class ExpirationsBrokerResolver
     private readonly IReadOnlyList<ExpirationsExclusion> _exclusions;
     private readonly ExpirationsBrokerNormalizer _normalizer;
     private readonly IReadOnlyDictionary<Guid, bool> _brokerActivity;
+    private readonly ExpirationsDestinationRoutingPolicy _destinationPolicy;
 
     public ExpirationsBrokerResolver(
         IEnumerable<ExpirationsBrokerCatalogItem> catalog,
@@ -30,6 +31,7 @@ public sealed class ExpirationsBrokerResolver
         _brokerActivity = _catalog
             .GroupBy(item => item.BrokerId)
             .ToDictionary(group => group.Key, group => group.All(item => item.IsActive));
+        _destinationPolicy = new ExpirationsDestinationRoutingPolicy(_catalog, _normalizer);
     }
 
     public ExpirationsBrokerComponentResolution Resolve(ExpirationsBrokerComponent component)
@@ -101,6 +103,32 @@ public sealed class ExpirationsBrokerResolver
             };
         }
 
+        if (_destinationPolicy.TryResolveDirect(normalizedComponent, out var directDestination))
+        {
+            return ApplyDestination(BuildResolution(
+                component.RawValue,
+                normalizedComponent,
+                [directDestination.BrokerId],
+                [],
+                exactAssociations.Select(item => item.Association.Id),
+                "La regla especial de destino no identifica un corredor único."));
+        }
+        if (_destinationPolicy.TryResolveDirectConflict(
+                normalizedComponent,
+                out var conflictBrokerId,
+                out var conflictDiagnostic))
+        {
+            return new ExpirationsBrokerComponentResolution
+            {
+                RawValue = component.RawValue,
+                NormalizedValue = normalizedComponent,
+                Status = ExpirationsBrokerResolutionStatus.Ambiguous,
+                CandidateBrokerIds = [conflictBrokerId],
+                MatchedAssociationIds = exactAssociations.Select(item => item.Association.Id).Order().ToList(),
+                Diagnostics = [conflictDiagnostic]
+            };
+        }
+
         var exactCandidates = _catalog
             .Where(broker => string.Equals(
                 _normalizer.Normalize(broker.Name),
@@ -117,13 +145,13 @@ public sealed class ExpirationsBrokerResolver
             .ToHashSet();
         if (exactCandidates.Count > 0 || exactUnknown.Count > 0)
         {
-            return BuildResolution(
+            return ApplyDestination(BuildResolution(
                 component.RawValue,
                 normalizedComponent,
                 exactCandidates,
                 exactUnknown,
                 exactAssociations.Select(item => item.Association.Id),
-                "El componente coincide exactamente con más de un corredor distinto.");
+                "El componente coincide exactamente con más de un corredor distinto."));
         }
 
         var candidateBrokerIds = _catalog
@@ -142,13 +170,58 @@ public sealed class ExpirationsBrokerResolver
                 unknownBrokerIds.Add(item.Association.BrokerId);
         }
 
-        return BuildResolution(
+        return ApplyDestination(BuildResolution(
             component.RawValue,
             normalizedComponent,
             candidateBrokerIds,
             unknownBrokerIds,
             matchedAssociationIds,
-            "El componente coincide con más de un corredor distinto.");
+            "El componente coincide con más de un corredor distinto."));
+    }
+
+    private ExpirationsBrokerComponentResolution ApplyDestination(
+        ExpirationsBrokerComponentResolution resolution)
+    {
+        if (resolution.Status != ExpirationsBrokerResolutionStatus.Resolved ||
+            resolution.ResolvedBrokerId is not { } brokerId)
+        {
+            return resolution;
+        }
+
+        var matching = _associations.Where(association =>
+            association.IsActive && resolution.MatchedAssociationIds.Contains(association.Id));
+        var group = _destinationPolicy.ResolveGroup(
+            brokerId,
+            resolution.NormalizedValue,
+            matching,
+            out var diagnostic);
+        if (!group.HasValue)
+        {
+            return new ExpirationsBrokerComponentResolution
+            {
+                RawValue = resolution.RawValue,
+                NormalizedValue = resolution.NormalizedValue,
+                Status = ExpirationsBrokerResolutionStatus.Ambiguous,
+                CandidateBrokerIds = resolution.CandidateBrokerIds,
+                MatchedAssociationIds = resolution.MatchedAssociationIds,
+                UnknownCatalogBrokerIds = resolution.UnknownCatalogBrokerIds,
+                Diagnostics = [diagnostic ?? "No fue posible determinar el archivo destino."]
+            };
+        }
+
+        return new ExpirationsBrokerComponentResolution
+        {
+            RawValue = resolution.RawValue,
+            NormalizedValue = resolution.NormalizedValue,
+            Status = resolution.Status,
+            CandidateBrokerIds = resolution.CandidateBrokerIds,
+            ResolvedBrokerId = brokerId,
+            DestinationGroup = group,
+            MatchedAssociationIds = resolution.MatchedAssociationIds,
+            UnknownCatalogBrokerIds = resolution.UnknownCatalogBrokerIds,
+            Diagnostics = resolution.Diagnostics,
+            CanBeObservedAutomatically = resolution.CanBeObservedAutomatically
+        };
     }
 
     private ExpirationsBrokerComponentResolution BuildResolution(

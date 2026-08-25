@@ -148,6 +148,40 @@ public sealed class ExpirationsRoutingAdministrationTests
     }
 
     [Fact]
+    public async Task MultiGroupAssociationPersistsAndCanChangeDestinationLater()
+    {
+        var associations = new FakeAssociationRepository([]);
+        var service = Service(
+            associations,
+            new FakeExclusionRepository([]),
+            new FakeConfigurationService(BrokerConfiguration(
+                ShortBroker,
+                "Andrés Steimberg - Agent for EssentialGroupLA",
+                "andres@example.test")));
+
+        var created = await service.CreateAssociationWithDestinationAsync(
+            ShortBroker,
+            ExpirationsAssociationKind.Alias,
+            "NUEVOS XX AS35 - 200",
+            ExpirationsDestinationGroup.Agencias,
+            TestContext.Current.CancellationToken);
+        var stored = Assert.Single(associations.Documents);
+        var edited = await service.EditAssociationWithDestinationAsync(
+            stored.Value.Id,
+            stored.Value.Kind,
+            stored.Value.Value,
+            ExpirationsDestinationGroup.Personales,
+            stored.UpdateTime,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(created.WasPersisted);
+        Assert.True(edited.WasPersisted);
+        Assert.Equal(
+            ExpirationsDestinationGroup.Personales,
+            Assert.Single(associations.Documents).Value.DestinationGroup);
+    }
+
+    [Fact]
     public void AdministrationSearchFindsAssociationByValueTypeBrokerEmailAndBrokerFilter()
     {
         var state = new ExpirationsRoutingAdministrationState();

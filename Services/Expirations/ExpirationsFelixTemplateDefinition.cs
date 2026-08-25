@@ -4,7 +4,7 @@ namespace ECS.CommissionsMailer.Services.Expirations;
 
 public static class ExpirationsFelixTemplateDefinition
 {
-    public const string WorksheetName = "Hoja1";
+    public const string WorksheetName = "Detalle";
     public const string AlphabeticalTitle = "ORDENADO ALFABETICAMENTE";
     public const string ExpirationDateTitle = "ORDENADO POR VENCIMIENTO";
     public const string HiddenCurrencyHeader = "Moneda";

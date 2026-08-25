@@ -3,13 +3,16 @@ namespace ECS.CommissionsMailer.Models.Expirations;
 public sealed record ExpirationsManualResolutionOverride(
     uint RowNumber,
     int ComponentIndex,
-    Guid BrokerId);
+    Guid BrokerId,
+    ExpirationsDestinationGroup DestinationGroup = ExpirationsDestinationGroup.Principal);
 
 public sealed class ExpirationsDistributionPreviewItem
 {
     public Guid BrokerId { get; init; }
     public string BrokerName { get; init; } = string.Empty;
     public string PrimaryEmail { get; init; } = string.Empty;
+    public ExpirationsDestinationGroup DestinationGroup { get; init; }
+    public string DestinationGroupText => ExpirationsDestinationGroups.DisplayName(DestinationGroup);
     public int RowCount { get; init; }
     public IReadOnlyList<string> DetectedValues { get; init; } = [];
     public string DetectedValuesText => string.Join(", ", DetectedValues);
@@ -88,7 +91,8 @@ public sealed record ExpirationsAssociationConfirmation(
     uint RowNumber,
     int ComponentIndex,
     Guid BrokerId,
-    ExpirationsAssociationKind Kind);
+    ExpirationsAssociationKind Kind,
+    ExpirationsDestinationGroup DestinationGroup = ExpirationsDestinationGroup.Principal);
 
 public enum ExpirationsAssociationConfirmationOutcome
 {
@@ -128,6 +132,10 @@ public sealed record ExpirationsProcessOption(ExpirationsProcess Value, string D
 
 public sealed record ExpirationsAssociationKindOption(ExpirationsAssociationKind Value, string DisplayName);
 
+public sealed record ExpirationsDestinationGroupOption(
+    ExpirationsDestinationGroup Value,
+    string DisplayName);
+
 public sealed record ExpirationsBrokerChoice(Guid BrokerId, string Name, string PrimaryEmail)
 {
     public string DisplayText => PrimaryEmail.Length == 0 ? Name : $"{Name} — {PrimaryEmail}";
@@ -154,6 +162,9 @@ public sealed class ExpirationsAssociationAdministrationItem
         _ => "Confirmado"
     };
     public string StatusText => Association.IsActive ? "Activa" : "Inactiva";
+    public string DestinationGroupText => Association.DestinationGroup is { } group
+        ? ExpirationsDestinationGroups.DisplayName(group)
+        : "Por determinar";
 }
 
 public sealed class ExpirationsObservedIdentifierAdministrationItem
@@ -179,6 +190,10 @@ public sealed class ExpirationsKnownIdentifierAdministrationItem
     public ExpirationsAssociationAdministrationItem? AssociationItem { get; init; }
     public ExpirationsObservedIdentifierAdministrationItem? ObservedItem { get; init; }
     public bool IsMaster { get; init; }
+    public ExpirationsDestinationGroup? DestinationGroup { get; init; }
+    public string DestinationGroupText => DestinationGroup is { } group
+        ? ExpirationsDestinationGroups.DisplayName(group)
+        : IsObserved ? "Detectado" : "Por determinar";
     public string KindText => Kind switch
     {
         ExpirationsAssociationKind.Name => "Nombre",

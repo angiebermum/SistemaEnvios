@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using ECS.CommissionsMailer.Models.Expirations;
+using ECS.CommissionsMailer.Services.Expirations;
 using MessageBox = ECS.CommissionsMailer.Views.AppDialog;
 
 namespace ECS.CommissionsMailer.Views;
@@ -21,6 +22,7 @@ public partial class ExpirationsBrokerResolutionWindow : Window
 
     public Guid? SelectedBrokerId { get; private set; }
     public ExpirationsAssociationKind SelectedKind { get; private set; }
+    public ExpirationsDestinationGroup SelectedDestinationGroup { get; private set; }
 
     private void Confirm_Click(object sender, RoutedEventArgs e)
     {
@@ -38,6 +40,7 @@ public partial class ExpirationsBrokerResolutionWindow : Window
         }
         SelectedBrokerId = State.SelectedBroker.BrokerId;
         SelectedKind = State.SelectedKind.Value;
+        SelectedDestinationGroup = State.SelectedDestinationGroup!.Value;
         DialogResult = true;
     }
 }
@@ -46,6 +49,8 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
 {
     private ExpirationsBrokerChoice? _selectedBroker;
     private ExpirationsAssociationKindOption _selectedKind;
+    private ExpirationsDestinationGroupOption? _selectedDestinationGroup;
+    private readonly ExpirationsDestinationRoutingPolicy _destinationPolicy;
 
     public ExpirationsBrokerResolutionDialogState(
         ExpirationsPendingIssue issue,
@@ -53,7 +58,9 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
     {
         Issue = issue ?? throw new ArgumentNullException(nameof(issue));
         ArgumentNullException.ThrowIfNull(catalog);
-        Brokers = catalog
+        var catalogItems = catalog.ToList();
+        _destinationPolicy = new ExpirationsDestinationRoutingPolicy(catalogItems);
+        Brokers = catalogItems
             .Where(item => item.IsActive)
             .GroupBy(item => item.BrokerId)
             .Select(group => group.First())
@@ -79,6 +86,10 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
     public ExpirationsPendingIssue Issue { get; }
     public IReadOnlyList<ExpirationsBrokerChoice> Brokers { get; }
     public IReadOnlyList<ExpirationsAssociationKindOption> KindOptions { get; }
+    public IReadOnlyList<ExpirationsDestinationGroupOption> DestinationGroupOptions { get; private set; } = [];
+    public Visibility DestinationGroupVisibility => DestinationGroupOptions.Count > 1
+        ? Visibility.Visible
+        : Visibility.Collapsed;
     public Visibility AmbiguityWarningVisibility =>
         Issue.Status == ExpirationsBrokerResolutionStatus.Ambiguous
             ? Visibility.Visible
@@ -102,8 +113,9 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
         ? $"Valor que se asociará: {Issue.RawValue}\nSeleccione un corredor."
         : $"Valor que se asociará: {Issue.RawValue}\n" +
           $"Corredor: {SelectedBroker.DisplayText}\n" +
+          $"Archivo destino: {SelectedDestinationGroup?.DisplayName ?? "Seleccione un archivo"}\n" +
           $"Tipo: {SelectedKind.DisplayName}";
-    public bool CanConfirm => SelectedBroker is not null;
+    public bool CanConfirm => SelectedBroker is not null && SelectedDestinationGroup is not null;
 
     public ExpirationsBrokerChoice? SelectedBroker
     {
@@ -112,6 +124,31 @@ internal sealed class ExpirationsBrokerResolutionDialogState : INotifyPropertyCh
         {
             if (Equals(_selectedBroker, value)) return;
             _selectedBroker = value;
+            DestinationGroupOptions = value is null
+                ? []
+                : _destinationPolicy.AvailableGroups(value.BrokerId)
+                    .Select(group => new ExpirationsDestinationGroupOption(
+                        group,
+                        ExpirationsDestinationGroups.DisplayName(group)))
+                    .ToList();
+            SelectedDestinationGroup = DestinationGroupOptions.Count == 1
+                ? DestinationGroupOptions[0]
+                : null;
+            Notify();
+            Notify(nameof(DestinationGroupOptions));
+            Notify(nameof(DestinationGroupVisibility));
+            Notify(nameof(CanConfirm));
+            Notify(nameof(ConfirmationSummary));
+        }
+    }
+
+    public ExpirationsDestinationGroupOption? SelectedDestinationGroup
+    {
+        get => _selectedDestinationGroup;
+        set
+        {
+            if (Equals(_selectedDestinationGroup, value)) return;
+            _selectedDestinationGroup = value;
             Notify();
             Notify(nameof(CanConfirm));
             Notify(nameof(ConfirmationSummary));

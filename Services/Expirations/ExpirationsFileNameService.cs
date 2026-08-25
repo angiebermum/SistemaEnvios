@@ -41,6 +41,28 @@ public sealed class ExpirationsFileNameService
                 : $"{item.BaseName}.xlsx");
     }
 
+    public IReadOnlyDictionary<ExpirationsDestinationKey, string> CreatePreviousMonthFileNames(
+        IReadOnlyList<ExpirationsGeneratedFileNameRequest> files)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        var candidates = files.Select(file => new
+        {
+            Key = new ExpirationsDestinationKey(file.BrokerId, file.DestinationGroup),
+            BaseName = Limit($"Pendientes mes anterior - {GroupFileIdentity(file.BrokerName, file.DestinationGroup)}")
+        }).ToList();
+        if (candidates.Select(item => item.Key).Distinct().Count() != candidates.Count)
+            throw new ExpirationsGenerationException("La generación contiene un grupo de archivo duplicado.");
+        var collisions = candidates.GroupBy(item => item.BaseName, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return candidates.ToDictionary(
+            item => item.Key,
+            item => collisions.Contains(item.BaseName)
+                ? CreateCollidingName(item.BaseName, item.Key.BrokerId)
+                : $"{item.BaseName}.xlsx");
+    }
+
     public IReadOnlyDictionary<ExpirationsGeneratedFileNameKey, string> CreateNextMonthFileNames(
         ExpirationsPeriod period,
         IReadOnlyList<ExpirationsGeneratedFileNameRequest> files)
@@ -50,9 +72,9 @@ public sealed class ExpirationsFileNameService
         var candidates = files
             .Select(file => new
             {
-                Key = new ExpirationsGeneratedFileNameKey(file.BrokerId, file.Variant),
+                Key = new ExpirationsGeneratedFileNameKey(file.BrokerId, file.Variant, file.DestinationGroup),
                 file.BrokerId,
-                BrokerName = _sanitizer.SanitizePart(file.BrokerName),
+                BrokerName = GroupFileIdentity(file.BrokerName, file.DestinationGroup),
                 file.Variant
             })
             .OrderBy(item => item.BrokerId)
@@ -101,6 +123,20 @@ public sealed class ExpirationsFileNameService
         ExpirationsGeneratedFileVariant.FelixExpirationDate => " - ORDENADO POR VENCIMIENTO",
         _ => throw new ArgumentOutOfRangeException(nameof(variant))
     };
+
+    private string GroupFileIdentity(string brokerName, ExpirationsDestinationGroup group)
+    {
+        var safeBroker = _sanitizer.SanitizePart(brokerName);
+        if (group == ExpirationsDestinationGroup.Principal)
+            return safeBroker;
+        var safeGroup = _sanitizer.SanitizePart(ExpirationsDestinationGroups.DisplayName(group));
+        return group == ExpirationsDestinationGroup.HernanVarela ||
+               group is ExpirationsDestinationGroup.PcGuanacaste or
+                   ExpirationsDestinationGroup.ContadoCoriMotors or
+                   ExpirationsDestinationGroup.VariosCoriMotors
+            ? safeGroup
+            : $"{safeBroker} - {safeGroup}";
+    }
 
     private static string CreateNextMonthName(
         string sanitizedBrokerName,

@@ -243,7 +243,11 @@ public partial class ExpirationsWindow : Window
 
         if (issue.Status == ExpirationsBrokerResolutionStatus.Ambiguous)
         {
-            var result = _coordinator.ApplyManualOverride(issue.RowNumber, issue.ComponentIndex, brokerId);
+            var result = _coordinator.ApplyManualOverrideWithDestination(
+                issue.RowNumber,
+                issue.ComponentIndex,
+                brokerId,
+                dialog.SelectedDestinationGroup);
             _state.ApplySnapshot(result.Snapshot);
             await EvaluateNextMonthReadinessAsync();
             MessageBox.Show(
@@ -260,7 +264,8 @@ public partial class ExpirationsWindow : Window
                 issue.RowNumber,
                 issue.ComponentIndex,
                 brokerId,
-                dialog.SelectedKind));
+                dialog.SelectedKind,
+                dialog.SelectedDestinationGroup));
             _state.ApplySnapshot(result.Snapshot);
             await EvaluateNextMonthReadinessAsync();
             var warning = result.Outcome is
@@ -491,6 +496,23 @@ public partial class ExpirationsWindow : Window
                 _state.ReplaceGenerationBatch(result.Batch);
             return result;
         }
+        ExpirationsManualFileAddResult AddManualWithTarget(
+            string sourcePath,
+            ExpirationsAttachmentSlotKey? replacementSlot)
+        {
+            if (_state.GenerationBatch is not { } batch)
+                return new ExpirationsManualFileAddResult(new ExpirationsGenerationBatch(), null,
+                    "Primero genere un batch de Vencimientos.");
+            var result = _batchFileAssociationService.AddManual(
+                batch,
+                row.BrokerId,
+                row.BrokerName,
+                sourcePath,
+                replacementSlot);
+            if (result.Succeeded)
+                _state.ReplaceGenerationBatch(result.Batch);
+            return result;
+        }
 
         new ExpirationsGeneratedFilesWindow(
             row.BrokerName,
@@ -501,7 +523,11 @@ public partial class ExpirationsWindow : Window
             Unlink,
             AddManual,
             async () => { _ = await EvaluateSendPreflightAsync(); },
-            row.IsParticipant)
+            row.IsParticipant,
+            AddManualWithTarget,
+            _state.GenerationBatch?.RequiredAttachmentSlots
+                .Where(slot => slot.BrokerId == row.BrokerId)
+                .ToList())
         {
             Owner = this
         }.ShowDialog();
@@ -1028,7 +1054,7 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
     public int ResolvedRows => _snapshot.Analysis?.ResolvedRows ?? 0;
     public int PendingRows => _snapshot.Analysis?.RowsWithBlockingIssues ?? 0;
     public int ExcludedCount => _snapshot.Analysis?.ExcludedComponents ?? 0;
-    public int DestinationCount => PreviewItems.Count;
+    public int DestinationCount => PreviewItems.Select(item => item.BrokerId).Distinct().Count();
     public int CatalogCount => _snapshot.Catalog.Count(item => item.IsActive);
     public string BrokerSummaryText =>
         $"Corredores: {CatalogCount}  ·  Participan: {DestinationCount}  ·  Con pendientes: {PendingRows}  ·  Excluidos: {ExcludedCount}  ·  Generados: {GeneratedBrokerCount}";
@@ -1504,7 +1530,20 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
 
     private void RebuildBrokerRows()
     {
-        var distribution = _snapshot.Distribution.ToDictionary(item => item.BrokerId);
+        var distribution = _snapshot.Distribution
+            .GroupBy(item => item.BrokerId)
+            .ToDictionary(
+                group => group.Key,
+                group => new ExpirationsDistributionPreviewItem
+                {
+                    BrokerId = group.Key,
+                    BrokerName = group.First().BrokerName,
+                    PrimaryEmail = group.First().PrimaryEmail,
+                    RowCount = group.Sum(item => item.RowCount),
+                    DetectedValues = group.SelectMany(item => item.DetectedValues)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList()
+                });
         var activeBrokerIds = _snapshot.Catalog
             .Where(item => item.IsActive)
             .Select(item => item.BrokerId)
@@ -1521,6 +1560,8 @@ internal sealed class ExpirationsWindowState : INotifyPropertyChanged
             var isParticipant = _generationBatch is not null &&
                 (_generationBatch.ParticipatingBrokerIds.Count > 0
                     ? _generationBatch.ParticipatingBrokerIds.Contains(broker.BrokerId)
+                    : _generationBatch.RequiredAttachmentSlots.Count > 0
+                        ? _generationBatch.RequiredAttachmentSlots.Any(slot => slot.BrokerId == broker.BrokerId)
                     : preview is not null);
             _sendStatuses.TryGetValue(broker.BrokerId, out var sendResult);
             var files = (_generationBatch?.Files ?? []).Where(file => file.BrokerId == broker.BrokerId)

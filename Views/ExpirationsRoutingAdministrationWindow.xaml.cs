@@ -69,10 +69,11 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
         var editor = new ExpirationsAssociationEditorWindow(broker) { Owner = this };
         if (editor.ShowDialog() != true || editor.AssociationInput is not { } input)
             return;
-        await RunMutationAsync(() => _associations.CreateAssociationAsync(
+        await RunMutationAsync(() => _associations.CreateAssociationWithDestinationAsync(
             broker.BrokerId,
             input.Kind,
-            input.Value));
+            input.Value,
+            input.DestinationGroup));
     }
 
     private async void EditAssociation_Click(object sender, RoutedEventArgs e)
@@ -83,10 +84,11 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
         var editor = new ExpirationsAssociationEditorWindow(broker, selected.Association) { Owner = this };
         if (editor.ShowDialog() != true || editor.AssociationInput is not { } input)
             return;
-        await RunMutationAsync(() => _associations.EditAssociationAsync(
+        await RunMutationAsync(() => _associations.EditAssociationWithDestinationAsync(
             selected.Association.Id,
             input.Kind,
             input.Value,
+            input.DestinationGroup,
             selected.UpdateTime));
     }
 
@@ -131,7 +133,18 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
     private async void ReassignAssociation_Click(object sender, RoutedEventArgs e)
     {
         if (State.SelectedKnownIdentifier is not { } known ||
-            State.SelectedDestinationBroker is not { } destination)
+            State.SelectedDestinationBroker is not { } destination ||
+            State.GetBroker(destination.BrokerId) is not { } destinationConfiguration)
+            return;
+        var routingEditor = new ExpirationsAssociationEditorWindow(
+            destinationConfiguration,
+            new ExpirationsBrokerAssociation
+            {
+                BrokerId = destination.BrokerId,
+                Kind = known.Kind,
+                Value = known.Value
+            }) { Owner = this };
+        if (routingEditor.ShowDialog() != true || routingEditor.AssociationInput is not { } routingInput)
             return;
         if (known.ObservedItem is { } observed)
         {
@@ -143,9 +156,10 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 return;
-            await RunMutationAsync(() => _associations.ReassignAndConfirmObservedIdentifierAsync(
+            await RunMutationAsync(() => _associations.ReassignAndConfirmObservedIdentifierWithDestinationAsync(
                 observed.Identifier.Id,
                 destination.BrokerId,
+                routingInput.DestinationGroup,
                 observed.UpdateTime));
             return;
         }
@@ -160,9 +174,10 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return;
-        await RunMutationAsync(() => _associations.ReassignAsync(
+        await RunMutationAsync(() => _associations.ReassignWithDestinationAsync(
             selected.Association.Id,
             destination.BrokerId,
+            routingInput.DestinationGroup,
             selected.UpdateTime));
     }
 
@@ -170,14 +185,27 @@ public partial class ExpirationsRoutingAdministrationWindow : Window
     {
         if (State.SelectedKnownIdentifier?.ObservedItem is not { } observed)
             return;
+        if (State.GetBroker(observed.Identifier.BrokerId) is not { } broker)
+            return;
+        var routingEditor = new ExpirationsAssociationEditorWindow(
+            broker,
+            new ExpirationsBrokerAssociation
+            {
+                BrokerId = observed.Identifier.BrokerId,
+                Kind = observed.Identifier.Kind,
+                Value = observed.Identifier.Value
+            }) { Owner = this };
+        if (routingEditor.ShowDialog() != true || routingEditor.AssociationInput is not { } routingInput)
+            return;
         if (MessageBox.Show(
                 $"Este identificador se utilizará en futuros análisis para identificar a {observed.BrokerName}.\n\n¿Desea continuar?",
                 "Usar como asociación",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
-        await RunMutationAsync(() => _associations.ConfirmObservedIdentifierAsync(
+        await RunMutationAsync(() => _associations.ConfirmObservedIdentifierWithDestinationAsync(
             observed.Identifier.Id,
+            routingInput.DestinationGroup,
             observed.UpdateTime));
     }
 
@@ -354,6 +382,8 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
                 OriginText = "Maestro",
                 StatusText = broker.IsActive ? "En uso" : "Inactivo",
                 UpdatedAtUtc = broker.ProfileUpdatedAtUtc,
+                DestinationGroup = ExpirationsDestinationRoutingPolicy
+                    .AvailableGroupsForBrokerName(broker.Name) is [var only] ? only : null,
                 IsMaster = true
             })
             .Concat(associationItems.Select(item => new ExpirationsKnownIdentifierAdministrationItem
@@ -367,6 +397,7 @@ internal sealed class ExpirationsRoutingAdministrationState : INotifyPropertyCha
                 OriginText = item.OriginText,
                 StatusText = item.Association.IsActive ? "En uso" : "Inactivo",
                 UpdatedAtUtc = item.Association.UpdatedAtUtc,
+                DestinationGroup = item.Association.DestinationGroup,
                 AssociationItem = item
             }));
         SetKnownData(known, brokerItems, selectedBrokerId);

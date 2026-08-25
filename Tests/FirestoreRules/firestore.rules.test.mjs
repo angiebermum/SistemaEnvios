@@ -322,6 +322,23 @@ test('associations: normalizedValue repetido se permite para brokers distintos',
     association(secondId, brokerTwo, { normalizedValue: 'AMA' })));
 });
 
+test('associations: destinationGroup es aditivo, validado y compatible con documentos antiguos', async () => {
+  const db = environment.authenticatedContext('expirations').firestore();
+  const groupedId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  const legacyId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  await assertSucceeds(setDoc(
+    doc(db, `modules/vencimientos/associations/${groupedId}`),
+    association(groupedId, brokerOne, { destinationGroup: 'Agencias' })));
+  await assertSucceeds(setDoc(
+    doc(db, `modules/vencimientos/associations/${legacyId}`),
+    association(legacyId, brokerOne)));
+  await assertFails(setDoc(
+    doc(db, 'modules/vencimientos/associations/ffffffff-ffff-ffff-ffff-ffffffffffff'),
+    association('ffffffff-ffff-ffff-ffff-ffffffffffff', brokerOne, {
+      destinationGroup: 'FelixAlphabetical'
+    })));
+});
+
 test('associations: no permite broker inexistente y solo Comisiones recibe DENY', async () => {
   const expirationsDb = environment.authenticatedContext('expirations').firestore();
   const commissionsDb = environment.authenticatedContext('operator').firestore();

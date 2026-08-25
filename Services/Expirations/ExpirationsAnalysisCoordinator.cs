@@ -26,6 +26,12 @@ public interface IExpirationsAnalysisCoordinator
         uint rowNumber,
         int componentIndex,
         Guid brokerId);
+    ExpirationsManualOverrideResult ApplyManualOverrideWithDestination(
+        uint rowNumber,
+        int componentIndex,
+        Guid brokerId,
+        ExpirationsDestinationGroup destinationGroup) =>
+        ApplyManualOverride(rowNumber, componentIndex, brokerId);
     Task<ExpirationsAssociationConfirmationResult> ConfirmAssociationAsync(
         ExpirationsAssociationConfirmation confirmation,
         CancellationToken cancellationToken = default);
@@ -290,12 +296,24 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     public ExpirationsManualOverrideResult ApplyManualOverride(
         uint rowNumber,
         int componentIndex,
-        Guid brokerId)
+        Guid brokerId) => ApplyManualOverrideWithDestination(
+            rowNumber,
+            componentIndex,
+            brokerId,
+            ExpirationsDestinationGroup.Principal);
+
+    public ExpirationsManualOverrideResult ApplyManualOverrideWithDestination(
+        uint rowNumber,
+        int componentIndex,
+        Guid brokerId,
+        ExpirationsDestinationGroup destinationGroup)
     {
         if (_readResult is null || _catalog is null || Snapshot.Analysis is null)
             return OverrideRejected("No existe un análisis activo para aplicar la selección.");
         if (!IsActiveCatalogBroker(brokerId))
             return OverrideRejected("El corredor seleccionado no existe o está inactivo para Vencimientos.");
+        if (!new ExpirationsDestinationRoutingPolicy(_catalog.Items).IsAllowed(brokerId, destinationGroup))
+            return OverrideRejected("El archivo destino seleccionado no corresponde al corredor.");
         var component = FindComponent(rowNumber, componentIndex);
         if (component is null || component.Status is not (
                 ExpirationsBrokerResolutionStatus.Ambiguous or
@@ -306,7 +324,11 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
 
         _manualOverrides.RemoveAll(value =>
             value.RowNumber == rowNumber && value.ComponentIndex == componentIndex);
-        _manualOverrides.Add(new ExpirationsManualResolutionOverride(rowNumber, componentIndex, brokerId));
+        _manualOverrides.Add(new ExpirationsManualResolutionOverride(
+            rowNumber,
+            componentIndex,
+            brokerId,
+            destinationGroup));
         Snapshot = BuildSnapshot();
         return new ExpirationsManualOverrideResult
         {
@@ -334,6 +356,13 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         {
             return Confirmation(ExpirationsAssociationConfirmationOutcome.Rejected,
                 "El corredor seleccionado no existe o está inactivo para Vencimientos.");
+        }
+        if (!new ExpirationsDestinationRoutingPolicy(_catalog.Items)
+            .IsAllowed(confirmation.BrokerId, confirmation.DestinationGroup))
+        {
+            return Confirmation(
+                ExpirationsAssociationConfirmationOutcome.Rejected,
+                "El archivo destino seleccionado no corresponde al corredor.");
         }
 
         var normalizedValue = _normalizer.Normalize(component.RawValue);
@@ -371,10 +400,11 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                     document.Value.IsActive && document.Value.BrokerId != confirmation.BrokerId))
             {
                 _associationDocuments = latest;
-                var manual = ApplyManualOverride(
+                var manual = ApplyManualOverrideWithDestination(
                     confirmation.RowNumber,
                     confirmation.ComponentIndex,
-                    confirmation.BrokerId);
+                    confirmation.BrokerId,
+                    confirmation.DestinationGroup);
                 return Confirmation(
                     ExpirationsAssociationConfirmationOutcome.SessionOverride,
                     manual.Applied
@@ -400,6 +430,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                 reactivated.Kind = confirmation.Kind;
                 reactivated.Value = component.RawValue;
                 reactivated.NormalizedValue = normalizedValue;
+                reactivated.DestinationGroup = confirmation.DestinationGroup;
                 reactivated.IsActive = true;
                 reactivated.UpdatedAtUtc = _timeProvider.GetUtcNow();
                 await _associations.UpdateAsync(
@@ -422,6 +453,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                 Value = component.RawValue,
                 NormalizedValue = normalizedValue,
                 Origin = ExpirationsAssociationOrigin.ManuallyConfirmed,
+                DestinationGroup = confirmation.DestinationGroup,
                 IsActive = true,
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now
@@ -734,6 +766,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         Value = value.Value,
         NormalizedValue = value.NormalizedValue,
         Origin = value.Origin,
+        DestinationGroup = value.DestinationGroup,
         IsActive = value.IsActive,
         CreatedAtUtc = value.CreatedAtUtc,
         UpdatedAtUtc = value.UpdatedAtUtc

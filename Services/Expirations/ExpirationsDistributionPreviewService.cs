@@ -13,34 +13,36 @@ public sealed class ExpirationsDistributionPreviewService
         var catalogById = catalog
             .GroupBy(item => item.BrokerId)
             .ToDictionary(group => group.Key, group => group.First());
-        var rowNumbers = new Dictionary<Guid, HashSet<uint>>();
-        var detectedValues = new Dictionary<Guid, Dictionary<string, string>>();
+        var rowNumbers = new Dictionary<ExpirationsDestinationKey, HashSet<uint>>();
+        var detectedValues = new Dictionary<ExpirationsDestinationKey, Dictionary<string, string>>();
 
         foreach (var row in analysis.RowResolutions.OrderBy(row => row.RowNumber))
         {
-            foreach (var brokerId in row.DistinctDestinationBrokerIds)
+            foreach (var destination in row.DistinctDestinationKeys)
             {
-                if (!catalogById.ContainsKey(brokerId))
+                if (!catalogById.ContainsKey(destination.BrokerId))
                     continue;
-                if (!rowNumbers.TryGetValue(brokerId, out var brokerRows))
+                if (!rowNumbers.TryGetValue(destination, out var brokerRows))
                 {
                     brokerRows = [];
-                    rowNumbers[brokerId] = brokerRows;
+                    rowNumbers[destination] = brokerRows;
                 }
                 brokerRows.Add(row.RowNumber);
             }
 
             foreach (var component in row.Components.Where(component =>
                          component.Status == ExpirationsBrokerResolutionStatus.Resolved &&
-                         component.ResolvedBrokerId.HasValue))
+                         component.ResolvedBrokerId.HasValue && component.DestinationGroup.HasValue))
             {
-                var brokerId = component.ResolvedBrokerId!.Value;
-                if (!catalogById.ContainsKey(brokerId))
+                var destination = new ExpirationsDestinationKey(
+                    component.ResolvedBrokerId!.Value,
+                    component.DestinationGroup!.Value);
+                if (!catalogById.ContainsKey(destination.BrokerId))
                     continue;
-                if (!detectedValues.TryGetValue(brokerId, out var values))
+                if (!detectedValues.TryGetValue(destination, out var values))
                 {
                     values = new Dictionary<string, string>(StringComparer.Ordinal);
-                    detectedValues[brokerId] = values;
+                    detectedValues[destination] = values;
                 }
                 var key = component.NormalizedValue.Length > 0
                     ? component.NormalizedValue
@@ -50,17 +52,18 @@ public sealed class ExpirationsDistributionPreviewService
         }
 
         return rowNumbers.Keys
-            .Select(brokerId =>
+            .Select(destination =>
             {
-                var broker = catalogById[brokerId];
+                var broker = catalogById[destination.BrokerId];
                 return new ExpirationsDistributionPreviewItem
                 {
-                    BrokerId = brokerId,
+                    BrokerId = destination.BrokerId,
                     BrokerName = broker.Name,
+                    DestinationGroup = destination.DestinationGroup,
                     PrimaryEmail = broker.PrimaryEmailAddresses.FirstOrDefault(
                         email => !string.IsNullOrWhiteSpace(email)) ?? string.Empty,
-                    RowCount = rowNumbers[brokerId].Count,
-                    DetectedValues = detectedValues.GetValueOrDefault(brokerId)?.Values
+                    RowCount = rowNumbers[destination].Count,
+                    DetectedValues = detectedValues.GetValueOrDefault(destination)?.Values
                         .Order(StringComparer.CurrentCultureIgnoreCase)
                         .ThenBy(value => value, StringComparer.Ordinal)
                         .ToList() ?? []
@@ -68,6 +71,7 @@ public sealed class ExpirationsDistributionPreviewService
             })
             .OrderBy(item => item.BrokerName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(item => item.BrokerId)
+            .ThenBy(item => item.DestinationGroup)
             .ToList();
     }
 }

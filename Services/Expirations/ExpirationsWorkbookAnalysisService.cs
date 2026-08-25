@@ -68,6 +68,19 @@ public sealed class ExpirationsWorkbookAnalysisService
             .ToDictionary(
                 group => group.Key,
                 group => (IReadOnlyList<uint>)group.Select(item => item.RowNumber).Distinct().Order().ToList());
+        var destinationDistribution = rows
+            .Where(row => !row.HasBlockingIssues)
+            .SelectMany(row => row.DistinctDestinationKeys.Select(key => new
+            {
+                Key = key,
+                row.RowNumber
+            }))
+            .GroupBy(item => item.Key)
+            .OrderBy(group => group.Key.BrokerId)
+            .ThenBy(group => group.Key.DestinationGroup)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<uint>)group.Select(item => item.RowNumber).Distinct().Order().ToList());
         return new ExpirationsWorkbookAnalysisResult
         {
             ReadStatus = readResult.Status,
@@ -89,6 +102,7 @@ public sealed class ExpirationsWorkbookAnalysisService
                 component => component.Status == ExpirationsBrokerResolutionStatus.MissingBroker),
             RowResolutions = rows,
             ResolvedRowNumbersByBroker = distribution,
+            ResolvedRowNumbersByDestination = destinationDistribution,
             Messages = readResult.Messages,
             CanGenerate = blockingRows == 0
         };
@@ -133,6 +147,7 @@ public sealed class ExpirationsWorkbookAnalysisService
                     Status = ExpirationsBrokerResolutionStatus.Resolved,
                     CandidateBrokerIds = [manualOverride.BrokerId],
                     ResolvedBrokerId = manualOverride.BrokerId,
+                    DestinationGroup = manualOverride.DestinationGroup,
                     MatchedAssociationIds = original.MatchedAssociationIds,
                     UnknownCatalogBrokerIds = original.UnknownCatalogBrokerIds,
                     Diagnostics = ["Resolución manual aplicada únicamente a esta aparición del archivo actual."]
@@ -150,6 +165,17 @@ public sealed class ExpirationsWorkbookAnalysisService
                     .OfType<Guid>()
                     .Distinct()
                     .OrderBy(id => id)
+                    .ToList(),
+                DistinctDestinationKeys = components
+                    .Where(component => component.Status == ExpirationsBrokerResolutionStatus.Resolved &&
+                                        component.ResolvedBrokerId.HasValue &&
+                                        component.DestinationGroup.HasValue)
+                    .Select(component => new ExpirationsDestinationKey(
+                        component.ResolvedBrokerId!.Value,
+                        component.DestinationGroup!.Value))
+                    .Distinct()
+                    .OrderBy(key => key.BrokerId)
+                    .ThenBy(key => key.DestinationGroup)
                     .ToList(),
                 HasBlockingIssues = components.Any(
                     component => component.Status is not (

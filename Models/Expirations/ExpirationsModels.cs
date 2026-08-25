@@ -60,6 +60,38 @@ public enum ExpirationsAssociationOrigin
     ManuallyAdded
 }
 
+public enum ExpirationsDestinationGroup
+{
+    Principal,
+    Personales,
+    Generales,
+    Agencias,
+    PcGuanacaste,
+    ContadoCoriMotors,
+    VariosCoriMotors,
+    HernanVarela
+}
+
+public readonly record struct ExpirationsDestinationKey(
+    Guid BrokerId,
+    ExpirationsDestinationGroup DestinationGroup);
+
+public static class ExpirationsDestinationGroups
+{
+    public static string DisplayName(ExpirationsDestinationGroup group) => group switch
+    {
+        ExpirationsDestinationGroup.Principal => "Principal",
+        ExpirationsDestinationGroup.Personales => "Personales",
+        ExpirationsDestinationGroup.Generales => "Generales",
+        ExpirationsDestinationGroup.Agencias => "Agencias",
+        ExpirationsDestinationGroup.PcGuanacaste => "PC Guanacaste",
+        ExpirationsDestinationGroup.ContadoCoriMotors => "Contado Cori Motors",
+        ExpirationsDestinationGroup.VariosCoriMotors => "Varios Cori Motors",
+        ExpirationsDestinationGroup.HernanVarela => "Hernán Varela",
+        _ => group.ToString()
+    };
+}
+
 public sealed class ExpirationsBrokerAssociation
 {
     public Guid Id { get; set; }
@@ -68,6 +100,7 @@ public sealed class ExpirationsBrokerAssociation
     public string Value { get; set; } = string.Empty;
     public string NormalizedValue { get; set; } = string.Empty;
     public ExpirationsAssociationOrigin Origin { get; set; } = ExpirationsAssociationOrigin.Confirmed;
+    public ExpirationsDestinationGroup? DestinationGroup { get; set; }
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }

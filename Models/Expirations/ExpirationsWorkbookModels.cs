@@ -79,6 +79,7 @@ public sealed class ExpirationsBrokerComponentResolution
     public ExpirationsBrokerResolutionStatus Status { get; init; }
     public IReadOnlyList<Guid> CandidateBrokerIds { get; init; } = [];
     public Guid? ResolvedBrokerId { get; init; }
+    public ExpirationsDestinationGroup? DestinationGroup { get; init; }
     public IReadOnlyList<Guid> MatchedAssociationIds { get; init; } = [];
     public IReadOnlyList<Guid> UnknownCatalogBrokerIds { get; init; } = [];
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
@@ -91,6 +92,7 @@ public sealed class ExpirationsRowResolution
     public string RawBrokerValue { get; init; } = string.Empty;
     public IReadOnlyList<ExpirationsBrokerComponentResolution> Components { get; init; } = [];
     public IReadOnlyList<Guid> DistinctDestinationBrokerIds { get; init; } = [];
+    public IReadOnlyList<ExpirationsDestinationKey> DistinctDestinationKeys { get; init; } = [];
     public bool HasBlockingIssues { get; init; }
 }
 
@@ -109,6 +111,8 @@ public sealed class ExpirationsWorkbookAnalysisResult
     public IReadOnlyList<ExpirationsRowResolution> RowResolutions { get; init; } = [];
     public IReadOnlyDictionary<Guid, IReadOnlyList<uint>> ResolvedRowNumbersByBroker { get; init; } =
         new Dictionary<Guid, IReadOnlyList<uint>>();
+    public IReadOnlyDictionary<ExpirationsDestinationKey, IReadOnlyList<uint>> ResolvedRowNumbersByDestination { get; init; } =
+        new Dictionary<ExpirationsDestinationKey, IReadOnlyList<uint>>();
     public IReadOnlyList<string> Messages { get; init; } = [];
     public bool CanGenerate { get; init; }
 }

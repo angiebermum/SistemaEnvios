@@ -156,6 +156,9 @@ public sealed class ExpirationsNextMonthBatchGenerationTests
             Assert.Equal([2U, 3U, 4U, 6U], file.SourceRowNumbers);
             Assert.True(File.Exists(file.OutputPath));
             Assert.Empty(Validate(file.OutputPath));
+            using var document = SpreadsheetDocument.Open(file.OutputPath, false);
+            Assert.Equal(["Detalle", "Total de primas"],
+                document.WorkbookPart!.Workbook!.Sheets!.Elements<Sheet>().Select(sheet => sheet.Name!.Value));
         });
         Assert.DoesNotContain(batch.Files, file =>
             string.Equals(
@@ -215,7 +218,7 @@ public sealed class ExpirationsNextMonthBatchGenerationTests
         var workbook = workbookPart.Workbook ?? throw new InvalidDataException("Workbook sintético inválido.");
         var sheets = (workbook.Sheets ?? throw new InvalidDataException("Sheets sintéticas inválidas."))
             .Elements<Sheet>().ToArray();
-        Assert.Equal(["Hoja1", "Total de primas"], sheets.Select(sheet => sheet.Name!.Value));
+        Assert.Equal(["Detalle", "Total de primas"], sheets.Select(sheet => sheet.Name!.Value));
         var worksheet = ((WorksheetPart)workbookPart.GetPartById(sheets[0].Id!.Value!)).Worksheet ??
             throw new InvalidDataException("Worksheet sintética inválida.");
         var rows = worksheet.GetFirstChild<SheetData>()!.Elements<Row>().ToArray();
@@ -248,8 +251,9 @@ public sealed class ExpirationsNextMonthBatchGenerationTests
         Assert.Equal("#,##0.00", numberFormats.Elements<NumberingFormat>().Single(format => format.NumberFormatId?.Value == 165U).FormatCode!.Value);
         Assert.All(TotalFormulas(path), formula =>
         {
-            Assert.Contains("$E$3:$E$6", formula, StringComparison.Ordinal);
-            Assert.Contains("$H$3:$H$6", formula, StringComparison.Ordinal);
+            Assert.Contains("$E:$E", formula, StringComparison.Ordinal);
+            Assert.Contains("$H:$H", formula, StringComparison.Ordinal);
+            Assert.DoesNotContain("$E$3:$E$6", formula, StringComparison.Ordinal);
         });
     }
 

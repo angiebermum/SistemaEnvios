@@ -31,7 +31,6 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <Border Style="{StaticResource WarningPanelStyle}" Margin="0,18,0,0"
@@ -64,16 +63,7 @@
                                    Style="{StaticResource MutedTextStyle}" Margin="0,5,0,0" />
                     </StackPanel>
 
-                    <StackPanel Grid.Row="3" Margin="0,14,0,0" Visibility="{Binding DestinationGroupVisibility}">
-                        <TextBlock Text="Archivo destino" Style="{StaticResource CaptionTextStyle}" />
-                        <ComboBox ItemsSource="{Binding DestinationGroupOptions}"
-                                  SelectedItem="{Binding SelectedDestinationGroup, Mode=TwoWay}"
-                                  DisplayMemberPath="DisplayName" Margin="0,5,0,0" />
-                        <TextBlock Text="Seleccione el Excel separado al que pertenece esta identificación."
-                                   Style="{StaticResource MutedTextStyle}" Margin="0,5,0,0" />
-                    </StackPanel>
-
-                    <StackPanel Grid.Row="4" Margin="0,14,0,0" Visibility="{Binding AssociationTypeVisibility}">
+                    <StackPanel Grid.Row="3" Margin="0,14,0,0" Visibility="{Binding AssociationTypeVisibility}">
                         <TextBlock Text="Tipo de asociación" Style="{StaticResource CaptionTextStyle}" />
                         <ComboBox ItemsSource="{Binding KindOptions}" SelectedItem="{Binding SelectedKind, Mode=TwoWay}"
                                   DisplayMemberPath="DisplayName" Margin="0,5,0,0" />
@@ -81,7 +71,7 @@
                                    TextWrapping="Wrap" Margin="0,5,0,0" />
                     </StackPanel>
 
-                    <Border Grid.Row="5" Style="{StaticResource CardStyle}" Padding="12" Margin="0,14,0,0"
+                    <Border Grid.Row="4" Style="{StaticResource CardStyle}" Padding="12" Margin="0,14,0,0"
                             Visibility="{Binding AssociationTypeVisibility}">
                         <StackPanel>
                             <TextBlock Text="Confirmación de la asociación" FontWeight="SemiBold" />

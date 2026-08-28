@@ -69,11 +69,17 @@ public sealed class ExpirationsNextMonthGenerationPreflightService(
             : context.Analysis.ResolvedRowNumbersByBroker.ToDictionary(
                 item => new ExpirationsDestinationKey(item.Key, ExpirationsDestinationGroup.Principal),
                 item => item.Value);
+        var destinationPolicy = new ExpirationsDestinationRoutingPolicy(context.BrokerCatalog);
         var targetRows = rowsByDestination
-            .Select(target => new
+            .GroupBy(target => new ExpirationsDestinationKey(
+                target.Key.BrokerId,
+                destinationPolicy.ConsolidateOutputGroup(
+                    target.Key.BrokerId,
+                    target.Key.DestinationGroup)))
+            .Select(group => new
             {
-                target.Key,
-                Rows = target.Value.Distinct().Order().ToArray()
+                Key = group.Key,
+                Rows = group.SelectMany(target => target.Value).Distinct().Order().ToArray()
             })
             .Where(target => target.Rows.Length > 0)
             .ToList();

@@ -26,6 +26,11 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         Assert.Null(coordinator.Snapshot.Analysis);
         Assert.Equal(ExpirationsProcess.NextMonth, coordinator.Snapshot.Process);
 
+        coordinator.SelectProcess(ExpirationsProcess.Cancellations);
+        Assert.Equal(2, coordinator.Snapshot.Catalog.Count);
+        Assert.Null(coordinator.Snapshot.Analysis);
+        Assert.Equal(ExpirationsProcess.Cancellations, coordinator.Snapshot.Process);
+
         coordinator.SelectProcess(ExpirationsProcess.PreviousMonth);
         Assert.Equal(2, coordinator.Snapshot.Catalog.Count);
         Assert.Null(coordinator.Snapshot.Analysis);
@@ -77,6 +82,28 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         Assert.Equal(1, associations.ListCalls);
         Assert.Equal(1, reader.ReadCalls);
         Assert.Equal(BrokerA, Assert.Single(snapshot.Distribution).BrokerId);
+    }
+
+    [Fact]
+    public async Task CancellationsUsesTheExistingCatalogAndAssociations()
+    {
+        var associations = new FakeAssociationRepository([
+            Stored(Association(1, BrokerA, ExpirationsAssociationKind.Code, "A1"))
+        ]);
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(2, "A1"))),
+            associations,
+            [Broker(BrokerA, "Broker A")]);
+        coordinator.SelectProcess(ExpirationsProcess.Cancellations);
+        coordinator.SelectFile("cancelaciones.xlsx");
+
+        var snapshot = await coordinator.AnalyzeAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(snapshot.CanGenerate);
+        Assert.Equal(ExpirationsProcess.Cancellations, snapshot.Process);
+        Assert.Equal(BrokerA, Assert.Single(snapshot.Distribution).BrokerId);
+        Assert.Equal(1, associations.ListCalls);
     }
 
     [Fact]
@@ -234,7 +261,7 @@ public sealed class ExpirationsAnalysisCoordinatorTests
     }
 
     [Fact]
-    public async Task PendingResolutionPersistsAndresAgencias()
+    public async Task PendingResolutionPersistsAndresPrincipalWithoutDestinationSelection()
     {
         const string value = "NUEVO XX AS35 - 200";
         var associations = new FakeAssociationRepository([]);
@@ -251,15 +278,14 @@ public sealed class ExpirationsAnalysisCoordinatorTests
                 40,
                 0,
                 BrokerA,
-                ExpirationsAssociationKind.Code,
-                ExpirationsDestinationGroup.Agencias),
+                ExpirationsAssociationKind.Code),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(ExpirationsAssociationConfirmationOutcome.Created, result.Outcome);
         Assert.Empty(result.Snapshot.PendingIssues);
         var created = Assert.Single(associations.Created);
-        Assert.Equal(ExpirationsDestinationGroup.Agencias, created.DestinationGroup);
-        Assert.Equal(ExpirationsDestinationGroup.Agencias,
+        Assert.Equal(ExpirationsDestinationGroup.Principal, created.DestinationGroup);
+        Assert.Equal(ExpirationsDestinationGroup.Principal,
             Assert.Single(result.Snapshot.Analysis!.ResolvedRowNumbersByDestination).Key.DestinationGroup);
     }
 
@@ -292,7 +318,7 @@ public sealed class ExpirationsAnalysisCoordinatorTests
     }
 
     [Fact]
-    public async Task PendingResolutionDoesNotOverwriteConflictingActiveDestinationGroup()
+    public async Task PendingResolutionStandardizesExistingDestinationGroupToPrincipal()
     {
         const string value = "Alberto Volio/AVS - 213";
         var associations = new FakeAssociationRepository([]);
@@ -318,12 +344,10 @@ public sealed class ExpirationsAnalysisCoordinatorTests
                 ExpirationsDestinationGroup.Principal),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(ExpirationsAssociationConfirmationOutcome.SessionOverride, result.Outcome);
-        Assert.Contains("no se sobrescribió", result.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("reasignación", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ExpirationsAssociationConfirmationOutcome.Updated, result.Outcome);
         Assert.Empty(associations.Created);
-        Assert.Empty(associations.Updated);
-        Assert.Equal(ExpirationsDestinationGroup.PcGuanacaste,
+        Assert.Single(associations.Updated);
+        Assert.Equal(ExpirationsDestinationGroup.Principal,
             Assert.Single(associations.Documents).Value.DestinationGroup);
     }
 
@@ -764,13 +788,40 @@ public sealed class ExpirationsAnalysisCoordinatorTests
         Assert.Equal(message, result.ErrorMessage);
     }
 
+    [Fact]
+    public async Task NextMonthPreparationDerivesPeriodAndPassesItToExistingPreflight()
+    {
+        var period = new ExpirationsPeriod(2026, 9);
+        var periodResolver = new FixedPeriodResolver(period);
+        var preflight = new CapturingPreflightService();
+        var coordinator = Coordinator(
+            new FakeWorkbookReader(SuccessfulRead(SourceRow(46, "Broker A"))),
+            new FakeAssociationRepository([]),
+            [Broker(BrokerA, "Broker A")],
+            nextMonthPreflightService: preflight,
+            nextMonthPeriodResolver: periodResolver);
+        coordinator.SelectProcess(ExpirationsProcess.NextMonth);
+        coordinator.SelectFile("next-month-automatic-period.xlsx");
+        _ = await coordinator.AnalyzeAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        var result = await coordinator.PrepareGenerationAsync(
+            (ExpirationsPremiumColumnOptions?)null,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.CanGenerate);
+        Assert.Same(period, result.Period);
+        Assert.Same(period, preflight.Period);
+        Assert.Equal(1, periodResolver.Calls);
+    }
+
     private static ExpirationsAnalysisCoordinator Coordinator(
         IExpirationsWorkbookReader reader,
         FakeAssociationRepository associations,
         IReadOnlyList<ExpirationsBrokerCatalogItem> brokers,
         FakeExclusionRepository? exclusions = null,
         IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null,
-        IExpirationsObservedIdentifierCaptureService? observedIdentifierCapture = null)
+        IExpirationsObservedIdentifierCaptureService? observedIdentifierCapture = null,
+        IExpirationsNextMonthPeriodResolver? nextMonthPeriodResolver = null)
     {
         var directory = new FakeDirectoryRepository(brokers.Select(item => new ExpirationsBrokerDirectoryEntry
         {
@@ -796,7 +847,8 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             sourceHashProvider: _ => "stable-hash",
             nextMonthPreflightService: nextMonthPreflightService,
             exclusions: exclusions,
-            observedIdentifierCapture: observedIdentifierCapture);
+            observedIdentifierCapture: observedIdentifierCapture,
+            nextMonthPeriodResolver: nextMonthPeriodResolver);
     }
 
     private static void Prepare(ExpirationsAnalysisCoordinator coordinator, string path)
@@ -1053,5 +1105,34 @@ public sealed class ExpirationsAnalysisCoordinatorTests
             ExpirationsPremiumColumnOptions? premiumColumnOptions = null,
             CancellationToken cancellationToken = default) =>
             throw new ExpirationsGenerationException(message);
+    }
+
+    private sealed class FixedPeriodResolver(ExpirationsPeriod period)
+        : IExpirationsNextMonthPeriodResolver
+    {
+        public int Calls { get; private set; }
+
+        public ExpirationsPeriod Resolve(
+            ExpirationsGenerationContext context,
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return period;
+        }
+    }
+
+    private sealed class CapturingPreflightService : IExpirationsNextMonthGenerationPreflightService
+    {
+        public ExpirationsPeriod? Period { get; private set; }
+
+        public ExpirationsNextMonthPreflightResult Validate(
+            ExpirationsGenerationContext context,
+            ExpirationsPeriod? period,
+            ExpirationsPremiumColumnOptions? premiumColumnOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            Period = period;
+            return new ExpirationsNextMonthPreflightResult();
+        }
     }
 }

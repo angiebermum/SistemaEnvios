@@ -132,6 +132,7 @@ public sealed class ExpirationsGenerationPreparationResult
 {
     public ExpirationsAnalysisSessionSnapshot Snapshot { get; init; } = new();
     public ExpirationsGenerationContext? Context { get; init; }
+    public ExpirationsPeriod? Period { get; init; }
     public string ErrorMessage { get; init; } = string.Empty;
     public ExpirationsPremiumColumnResolution? PremiumColumnResolution { get; init; }
     public bool CanGenerate => Context is not null && ErrorMessage.Length == 0;

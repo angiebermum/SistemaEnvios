@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using ECS.CommissionsMailer.Models.Expirations;
-using ECS.CommissionsMailer.Services.Expirations;
 
 namespace ECS.CommissionsMailer.Views;
 
@@ -32,14 +31,12 @@ public partial class ExpirationsAssociationEditorWindow : Window
 
 internal sealed record ExpirationsAssociationInput(
     ExpirationsAssociationKind Kind,
-    string Value,
-    ExpirationsDestinationGroup DestinationGroup);
+    string Value);
 
 internal sealed class ExpirationsAssociationEditorState : INotifyPropertyChanged
 {
     private ExpirationsAssociationKindOption _selectedKindOption;
     private string _value;
-    private ExpirationsDestinationGroupOption? _selectedDestinationGroup;
 
     public ExpirationsAssociationEditorState(
         ExpirationsBrokerConfigurationItem broker,
@@ -59,31 +56,16 @@ internal sealed class ExpirationsAssociationEditorState : INotifyPropertyChanged
         _selectedKindOption = KindOptions.Single(option =>
             option.Value == (association?.Kind ?? ExpirationsAssociationKind.Name));
         _value = association?.Value ?? string.Empty;
-        DestinationGroupOptions = ExpirationsDestinationRoutingPolicy
-            .AvailableGroupsForBrokerName(broker.Name)
-            .Select(group => new ExpirationsDestinationGroupOption(
-                group,
-                ExpirationsDestinationGroups.DisplayName(group)))
-            .ToList();
-        _selectedDestinationGroup = association?.DestinationGroup is { } existing
-            ? DestinationGroupOptions.FirstOrDefault(option => option.Value == existing)
-            : DestinationGroupOptions.Count == 1 ? DestinationGroupOptions[0] : null;
     }
 
     public string TitleText { get; }
     public string BrokerName { get; }
     public string BrokerEmail { get; }
     public IReadOnlyList<ExpirationsAssociationKindOption> KindOptions { get; }
-    public IReadOnlyList<ExpirationsDestinationGroupOption> DestinationGroupOptions { get; }
-    public Visibility DestinationGroupVisibility => DestinationGroupOptions.Count > 1
-        ? Visibility.Visible
-        : Visibility.Collapsed;
-    public bool CanSave => Value.Trim().Length > 0 && SelectedDestinationGroup is not null;
+    public bool CanSave => Value.Trim().Length > 0;
     public string SummaryValue => $"Valor: {(Value.Trim().Length == 0 ? "—" : Value.Trim())}";
     public string SummaryKind => $"Tipo: {SelectedKindOption.DisplayName}";
     public string SummaryBroker => $"Corredor: {BrokerName} — {BrokerEmail}";
-    public string SummaryDestination =>
-        $"Archivo destino: {SelectedDestinationGroup?.DisplayName ?? "Seleccione uno"}";
 
     public ExpirationsAssociationKindOption SelectedKindOption
     {
@@ -94,19 +76,6 @@ internal sealed class ExpirationsAssociationEditorState : INotifyPropertyChanged
             _selectedKindOption = value;
             Notify();
             Notify(nameof(SummaryKind));
-        }
-    }
-
-    public ExpirationsDestinationGroupOption? SelectedDestinationGroup
-    {
-        get => _selectedDestinationGroup;
-        set
-        {
-            if (Equals(_selectedDestinationGroup, value)) return;
-            _selectedDestinationGroup = value;
-            Notify();
-            Notify(nameof(CanSave));
-            Notify(nameof(SummaryDestination));
         }
     }
 
@@ -126,8 +95,7 @@ internal sealed class ExpirationsAssociationEditorState : INotifyPropertyChanged
     public ExpirationsAssociationInput? BuildInput() => CanSave
         ? new ExpirationsAssociationInput(
             SelectedKindOption.Value,
-            Value.Trim(),
-            SelectedDestinationGroup!.Value)
+            Value.Trim())
         : null;
 
     public event PropertyChangedEventHandler? PropertyChanged;

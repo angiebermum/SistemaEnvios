@@ -87,8 +87,8 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="Asistentes de Vencimientos" Style="{StaticResource SectionTitleTextStyle}" />
-                    <TextBlock Text="Los asistentes inactivos se conservan y pueden reactivarse."
+                    <TextBlock Text="{Binding AssistantsSectionTitle}" Style="{StaticResource SectionTitleTextStyle}" />
+                    <TextBlock Text="{Binding AssistantsSectionDescription}"
                                Style="{StaticResource CaptionTextStyle}" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">

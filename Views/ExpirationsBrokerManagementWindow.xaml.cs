@@ -13,7 +13,7 @@ public partial class ExpirationsBrokerManagementWindow : Window
     private readonly IExpirationsBrokerConfigurationService _service;
     private readonly IExpirationsRoutingAdministrationService? _routingAdministration;
     private readonly ExpirationsProcess _process;
-    internal readonly ExpirationsBrokerManagementState State = new();
+    internal readonly ExpirationsBrokerManagementState State;
 
     public ExpirationsBrokerManagementWindow(
         IExpirationsBrokerConfigurationService service,
@@ -23,6 +23,7 @@ public partial class ExpirationsBrokerManagementWindow : Window
         _service = service ?? throw new ArgumentNullException(nameof(service));
         _routingAdministration = routingAdministration;
         _process = process;
+        State = new ExpirationsBrokerManagementState(process);
         InitializeComponent();
         DataContext = State;
         RoutingAdministrationButton.Visibility = routingAdministration is null
@@ -121,11 +122,16 @@ public partial class ExpirationsBrokerManagementWindow : Window
 internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
 {
     private readonly List<ExpirationsBrokerConfigurationItem> _allItems = [];
+    private readonly ExpirationsProcess _process;
     private string _searchText = string.Empty;
     private ExpirationsBrokerConfigurationItem? _selectedItem;
     private bool _isBusy;
     private string _busyText = string.Empty;
     private bool _showInactive;
+
+    public ExpirationsBrokerManagementState(
+        ExpirationsProcess process = ExpirationsProcess.PreviousMonth) =>
+        _process = process;
 
     public ObservableCollection<ExpirationsBrokerConfigurationItem> VisibleItems { get; } = [];
     public bool HasLoaded { get; private set; }
@@ -172,9 +178,13 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
     {
         ArgumentNullException.ThrowIfNull(items);
         _allItems.Clear();
-        _allItems.AddRange(items
+        var orderedItems = items
             .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
-            .ThenBy(item => item.BrokerId));
+            .ThenBy(item => item.BrokerId)
+            .ToList();
+        foreach (var item in orderedItems)
+            item.AssistantSummaryProcess = _process;
+        _allItems.AddRange(orderedItems);
         HasLoaded = true;
         SelectedItem = null;
         ApplyFilter();
@@ -197,6 +207,7 @@ internal sealed class ExpirationsBrokerManagementState : INotifyPropertyChanged
 
     public void Replace(ExpirationsBrokerConfigurationItem item)
     {
+        item.AssistantSummaryProcess = _process;
         var index = _allItems.FindIndex(value => value.BrokerId == item.BrokerId);
         if (index >= 0)
             _allItems[index] = item;

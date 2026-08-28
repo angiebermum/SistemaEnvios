@@ -194,9 +194,13 @@ internal sealed class ExpirationsSendHistoryOperationRow(ExpirationsSendOperatio
 {
     public ExpirationsSendOperation Operation { get; } = operation;
     public string DateText => Operation.StartedAtUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
-    public string ProcessText => Operation.Process == ExpirationsProcess.PreviousMonth
-        ? "Mes anterior"
-        : "Mes siguiente";
+    public string ProcessText => Operation.Process switch
+    {
+        ExpirationsProcess.PreviousMonth => "Mes anterior",
+        ExpirationsProcess.NextMonth => "Mes siguiente",
+        ExpirationsProcess.Cancellations => "Cancelaciones",
+        _ => throw new ArgumentOutOfRangeException()
+    };
     public string Account => Operation.SendingAccountEmail;
     public int Total => Operation.TotalCount;
     public int Successes => Operation.SuccessCount;

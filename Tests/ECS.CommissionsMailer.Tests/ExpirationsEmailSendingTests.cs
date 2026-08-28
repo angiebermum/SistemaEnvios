@@ -40,6 +40,31 @@ public sealed class ExpirationsEmailSendingTests
     }
 
     [Fact]
+    public void CancellationsUsesOnlyItsOwnAssistantsWithoutFallback()
+    {
+        var cancellationAssistant = Assistant("Cancelaciones", "cancel@example.test", true);
+        var broker = Broker(
+            assistants: [Assistant("Normal", "normal@example.test", true)],
+            cancellationAssistants: [cancellationAssistant]);
+
+        var cancellations = new ExpirationsRecipientService().Resolve(
+            broker,
+            [],
+            ExpirationsProcess.Cancellations);
+        broker.CancellationAssistants.Clear();
+        var withoutCancellationAssistants = new ExpirationsRecipientService().Resolve(
+            broker,
+            [],
+            ExpirationsProcess.Cancellations);
+
+        Assert.Equal(["primary@example.test", "cancel@example.test"], cancellations.ToRecipients);
+        Assert.DoesNotContain("normal@example.test", cancellations.ToRecipients);
+        Assert.Equal(["primary@example.test"], withoutCancellationAssistants.ToRecipients);
+        Assert.Empty(withoutCancellationAssistants.AssistantRecipients);
+        Assert.True(withoutCancellationAssistants.IsValid);
+    }
+
+    [Fact]
     public void ActiveAssistantAloneIsAValidToRecipient()
     {
         var result = new ExpirationsRecipientService().Resolve(
@@ -96,6 +121,38 @@ public sealed class ExpirationsEmailSendingTests
         Assert.False(result.CanSend);
         Assert.Contains(BrokerOne, result.EligibleBrokerIds);
         Assert.Contains(result.Errors, error => error.Contains("ningún destinatario Para válido", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CancellationPreparationUsesOwnTemplateCcSignatureAndAssistants()
+    {
+        using var files = GeneratedFiles.Create(ExpirationsGeneratedFileVariant.Standard);
+        var batch = new ExpirationsGenerationBatch
+        {
+            Id = files.Batch.Id,
+            Process = ExpirationsProcess.Cancellations,
+            OutputDirectory = files.Batch.OutputDirectory,
+            Files = files.Batch.Files
+        };
+        var broker = Broker(
+            assistants: [Assistant("Normal", "normal@example.test", true)],
+            cancellationAssistants: [Assistant("Cancelaciones", "cancel@example.test", true)]);
+        var service = Preparation(batch, broker);
+
+        var result = await service.PrepareAsync(
+            batch,
+            "firma.png",
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.CanSend);
+        Assert.Equal(ExpirationsProcess.Cancellations, result.Process);
+        var request = Assert.Single(result.Requests);
+        Assert.Equal("Asunto", request.Subject);
+        Assert.Equal("Mensaje", request.Body);
+        Assert.Equal(["cc@example.test"], request.CcRecipients);
+        Assert.Equal(["cancel@example.test"], request.AssistantRecipients);
+        Assert.DoesNotContain("normal@example.test", request.ToRecipients);
+        Assert.Equal("firma.png", request.SignatureImagePath);
     }
 
     [Fact]
@@ -468,6 +525,7 @@ public sealed class ExpirationsEmailSendingTests
                         BrokerId = broker.BrokerId,
                         IsActive = broker.IsActive,
                         Assistants = broker.Assistants.ToList(),
+                        CancellationAssistants = broker.CancellationAssistants.ToList(),
                         NextMonthGenerationMode = broker.NextMonthGenerationMode
                     }
                 ])));
@@ -513,12 +571,14 @@ public sealed class ExpirationsEmailSendingTests
     private static ExpirationsBrokerCatalogItem Broker(
         IEnumerable<string>? primary = null,
         IEnumerable<ExpirationsAssistant>? assistants = null,
+        IEnumerable<ExpirationsAssistant>? cancellationAssistants = null,
         ExpirationsNextMonthGenerationMode mode = ExpirationsNextMonthGenerationMode.Standard) => new()
     {
         BrokerId = BrokerOne,
         Name = "Corredor Uno",
         PrimaryEmailAddresses = (primary ?? ["primary@example.test"]).ToList(),
         Assistants = (assistants ?? []).ToList(),
+        CancellationAssistants = (cancellationAssistants ?? []).ToList(),
         IsActive = true,
         NextMonthGenerationMode = mode
     };

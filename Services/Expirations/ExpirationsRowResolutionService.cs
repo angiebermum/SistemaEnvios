@@ -6,7 +6,9 @@ public sealed class ExpirationsRowResolutionService(
     ExpirationsBrokerCellParser parser,
     ExpirationsBrokerResolver resolver)
 {
-    public ExpirationsRowResolution Resolve(ExpirationsSourceRow row)
+    public ExpirationsRowResolution Resolve(
+        ExpirationsSourceRow row,
+        bool allowMultipleDestinationGroupsForSameBroker = false)
     {
         ArgumentNullException.ThrowIfNull(row);
         var components = parser.Parse(row.RawBrokerValue);
@@ -31,7 +33,7 @@ public sealed class ExpirationsRowResolutionService(
             .Where(group => group.Select(component => component.DestinationGroup!.Value).Distinct().Count() > 1)
             .Select(group => group.Key)
             .ToHashSet();
-        if (conflictingBrokerIds.Count > 0)
+        if (!allowMultipleDestinationGroupsForSameBroker && conflictingBrokerIds.Count > 0)
         {
             resolutions = resolutions.Select(component =>
             {

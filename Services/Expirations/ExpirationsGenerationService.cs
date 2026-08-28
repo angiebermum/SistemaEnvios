@@ -52,7 +52,9 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         ArgumentNullException.ThrowIfNull(request.Context);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.OutputParentDirectory);
         if (request.Context.Process is not (
-                ExpirationsProcess.PreviousMonth or ExpirationsProcess.NextMonth))
+                ExpirationsProcess.PreviousMonth or
+                ExpirationsProcess.NextMonth or
+                ExpirationsProcess.Cancellations))
             throw new ArgumentOutOfRangeException(nameof(request.Context.Process));
 
         var parentDirectory = Path.GetFullPath(request.OutputParentDirectory);
@@ -74,8 +76,9 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         }
 
         var targets = BuildTargets(request.Context);
-        var previousMonthFileNames = request.Context.Process == ExpirationsProcess.PreviousMonth
-            ? _fileNameService.CreatePreviousMonthFileNames(
+        var standardFileNames = request.Context.Process != ExpirationsProcess.NextMonth
+            ? _fileNameService.CreateStandardFileNames(
+                request.Context.Process,
                 targets.Select(target => new ExpirationsGeneratedFileNameRequest(
                     target.Broker.BrokerId,
                     target.Broker.Name,
@@ -107,8 +110,8 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
                     index + 1,
                     targets.Count,
                     $"{target.Broker.Name} — {ExpirationsDestinationGroups.DisplayName(target.DestinationGroup)}"));
-                var fileName = request.Context.Process == ExpirationsProcess.PreviousMonth
-                    ? previousMonthFileNames![new ExpirationsDestinationKey(
+                var fileName = request.Context.Process != ExpirationsProcess.NextMonth
+                    ? standardFileNames![new ExpirationsDestinationKey(
                         target.Broker.BrokerId,
                         target.DestinationGroup)]
                     : nextMonthFileNames![new ExpirationsGeneratedFileNameKey(
@@ -187,7 +190,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         ExpirationsNextMonthPreflightResult? nextMonthPreflight,
         CancellationToken cancellationToken)
     {
-        if (request.Context.Process == ExpirationsProcess.PreviousMonth)
+        if (request.Context.Process != ExpirationsProcess.NextMonth)
         {
             var materialization = new ExpirationsStandardWorkbookGenerationRequest(
                 request.Context.SourceWorkbookPath,
@@ -253,7 +256,21 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
             : context.Analysis.ResolvedRowNumbersByBroker.ToDictionary(
                 item => new ExpirationsDestinationKey(item.Key, ExpirationsDestinationGroup.Principal),
                 item => item.Value);
-        return rowsByDestination
+        var destinationPolicy = new ExpirationsDestinationRoutingPolicy(context.BrokerCatalog);
+        var consolidatedRowsByDestination = rowsByDestination
+            .GroupBy(item => new ExpirationsDestinationKey(
+                item.Key.BrokerId,
+                destinationPolicy.ConsolidateOutputGroup(
+                    item.Key.BrokerId,
+                    item.Key.DestinationGroup)))
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<uint>)group
+                    .SelectMany(item => item.Value)
+                    .Distinct()
+                    .Order()
+                    .ToArray());
+        return consolidatedRowsByDestination
             .SelectMany(item => BuildBrokerTargets(
                 context.Process,
                 catalog[item.Key.BrokerId],
@@ -273,7 +290,7 @@ public sealed class ExpirationsGenerationService : IExpirationsGenerationService
         ExpirationsDestinationGroup destinationGroup,
         IReadOnlyList<uint> rowNumbers)
     {
-        if (process == ExpirationsProcess.PreviousMonth ||
+        if (process != ExpirationsProcess.NextMonth ||
             broker.NextMonthGenerationMode == ExpirationsNextMonthGenerationMode.Standard)
         {
             yield return new GenerationTarget(

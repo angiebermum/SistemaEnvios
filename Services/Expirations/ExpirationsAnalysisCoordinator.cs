@@ -21,6 +21,10 @@ public interface IExpirationsAnalysisCoordinator
         ExpirationsPeriod period,
         ExpirationsPremiumColumnOptions? premiumColumnOptions,
         CancellationToken cancellationToken = default);
+    Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
+        ExpirationsPremiumColumnOptions? premiumColumnOptions,
+        CancellationToken cancellationToken = default) =>
+        PrepareGenerationAsync(cancellationToken);
     Task<ExpirationsWorkbookInspection> InspectWorkbookAsync(CancellationToken cancellationToken = default);
     ExpirationsManualOverrideResult ApplyManualOverride(
         uint rowNumber,
@@ -55,6 +59,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
     private readonly Func<string, string> _computeSourceSha256;
     private readonly IExpirationsNextMonthGenerationPreflightService _nextMonthPreflightService;
     private readonly IExpirationsObservedIdentifierCaptureService? _observedIdentifierCapture;
+    private readonly IExpirationsNextMonthPeriodResolver _nextMonthPeriodResolver;
     private ExpirationsProcess? _process;
     private string _sourcePath = string.Empty;
     private ExpirationsWorkbookReadOptions? _readOptions;
@@ -78,7 +83,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         Func<string, string>? sourceHashProvider = null,
         IExpirationsNextMonthGenerationPreflightService? nextMonthPreflightService = null,
         IExpirationsExclusionRepository? exclusions = null,
-        IExpirationsObservedIdentifierCaptureService? observedIdentifierCapture = null)
+        IExpirationsObservedIdentifierCaptureService? observedIdentifierCapture = null,
+        IExpirationsNextMonthPeriodResolver? nextMonthPeriodResolver = null)
     {
         _catalogService = catalogService ?? throw new ArgumentNullException(nameof(catalogService));
         _associations = associations ?? throw new ArgumentNullException(nameof(associations));
@@ -94,6 +100,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         _nextMonthPreflightService = nextMonthPreflightService ??
             new ExpirationsNextMonthGenerationPreflightService();
         _observedIdentifierCapture = observedIdentifierCapture;
+        _nextMonthPeriodResolver = nextMonthPeriodResolver ?? new ExpirationsNextMonthPeriodResolver();
         Snapshot = EmptySnapshot();
     }
 
@@ -188,6 +195,11 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
         => await PrepareGenerationCoreAsync(null, null, validateNextMonth: false, cancellationToken);
 
     public async Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
+        ExpirationsPremiumColumnOptions? premiumColumnOptions,
+        CancellationToken cancellationToken = default) =>
+        await PrepareGenerationCoreAsync(null, premiumColumnOptions, validateNextMonth: true, cancellationToken);
+
+    public async Task<ExpirationsGenerationPreparationResult> PrepareGenerationAsync(
         ExpirationsPeriod period,
         ExpirationsPremiumColumnOptions? premiumColumnOptions,
         CancellationToken cancellationToken = default)
@@ -238,6 +250,12 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                 sourceWorkbook,
                 analysis,
                 snapshot.Catalog);
+            if (validateNextMonth && context.Process == ExpirationsProcess.NextMonth && period is null)
+            {
+                period = await Task.Run(
+                    () => _nextMonthPeriodResolver.Resolve(context, cancellationToken),
+                    cancellationToken);
+            }
             if (validateNextMonth && context.Process == ExpirationsProcess.NextMonth)
             {
                 _ = await Task.Run(
@@ -251,7 +269,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
             return new ExpirationsGenerationPreparationResult
             {
                 Snapshot = snapshot,
-                Context = context
+                Context = context,
+                Period = period
             };
         }
         catch (ExpirationsPremiumColumnResolutionException ex)
@@ -423,8 +442,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                 .OfType<ExpirationsDestinationGroup>()
                 .Distinct()
                 .ToList();
-            if (activeGroups.Count > 1 ||
-                (activeGroups.Count == 1 && activeGroups[0] != confirmation.DestinationGroup))
+            if (activeGroups.Count > 1)
             {
                 _associationDocuments = latest;
                 var manual = ApplyManualOverrideWithDestination(
@@ -435,13 +453,13 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                 return Confirmation(
                     ExpirationsAssociationConfirmationOutcome.SessionOverride,
                     manual.Applied
-                        ? "El valor ya tiene una asociación activa con otro archivo destino. " +
-                          "No se sobrescribió; la selección se aplicó solo a esta fila. " +
-                          "Use Identificadores conocidos para confirmar la reasignación permanente."
+                        ? "El valor tiene varias asociaciones activas incompatibles. " +
+                          "No se sobrescribieron; la selección se aplicó solo a esta fila. " +
+                          "Use Identificadores conocidos para corregirlas."
                         : manual.Message);
             }
 
-            if (activeGroups.Count == 1)
+            if (activeGroups.Count == 1 && activeGroups[0] == confirmation.DestinationGroup)
             {
                 _associationDocuments = latest;
                 Snapshot = BuildSnapshot();
@@ -467,7 +485,7 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
                 Snapshot = BuildSnapshot();
                 return Confirmation(
                     ExpirationsAssociationConfirmationOutcome.Updated,
-                    "La asociación existente fue completada con el archivo destino y el archivo se analizó nuevamente.");
+                    "La asociación existente fue actualizada y el archivo se analizó nuevamente.");
             }
 
             var inactive = exact.FirstOrDefault(document =>
@@ -654,7 +672,8 @@ public sealed class ExpirationsAnalysisCoordinator : IExpirationsAnalysisCoordin
             catalog,
             _associationDocuments.Select(document => document.Value),
             _manualOverrides,
-            _exclusionDocuments.Select(document => document.Value));
+            _exclusionDocuments.Select(document => document.Value),
+            _process);
         var names = catalog.GroupBy(item => item.BrokerId)
             .ToDictionary(group => group.Key, group => group.First().Name);
         var pending = analysis.RowResolutions

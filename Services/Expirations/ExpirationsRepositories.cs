@@ -254,6 +254,7 @@ public sealed class ExpirationsProcessSettingsRepository(IFirestoreRestClient cl
     {
         ExpirationsProcess.PreviousMonth => "previousMonth",
         ExpirationsProcess.NextMonth => "nextMonth",
+        ExpirationsProcess.Cancellations => "cancellations",
         _ => throw new ArgumentOutOfRangeException(nameof(process), process, "Proceso de Vencimientos no permitido.")
     };
 }

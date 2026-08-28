@@ -82,11 +82,6 @@
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
                     Margin="0,18,0,0">
-            <ComboBox Width="245" Margin="0,0,10,0"
-                      ItemsSource="{Binding ManualTargetOptions}"
-                      SelectedItem="{Binding SelectedManualTarget, Mode=TwoWay}"
-                      DisplayMemberPath="DisplayName"
-                      ToolTip="Indique si el manual es adicional o reemplaza un archivo esperado." />
             <Button Content="Agregar archivo manual" Click="AddManualFile_Click" MinWidth="170" />
             <Button Content="Cerrar" IsCancel="True" Margin="0" MinWidth="90" />
         </StackPanel>

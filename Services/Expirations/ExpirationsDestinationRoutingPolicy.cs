@@ -88,7 +88,14 @@ public sealed class ExpirationsDestinationRoutingPolicy
     }
 
     public bool IsAllowed(Guid brokerId, ExpirationsDestinationGroup group) =>
-        AvailableGroups(brokerId).Contains(group);
+        group == ExpirationsDestinationGroup.Principal || AvailableGroups(brokerId).Contains(group);
+
+    public ExpirationsDestinationGroup ConsolidateOutputGroup(
+        Guid brokerId,
+        ExpirationsDestinationGroup group) =>
+        brokerId == _andresId || brokerId == _albertoId
+            ? ExpirationsDestinationGroup.Principal
+            : group;
 
     public bool TryResolveDirect(string normalizedIdentifier, out ExpirationsDestinationKey destination)
     {
@@ -166,7 +173,8 @@ public sealed class ExpirationsDestinationRoutingPolicy
                             : association.Value) == normalizedIdentifier)
                     .Select(association => association.DestinationGroup!.Value)
                     .Distinct()
-                    .Any(group => group != deterministicAndresGroup.Value);
+                    .Any(group => group != ExpirationsDestinationGroup.Principal &&
+                                  group != deterministicAndresGroup.Value);
                 if (conflictingExactGroup)
                 {
                     diagnostic = "La asociación específica de Andrés contradice el archivo destino determinado por la identificación.";
@@ -183,7 +191,7 @@ public sealed class ExpirationsDestinationRoutingPolicy
             .Select(association => association.DestinationGroup!.Value)
             .Distinct()
             .ToList();
-        if (persistedGroups.Any(group => !allowed.Contains(group)))
+        if (persistedGroups.Any(group => !IsAllowed(brokerId, group)))
         {
             diagnostic = "La asociación usa un archivo destino que no corresponde al corredor.";
             return null;

@@ -62,6 +62,27 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
     }
 
     [Fact]
+    public async Task CancellationAssistantsPersistIndependentlyFromNormalAssistants()
+    {
+        var normal = Assistant("Normal", "normal@example.test");
+        var cancellation = Assistant("Cancelaciones", "cancel@example.test");
+        var profile = Profile(true);
+        profile.Assistants = [normal];
+        var profiles = new FakeProfileRepository([Stored(profile, "version-cancellations")]);
+        var service = Service(profiles);
+        var current = await service.GetAsync(BrokerId, TestContext.Current.CancellationToken);
+
+        var result = await service.SaveAsync(
+            With(current, cancellationAssistants: [cancellation]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExpirationsBrokerConfigurationSaveOutcome.Updated, result.Outcome);
+        var persisted = Assert.Single(profiles.Documents).Value;
+        Assert.Equal(normal.Id, Assert.Single(persisted.Assistants).Id);
+        Assert.Equal(cancellation.Id, Assert.Single(persisted.CancellationAssistants).Id);
+    }
+
+    [Fact]
     public async Task ExistingProfileUpdatesWithTokenAndPreservesCreationTimestamp()
     {
         var profiles = new FakeProfileRepository([Stored(Profile(false), "version-7")]);
@@ -315,6 +336,7 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
         ExpirationsBrokerConfigurationItem? source,
         bool? isActive = null,
         IReadOnlyList<ExpirationsAssistant>? assistants = null,
+        IReadOnlyList<ExpirationsAssistant>? cancellationAssistants = null,
         string? name = null,
         IReadOnlyList<string>? emails = null,
         ExpirationsNextMonthGenerationMode? mode = null)
@@ -328,6 +350,7 @@ public sealed class ExpirationsBrokerConfigurationServiceTests
             IsActive = isActive ?? source.IsActive,
             NextMonthGenerationMode = mode ?? source.NextMonthGenerationMode,
             Assistants = assistants ?? source.Assistants,
+            CancellationAssistants = cancellationAssistants ?? source.CancellationAssistants,
             HasExplicitProfile = source.HasExplicitProfile,
             ProfileUpdateTime = source.ProfileUpdateTime,
             ProfileCreatedAtUtc = source.ProfileCreatedAtUtc,

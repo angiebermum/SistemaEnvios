@@ -226,9 +226,6 @@ internal static class ModuleWindowUiSmokeRunner
                 "GenerationSection",
                 nextMonthNoPeriodPath);
             var nextMonthWindow = ExpirationsWindow(user, ReadySnapshot(ExpirationsProcess.NextMonth));
-            var nextMonthState = (ExpirationsWindowState)nextMonthWindow.DataContext;
-            nextMonthState.SelectedMonthOption = nextMonthState.MonthOptions.Single(option => option.Month == 8);
-            nextMonthState.NextMonthYearText = "2026";
             var nextMonthBatch = new ExpirationsGenerationBatch
             {
                 OutputDirectory = @"C:\Pruebas\Vencimientos mes siguiente - 2026-08 - 20260821-120000",
@@ -248,7 +245,7 @@ internal static class ModuleWindowUiSmokeRunner
                     var state = (ExpirationsWindowState)shownWindow.DataContext;
                     state.SetGenerationReadiness(
                         true,
-                        "Configuración especial, período y primas validados. Listo para generar.",
+                        "Período 2026-08, configuración especial y primas validados. Listo para generar.",
                         false);
                     state.ApplyGenerationBatch(nextMonthBatch);
                 });

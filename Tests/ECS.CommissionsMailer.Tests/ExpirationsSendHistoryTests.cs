@@ -215,6 +215,23 @@ public sealed class ExpirationsSendHistoryTests
     }
 
     [Fact]
+    public void CancellationOperationRoundTripsAndIsShownInHistory()
+    {
+        var operation = Operation(
+            ExpirationsProcess.Cancellations,
+            ExpirationsSendOperationStatus.Completed,
+            1, 1, 0);
+        var mapper = new ExpirationsSendOperationMapper();
+        var mapped = mapper.FromFields(mapper.ToFields(operation));
+        var state = new ExpirationsSendHistoryState();
+
+        state.ApplyOperations([mapped]);
+
+        Assert.Equal(ExpirationsProcess.Cancellations, mapped.Process);
+        Assert.Equal("Cancelaciones", Assert.Single(state.Operations).ProcessText);
+    }
+
+    [Fact]
     public void FirestoreMappersRoundTripAuditSnapshotWithoutWindowsPaths()
     {
         var operation = Operation(

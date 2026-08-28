@@ -148,7 +148,7 @@ public sealed class ExpirationsRoutingAdministrationTests
     }
 
     [Fact]
-    public async Task MultiGroupAssociationPersistsAndCanChangeDestinationLater()
+    public async Task AssociationCanBeCreatedAndEditedWithoutDestinationSelection()
     {
         var associations = new FakeAssociationRepository([]);
         var service = Service(
@@ -159,26 +159,25 @@ public sealed class ExpirationsRoutingAdministrationTests
                 "Andrés Steimberg - Agent for EssentialGroupLA",
                 "andres@example.test")));
 
-        var created = await service.CreateAssociationWithDestinationAsync(
+        var created = await service.CreateAssociationAsync(
             ShortBroker,
             ExpirationsAssociationKind.Alias,
             "NUEVOS XX AS35 - 200",
-            ExpirationsDestinationGroup.Agencias,
             TestContext.Current.CancellationToken);
         var stored = Assert.Single(associations.Documents);
-        var edited = await service.EditAssociationWithDestinationAsync(
+        var edited = await service.EditAssociationAsync(
             stored.Value.Id,
-            stored.Value.Kind,
-            stored.Value.Value,
-            ExpirationsDestinationGroup.Personales,
+            ExpirationsAssociationKind.Code,
+            "NUEVOS XX AS35 - 201",
             stored.UpdateTime,
             TestContext.Current.CancellationToken);
 
         Assert.True(created.WasPersisted);
         Assert.True(edited.WasPersisted);
-        Assert.Equal(
-            ExpirationsDestinationGroup.Personales,
-            Assert.Single(associations.Documents).Value.DestinationGroup);
+        var updated = Assert.Single(associations.Documents).Value;
+        Assert.Equal(ExpirationsAssociationKind.Code, updated.Kind);
+        Assert.Equal("NUEVOS XX AS35 - 201", updated.Value);
+        Assert.Equal(ExpirationsDestinationGroup.Principal, updated.DestinationGroup);
     }
 
     [Fact]

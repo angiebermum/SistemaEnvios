@@ -118,9 +118,13 @@ internal sealed class ExpirationsSendReviewState : INotifyPropertyChanged
     public ObservableCollection<ExpirationsSendReviewItem> ReviewItems { get; }
     public ObservableCollection<string> AvailableAccounts { get; } = [];
     public bool OutlookChecked => _outlookChecked;
-    public string ProcessText => Preparation.Process == ExpirationsProcess.PreviousMonth
-        ? "Pendientes del mes anterior"
-        : "Vencimientos del mes siguiente";
+    public string ProcessText => Preparation.Process switch
+    {
+        ExpirationsProcess.PreviousMonth => "Pendientes del mes anterior",
+        ExpirationsProcess.NextMonth => "Vencimientos del mes siguiente",
+        ExpirationsProcess.Cancellations => "Cancelaciones",
+        _ => throw new ArgumentOutOfRangeException()
+    };
     public string Subject => Preparation.Settings?.DefaultSubject ?? string.Empty;
     public string Message => Preparation.Settings?.DefaultMessage ?? string.Empty;
     public string WarningsText => string.Join(Environment.NewLine, Preparation.Warnings);

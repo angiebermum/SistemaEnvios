@@ -21,6 +21,7 @@ public sealed class ExpirationsBrokerProfile
     public bool IsActive { get; set; }
     public ExpirationsNextMonthGenerationMode NextMonthGenerationMode { get; set; }
     public List<ExpirationsAssistant> Assistants { get; set; } = [];
+    public List<ExpirationsAssistant> CancellationAssistants { get; set; } = [];
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }
 }
@@ -33,6 +34,7 @@ public sealed class ExpirationsBrokerCatalogItem
     public bool IsActive { get; set; }
     public ExpirationsNextMonthGenerationMode NextMonthGenerationMode { get; set; }
     public List<ExpirationsAssistant> Assistants { get; set; } = [];
+    public List<ExpirationsAssistant> CancellationAssistants { get; set; } = [];
 }
 
 public enum ExpirationsNextMonthGenerationMode
@@ -131,7 +133,8 @@ public sealed class ExpirationsExclusion
 public enum ExpirationsProcess
 {
     PreviousMonth,
-    NextMonth
+    NextMonth,
+    Cancellations
 }
 
 public sealed class ExpirationsProcessSettings

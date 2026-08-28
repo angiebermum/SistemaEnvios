@@ -155,6 +155,9 @@ public sealed class ExpirationsPresentationServicesTests
         Assert.Null(codeState.SelectedBroker);
         Assert.False(codeState.CanConfirm);
         Assert.Single(codeState.Brokers);
+        codeState.SelectedBroker = Assert.Single(codeState.Brokers);
+        Assert.True(codeState.CanConfirm);
+        Assert.DoesNotContain("Archivo destino", codeState.ConfirmationSummary, StringComparison.Ordinal);
         Assert.Equal(ExpirationsAssociationKind.Code, codeState.SelectedKind.Value);
         Assert.Equal(ExpirationsAssociationKind.Alias, aliasState.SelectedKind.Value);
         Assert.Equal(Visibility.Visible, ambiguousState.AmbiguityWarningVisibility);

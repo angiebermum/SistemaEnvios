@@ -101,7 +101,6 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Corredor" Binding="{Binding BrokerName}" Width="180" />
-                <DataGridTextColumn Header="Archivo destino" Binding="{Binding DestinationGroupText}" Width="155" />
                 <DataGridTextColumn Header="Estado" Binding="{Binding StatusText}" Width="110" />
                 <DataGridTextColumn Header="Actualizado" Binding="{Binding UpdatedAtUtc, StringFormat={}{0:g}}" Width="145" />
             </DataGrid.Columns>

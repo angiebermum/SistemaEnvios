@@ -93,18 +93,23 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         var validation = _validation.ValidateAndNormalize(
             directory.Value.PrimaryEmailAddresses,
             configuration.Assistants);
+        var cancellationValidation = _validation.ValidateAndNormalize(
+            directory.Value.PrimaryEmailAddresses,
+            configuration.CancellationAssistants);
         var normalizedConfiguration = CopyWithDirectoryIdentity(
             configuration,
             directory.Value,
-            validation.Assistants);
-        if (!validation.IsValid)
+            validation.Assistants,
+            cancellationValidation.Assistants);
+        if (!validation.IsValid || !cancellationValidation.IsValid)
         {
+            var errors = validation.Errors.Concat(cancellationValidation.Errors).Distinct().ToList();
             return new ExpirationsBrokerConfigurationSaveResult
             {
                 Outcome = ExpirationsBrokerConfigurationSaveOutcome.ValidationFailed,
                 Configuration = normalizedConfiguration,
-                Errors = validation.Errors,
-                Message = string.Join(Environment.NewLine, validation.Errors)
+                Errors = errors,
+                Message = string.Join(Environment.NewLine, errors)
             };
         }
 
@@ -144,6 +149,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         if (!configuration.HasExplicitProfile &&
             configuration.IsActive &&
             validation.Assistants.Count == 0 &&
+            cancellationValidation.Assistants.Count == 0 &&
             normalizedConfiguration.NextMonthGenerationMode ==
             ExpirationsBrokerProfileDefaults.InitialNextMonthMode(configuration.BrokerId))
         {
@@ -156,17 +162,26 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         }
 
         return configuration.HasExplicitProfile
-            ? await UpdateAsync(normalizedConfiguration, validation.Assistants, cancellationToken)
-            : await CreateAsync(normalizedConfiguration, validation.Assistants, cancellationToken);
+            ? await UpdateAsync(
+                normalizedConfiguration,
+                validation.Assistants,
+                cancellationValidation.Assistants,
+                cancellationToken)
+            : await CreateAsync(
+                normalizedConfiguration,
+                validation.Assistants,
+                cancellationValidation.Assistants,
+                cancellationToken);
     }
 
     private async Task<ExpirationsBrokerConfigurationSaveResult> CreateAsync(
         ExpirationsBrokerConfigurationItem configuration,
         IReadOnlyList<ExpirationsAssistant> assistants,
+        IReadOnlyList<ExpirationsAssistant> cancellationAssistants,
         CancellationToken cancellationToken)
     {
         var now = _timeProvider.GetUtcNow();
-        var profile = BuildProfile(configuration, assistants, now, now);
+        var profile = BuildProfile(configuration, assistants, cancellationAssistants, now, now);
         try
         {
             var stored = await _profiles.CreateAsync(profile, cancellationToken);
@@ -187,6 +202,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
     private async Task<ExpirationsBrokerConfigurationSaveResult> UpdateAsync(
         ExpirationsBrokerConfigurationItem configuration,
         IReadOnlyList<ExpirationsAssistant> assistants,
+        IReadOnlyList<ExpirationsAssistant> cancellationAssistants,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(configuration.ProfileUpdateTime) ||
@@ -198,6 +214,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         var profile = BuildProfile(
             configuration,
             assistants,
+            cancellationAssistants,
             configuration.ProfileCreatedAtUtc.Value,
             _timeProvider.GetUtcNow());
         try
@@ -248,6 +265,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
     private static ExpirationsBrokerProfile BuildProfile(
         ExpirationsBrokerConfigurationItem configuration,
         IReadOnlyList<ExpirationsAssistant> assistants,
+        IReadOnlyList<ExpirationsAssistant> cancellationAssistants,
         DateTimeOffset createdAtUtc,
         DateTimeOffset updatedAtUtc) => new()
     {
@@ -255,6 +273,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         IsActive = configuration.IsActive,
         NextMonthGenerationMode = configuration.NextMonthGenerationMode,
         Assistants = assistants.Select(CopyAssistant).ToList(),
+        CancellationAssistants = cancellationAssistants.Select(CopyAssistant).ToList(),
         CreatedAtUtc = createdAtUtc,
         UpdatedAtUtc = updatedAtUtc
     };
@@ -278,6 +297,12 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
                 .ThenBy(assistant => assistant.Email, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(assistant => assistant.Id)
                 .ToList(),
+            CancellationAssistants = (profile?.CancellationAssistants ?? [])
+                .Select(CopyAssistant)
+                .OrderBy(assistant => assistant.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(assistant => assistant.Email, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(assistant => assistant.Id)
+                .ToList(),
             HasExplicitProfile = profileDocument is not null,
             ProfileUpdateTime = profileDocument?.UpdateTime,
             ProfileCreatedAtUtc = profile?.CreatedAtUtc,
@@ -288,7 +313,8 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
     private static ExpirationsBrokerConfigurationItem CopyWithDirectoryIdentity(
         ExpirationsBrokerConfigurationItem source,
         ExpirationsBrokerDirectoryEntry directory,
-        IReadOnlyList<ExpirationsAssistant> assistants) => new()
+        IReadOnlyList<ExpirationsAssistant> assistants,
+        IReadOnlyList<ExpirationsAssistant> cancellationAssistants) => new()
     {
         BrokerId = directory.BrokerId,
         Name = directory.Name,
@@ -296,6 +322,7 @@ public sealed class ExpirationsBrokerConfigurationService : IExpirationsBrokerCo
         IsActive = source.IsActive,
         NextMonthGenerationMode = source.NextMonthGenerationMode,
         Assistants = assistants.Select(CopyAssistant).ToList(),
+        CancellationAssistants = cancellationAssistants.Select(CopyAssistant).ToList(),
         HasExplicitProfile = source.HasExplicitProfile,
         ProfileUpdateTime = source.ProfileUpdateTime,
         ProfileCreatedAtUtc = source.ProfileCreatedAtUtc,

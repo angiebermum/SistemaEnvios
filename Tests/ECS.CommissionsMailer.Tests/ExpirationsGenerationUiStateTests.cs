@@ -45,16 +45,8 @@ public sealed class ExpirationsGenerationUiStateTests
         Assert.Equal(Visibility.Visible, state.NextMonthPeriodVisibility);
         Assert.Contains("El análisis está completo", state.ReadyText, StringComparison.Ordinal);
 
-        state.SelectedMonthOption = state.MonthOptions.Single(option => option.Month == 8);
-        state.NextMonthYearText = "2026";
-        Assert.True(state.TryGetNextMonthPeriod(out var period));
-        Assert.Equal("2026-08", period!.FileToken);
-        Assert.False(state.CanGenerate);
-
         state.SetGenerationReadiness(true, "Listo", false);
         Assert.True(state.CanGenerate);
-        state.NextMonthYearText = "2027";
-        Assert.False(state.CanGenerate);
     }
 
     [Fact]
@@ -149,8 +141,6 @@ public sealed class ExpirationsGenerationUiStateTests
             "version-1"));
         state.LoadPersistedSignature(@"C:\FirmaVencimientos\firma.png", null, "Firma local configurada.");
         state.ApplySnapshot(ReadySnapshot(ExpirationsProcess.NextMonth));
-        state.SelectedMonthOption = state.MonthOptions.Single(option => option.Month == 8);
-        state.NextMonthYearText = "2026";
         state.SetPremiumColumnOptions(new ExpirationsPremiumColumnOptions(2, 3));
         state.ApplyGenerationBatch(new ExpirationsGenerationBatch
         {
@@ -164,8 +154,6 @@ public sealed class ExpirationsGenerationUiStateTests
 
         Assert.Equal(string.Empty, state.SourcePath);
         Assert.Equal(0, state.GeneratedFileCount);
-        Assert.Null(state.SelectedMonthOption);
-        Assert.Equal(string.Empty, state.NextMonthYearText);
         Assert.Null(state.PremiumColumnOptions);
         Assert.Equal("Asunto guardado", state.Subject);
         Assert.Equal("Mensaje guardado", state.Message);
@@ -173,6 +161,42 @@ public sealed class ExpirationsGenerationUiStateTests
         Assert.Equal(@"C:\FirmaVencimientos\firma.png", state.SignatureImagePath);
         Assert.True(state.CanOpenSendHistory);
         Assert.False(state.HasEditableChanges);
+    }
+
+    [Theory]
+    [InlineData(ExpirationsProcess.PreviousMonth)]
+    [InlineData(ExpirationsProcess.NextMonth)]
+    [InlineData(ExpirationsProcess.Cancellations)]
+    public void MainBrokerListIsAlphabeticalForEveryProcess(ExpirationsProcess process)
+    {
+        var adriana = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var andres = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var hector = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var state = new ExpirationsWindowState(User());
+        state.ApplySnapshot(new ExpirationsAnalysisSessionSnapshot
+        {
+            Process = process,
+            Catalog =
+            [
+                new ExpirationsBrokerCatalogItem { BrokerId = andres, Name = "Andrés Steimberg", IsActive = true },
+                new ExpirationsBrokerCatalogItem { BrokerId = adriana, Name = "Adriana Arroyo", IsActive = true },
+                new ExpirationsBrokerCatalogItem { BrokerId = hector, Name = "Héctor Chinchilla", IsActive = true }
+            ],
+            Distribution =
+            [
+                new ExpirationsDistributionPreviewItem { BrokerId = andres, BrokerName = "Andrés Steimberg", RowCount = 3 },
+                new ExpirationsDistributionPreviewItem { BrokerId = adriana, BrokerName = "Adriana Arroyo", RowCount = 1 },
+                new ExpirationsDistributionPreviewItem { BrokerId = hector, BrokerName = "Héctor Chinchilla", RowCount = 2 }
+            ]
+        });
+
+        var rows = state.BrokerRowsView.Cast<ExpirationsBrokerRow>().ToList();
+
+        Assert.Equal(["Adriana Arroyo", "Andrés Steimberg", "Héctor Chinchilla"],
+            rows.Select(row => row.BrokerName));
+        Assert.Equal(3, rows.Single(row => row.BrokerId == andres).RowCount);
+        Assert.Equal(1, rows.Single(row => row.BrokerId == adriana).RowCount);
+        Assert.Equal(2, rows.Single(row => row.BrokerId == hector).RowCount);
     }
 
     private static ExpirationsAnalysisSessionSnapshot ReadySnapshot(ExpirationsProcess process) => new()

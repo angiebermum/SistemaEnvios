@@ -268,6 +268,12 @@ test('brokerProfiles: conserva shape antiguo y permite ambos modos de mes siguie
     doc(db, `modules/vencimientos/brokerProfiles/${brokerTwo}`),
     {
       nextMonthGenerationMode: 'SpecialDualSorted',
+      cancellationAssistants: [{
+        id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+        name: 'Asistente Cancelaciones',
+        email: 'cancelaciones@example.test',
+        isActive: true
+      }],
       updatedAtUtc: new Date('2026-08-10T01:00:00Z')
     }));
 });
@@ -399,7 +405,7 @@ test('exclusions: rechaza shape o ID inválido y no amplía permisos de Comision
   await assertFails(setDoc(doc(commissionsDb, path), exclusion(exclusionId)));
 });
 
-test('settings Vencimientos: previousMonth y nextMonth son permitidos e independientes', async () => {
+test('settings Vencimientos: los tres procesos son permitidos e independientes', async () => {
   const db = environment.authenticatedContext('expirations').firestore();
   await assertSucceeds(setDoc(
     doc(db, 'modules/vencimientos/settings/previousMonth'),
@@ -407,8 +413,12 @@ test('settings Vencimientos: previousMonth y nextMonth son permitidos e independ
   await assertSucceeds(setDoc(
     doc(db, 'modules/vencimientos/settings/nextMonth'),
     expirationsSettings({ defaultSubject: 'Próximo mes' })));
+  await assertSucceeds(setDoc(
+    doc(db, 'modules/vencimientos/settings/cancellations'),
+    expirationsSettings({ defaultSubject: 'Cancelaciones' })));
   await assertSucceeds(getDoc(doc(db, 'modules/vencimientos/settings/previousMonth')));
   await assertSucceeds(getDoc(doc(db, 'modules/vencimientos/settings/nextMonth')));
+  await assertSucceeds(getDoc(doc(db, 'modules/vencimientos/settings/cancellations')));
   await assertSucceeds(updateDoc(
     doc(db, 'modules/vencimientos/settings/nextMonth'),
     { defaultMessage: 'Actualizado', updatedAtUtc: new Date('2026-08-10T01:00:00Z') }));
@@ -543,6 +553,9 @@ test('historial Vencimientos: solo canUseExpirations accede; Comisiones no basta
   const operationId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
   const path = `modules/vencimientos/sendOperations/${operationId}`;
   await assertSucceeds(setDoc(doc(expirationsDb, path), sendOperation(operationId, 'NextMonth')));
+  await assertSucceeds(setDoc(
+    doc(expirationsDb, 'modules/vencimientos/sendOperations/cccccccc-1111-1111-1111-111111111111'),
+    sendOperation('cccccccc-1111-1111-1111-111111111111', 'Cancellations')));
   await assertFails(getDoc(doc(commissionsDb, path)));
   await assertFails(setDoc(doc(commissionsDb,
     'modules/vencimientos/sendOperations/aaaaaaaa-1111-1111-1111-111111111111'),

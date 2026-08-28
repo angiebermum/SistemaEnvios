@@ -130,7 +130,8 @@ public sealed class ExpirationsSendPreparationService
                 errors.Add(ChangedAttachmentMessage);
             var resolution = _recipients.Resolve(
                 broker,
-                processSettings?.CommonCcAddresses ?? []);
+                processSettings?.CommonCcAddresses ?? [],
+                batch.Process);
             itemErrors.AddRange(resolution.Errors);
             if (itemErrors.Count > 0)
             {

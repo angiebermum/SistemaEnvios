@@ -27,7 +27,37 @@ public sealed class ExpirationsBatchFileAssociationService
         ArgumentNullException.ThrowIfNull(batch);
         ArgumentNullException.ThrowIfNull(file);
         var files = batch.Files.Where(candidate => !SameSlot(candidate, file)).ToList();
-        return files.Count == batch.Files.Count ? batch : CopyBatch(batch, files);
+        if (files.Count == batch.Files.Count)
+            return batch;
+
+        var reducedBatch = CopyBatch(batch, files);
+        if (file.Variant == ExpirationsGeneratedFileVariant.Manual ||
+            file.DestinationGroup != ExpirationsDestinationGroup.Principal ||
+            file.ReplacesSlot.HasValue)
+        {
+            return reducedBatch;
+        }
+
+        var missingPrincipalSlot = InferMissingPrincipalSlot(reducedBatch, file.BrokerId);
+        if (missingPrincipalSlot is not { } replacementSlot)
+            return reducedBatch;
+        var candidates = files
+            .Where(candidate =>
+                candidate.BrokerId == file.BrokerId &&
+                candidate.Variant == ExpirationsGeneratedFileVariant.Manual &&
+                !candidate.ReplacesSlot.HasValue)
+            .ToList();
+        if (candidates.Count != 1)
+            return reducedBatch;
+
+        var candidateToPromote = candidates[0];
+        return CopyBatch(batch, files.Select(candidate =>
+            ReferenceEquals(candidate, candidateToPromote)
+                ? CopyFile(
+                    candidate,
+                    destinationGroup: replacementSlot.DestinationGroup,
+                    replacesSlot: replacementSlot)
+                : candidate).ToList());
     }
 
     public ExpirationsGenerationBatch UpdateAuthorizedReplacement(
@@ -98,6 +128,7 @@ public sealed class ExpirationsBatchFileAssociationService
         if (!IsValidWorkbook(sourceFullPath))
             return new ExpirationsManualFileAddResult(batch, null, "El archivo seleccionado no es un libro .xlsx válido.");
 
+        var effectiveReplacementSlot = replacesSlot ?? InferMissingPrincipalSlot(batch, brokerId);
         var manualDirectory = Path.Combine(outputDirectory, "Manual");
         string? destinationPath = null;
         try
@@ -116,8 +147,8 @@ public sealed class ExpirationsBatchFileAssociationService
                 BrokerName = brokerName.Trim(),
                 OutputPath = destinationPath,
                 Variant = ExpirationsGeneratedFileVariant.Manual,
-                DestinationGroup = replacesSlot?.DestinationGroup ?? ExpirationsDestinationGroup.Principal,
-                ReplacesSlot = replacesSlot,
+                DestinationGroup = effectiveReplacementSlot?.DestinationGroup ?? ExpirationsDestinationGroup.Principal,
+                ReplacesSlot = effectiveReplacementSlot,
                 RowCount = 0,
                 SourceRowNumbers = [],
                 Sha256 = _hashService.ComputeSha256(destinationPath),
@@ -178,6 +209,26 @@ public sealed class ExpirationsBatchFileAssociationService
         return candidate;
     }
 
+    private static ExpirationsAttachmentSlotKey? InferMissingPrincipalSlot(
+        ExpirationsGenerationBatch batch,
+        Guid brokerId)
+    {
+        var missingSlots = batch.RequiredAttachmentSlots
+            .Where(slot => slot.BrokerId == brokerId)
+            .Where(slot => !batch.Files.Any(file =>
+                (file.BrokerId == brokerId &&
+                 file.Variant == slot.ExpectedVariant &&
+                 file.DestinationGroup == slot.DestinationGroup &&
+                 !file.ReplacesSlot.HasValue) ||
+                file.ReplacesSlot == slot.Key))
+            .DistinctBy(slot => slot.Key)
+            .ToList();
+        return missingSlots.Count == 1 &&
+               missingSlots[0].DestinationGroup == ExpirationsDestinationGroup.Principal
+            ? missingSlots[0].Key
+            : null;
+    }
+
     private static bool SameSlot(ExpirationsGeneratedFile left, ExpirationsGeneratedFile right) =>
         left.BrokerId == right.BrokerId &&
         left.Variant == right.Variant &&
@@ -229,14 +280,16 @@ public sealed class ExpirationsBatchFileAssociationService
         ExpirationsGeneratedFile source,
         string? sha256 = null,
         bool? isManuallyEdited = null,
-        bool? requiresReview = null) => new()
+        bool? requiresReview = null,
+        ExpirationsDestinationGroup? destinationGroup = null,
+        ExpirationsAttachmentSlotKey? replacesSlot = null) => new()
     {
         BrokerId = source.BrokerId,
         BrokerName = source.BrokerName,
         OutputPath = source.OutputPath,
         Variant = source.Variant,
-        DestinationGroup = source.DestinationGroup,
-        ReplacesSlot = source.ReplacesSlot,
+        DestinationGroup = destinationGroup ?? source.DestinationGroup,
+        ReplacesSlot = replacesSlot ?? source.ReplacesSlot,
         RowCount = source.RowCount,
         Sha256 = sha256 ?? source.Sha256,
         SourceRowNumbers = source.SourceRowNumbers.ToList(),

@@ -171,18 +171,24 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
     public bool IsBusy => _isBusy;
     public bool HasUnsavedChanges => _isActive != _persisted.IsActive ||
         SelectedNextMonthGenerationModeOption.Value != _persisted.NextMonthGenerationMode ||
-        !AssistantListsEqual(Assistants, _persisted.Assistants);
+        !AssistantListsEqual(Assistants, ProcessAssistants(_persisted));
     public bool CanEditConfiguration => !IsBusy;
     public bool CanSave => !IsBusy;
     public bool CanEditAssistant => !IsBusy && SelectedAssistant is not null;
     public bool CanToggleAssistant => !IsBusy && SelectedAssistant is not null;
     public bool CanDeleteAssistant => !IsBusy && SelectedAssistant is not null;
-    public Visibility PreviousMonthFormatVisibility => _process == ExpirationsProcess.PreviousMonth
+    public Visibility PreviousMonthFormatVisibility => _process != ExpirationsProcess.NextMonth
         ? Visibility.Visible
         : Visibility.Collapsed;
     public Visibility NextMonthFormatVisibility => _process == ExpirationsProcess.NextMonth
         ? Visibility.Visible
         : Visibility.Collapsed;
+    public string AssistantsSectionTitle => _process == ExpirationsProcess.Cancellations
+        ? "Asistentes de Cancelaciones"
+        : "Asistentes de Vencimientos";
+    public string AssistantsSectionDescription => _process == ExpirationsProcess.Cancellations
+        ? "Estos asistentes se usan únicamente en Cancelaciones; pueden quedar vacíos."
+        : "Los asistentes de mes anterior y mes siguiente se comparten; los inactivos se conservan.";
     public string ChangesText => HasUnsavedChanges ? "Hay cambios sin guardar." : "Sin cambios pendientes.";
     public int ActiveAssistantCount => Assistants.Count(value => value.IsActive);
     public int TotalAssistantCount => Assistants.Count;
@@ -274,10 +280,17 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         Name = _persisted.Name,
         PrimaryEmailAddresses = _persisted.PrimaryEmailAddresses.ToList(),
         IsActive = IsActive,
-        NextMonthGenerationMode = _process == ExpirationsProcess.PreviousMonth
-            ? _persisted.NextMonthGenerationMode
-            : SelectedNextMonthGenerationModeOption.Value,
-        Assistants = Assistants.Select(CopyAssistant).ToList(),
+        NextMonthGenerationMode = _process == ExpirationsProcess.NextMonth
+            ? SelectedNextMonthGenerationModeOption.Value
+            : _persisted.NextMonthGenerationMode,
+        Assistants = (_process == ExpirationsProcess.Cancellations
+                ? _persisted.Assistants
+                : Assistants)
+            .Select(CopyAssistant).ToList(),
+        CancellationAssistants = (_process == ExpirationsProcess.Cancellations
+                ? Assistants
+                : _persisted.CancellationAssistants)
+            .Select(CopyAssistant).ToList(),
         HasExplicitProfile = _persisted.HasExplicitProfile,
         ProfileUpdateTime = _persisted.ProfileUpdateTime,
         ProfileCreatedAtUtc = _persisted.ProfileCreatedAtUtc,
@@ -293,7 +306,7 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         _isActive = configuration.IsActive;
         _selectedNextMonthGenerationModeOption = NextMonthGenerationModeOptions.Single(option =>
             option.Value == configuration.NextMonthGenerationMode);
-        ReplaceAssistants(configuration.Assistants);
+        ReplaceAssistants(ProcessAssistants(configuration));
         SelectedAssistant = null;
         Notify(string.Empty);
     }
@@ -351,11 +364,18 @@ internal sealed class ExpirationsBrokerProfileState : INotifyPropertyChanged
         IsActive = value.IsActive,
         NextMonthGenerationMode = value.NextMonthGenerationMode,
         Assistants = value.Assistants.Select(CopyAssistant).ToList(),
+        CancellationAssistants = value.CancellationAssistants.Select(CopyAssistant).ToList(),
         HasExplicitProfile = value.HasExplicitProfile,
         ProfileUpdateTime = value.ProfileUpdateTime,
         ProfileCreatedAtUtc = value.ProfileCreatedAtUtc,
         ProfileUpdatedAtUtc = value.ProfileUpdatedAtUtc
     };
+
+    private IReadOnlyList<ExpirationsAssistant> ProcessAssistants(
+        ExpirationsBrokerConfigurationItem configuration) =>
+        _process == ExpirationsProcess.Cancellations
+            ? configuration.CancellationAssistants
+            : configuration.Assistants;
 
     private static ExpirationsAssistant CopyAssistant(ExpirationsAssistant value) => new()
     {

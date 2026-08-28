@@ -114,6 +114,40 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
         Assert.Equal("Ver excluidos (3)", state.ExclusionsButtonText);
     }
 
+    [Theory]
+    [InlineData(ExpirationsProcess.PreviousMonth, 1, 2)]
+    [InlineData(ExpirationsProcess.NextMonth, 1, 2)]
+    [InlineData(ExpirationsProcess.Cancellations, 2, 3)]
+    public void ManagementAssistantCountersUseOnlyTheSelectedProcessList(
+        ExpirationsProcess process,
+        int expectedActive,
+        int expectedTotal)
+    {
+        var configuration = new ExpirationsBrokerConfigurationItem
+        {
+            BrokerId = BrokerId,
+            Name = "Corredor",
+            Assistants =
+            [
+                Assistant("Regular activo", "regular-active@example.test", true),
+                Assistant("Regular inactivo", "regular-inactive@example.test", false)
+            ],
+            CancellationAssistants =
+            [
+                Assistant("Cancelación uno", "cancellation-one@example.test", true),
+                Assistant("Cancelación dos", "cancellation-two@example.test", true),
+                Assistant("Cancelación inactivo", "cancellation-inactive@example.test", false)
+            ]
+        };
+        var state = new ExpirationsBrokerManagementState(process);
+
+        state.SetItems([configuration]);
+
+        var visible = Assert.Single(state.VisibleItems);
+        Assert.Equal(expectedActive, visible.ActiveAssistantCount);
+        Assert.Equal(expectedTotal, visible.TotalAssistantCount);
+    }
+
     [Fact]
     public void ProfileStateTracksCountsLocalChangesToggleAndDiscard()
     {
@@ -233,6 +267,36 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
     }
 
     [Fact]
+    public void CancellationProfileEditsOnlyCancellationAssistantsAndPreservesNormalAssistants()
+    {
+        var normal = Assistant("Normal", "normal@example.test");
+        var cancellation = Assistant("Cancelaciones", "cancel@example.test");
+        var configuration = Configuration(
+            "Corredor",
+            ["broker@example.test"],
+            [normal],
+            cancellationAssistants: [cancellation]);
+        var state = new ExpirationsBrokerProfileState(
+            configuration,
+            _validation,
+            ExpirationsProcess.Cancellations);
+
+        Assert.Equal("Asistentes de Cancelaciones", state.AssistantsSectionTitle);
+        Assert.Equal(cancellation.Id, Assert.Single(state.Assistants).Id);
+        var added = Assistant("Otra cancelación", "other-cancel@example.test");
+        Assert.Empty(state.AddOrReplaceAssistant(added));
+        var built = state.BuildConfiguration();
+
+        Assert.Equal(normal.Id, Assert.Single(built.Assistants).Id);
+        Assert.Equal(
+            new[] { cancellation.Id, added.Id }.Order(),
+            built.CancellationAssistants.Select(item => item.Id).Order());
+        Assert.Equal(
+            ExpirationsNextMonthGenerationMode.Standard,
+            built.NextMonthGenerationMode);
+    }
+
+    [Fact]
     public void AssistantDeleteIsLocalUntilBuildAndDiscardRestoresIt()
     {
         var kept = Assistant("Conservado", "kept@example.test");
@@ -301,6 +365,9 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
         });
 
         Assert.True(state.CanConfigureBrokers);
+        Assert.Equal(
+            [ExpirationsProcess.PreviousMonth, ExpirationsProcess.NextMonth, ExpirationsProcess.Cancellations],
+            state.ProcessOptions.Select(option => option.Value));
         state.SetBusy(true);
         Assert.False(state.CanConfigureBrokers);
     }
@@ -309,7 +376,8 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
         string name,
         IReadOnlyList<string> emails,
         IReadOnlyList<ExpirationsAssistant>? assistants = null,
-        ExpirationsNextMonthGenerationMode mode = ExpirationsNextMonthGenerationMode.Standard) => new()
+        ExpirationsNextMonthGenerationMode mode = ExpirationsNextMonthGenerationMode.Standard,
+        IReadOnlyList<ExpirationsAssistant>? cancellationAssistants = null) => new()
     {
         BrokerId = BrokerId,
         Name = name,
@@ -317,8 +385,9 @@ public sealed class ExpirationsAssistantAndConfigurationUiTests
         IsActive = true,
         NextMonthGenerationMode = mode,
         Assistants = assistants ?? [],
-        HasExplicitProfile = assistants is not null,
-        ProfileUpdateTime = assistants is null ? null : "version"
+        CancellationAssistants = cancellationAssistants ?? [],
+        HasExplicitProfile = assistants is not null || cancellationAssistants is not null,
+        ProfileUpdateTime = assistants is null && cancellationAssistants is null ? null : "version"
     };
 
     private static ExpirationsAssistant Assistant(string name, string email, bool active = true) => new()

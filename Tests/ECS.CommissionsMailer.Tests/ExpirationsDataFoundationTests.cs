@@ -160,7 +160,18 @@ public sealed class ExpirationsDataFoundationTests
     [Fact]
     public void ProfileMapperRoundTripsIndependentAssistants()
     {
-        var profile = Profile(BrokerOne, isActive: false, assistants: [Assistant()]);
+        var cancellationAssistant = new ExpirationsAssistant
+        {
+            Id = Guid.NewGuid(),
+            Name = "Asistente Cancelaciones",
+            Email = "cancelaciones@example.test",
+            IsActive = true
+        };
+        var profile = Profile(
+            BrokerOne,
+            isActive: false,
+            assistants: [Assistant()],
+            cancellationAssistants: [cancellationAssistant]);
         var mapper = new ExpirationsBrokerProfileMapper();
 
         var mapped = mapper.FromFields(mapper.ToFields(profile));
@@ -171,6 +182,23 @@ public sealed class ExpirationsDataFoundationTests
         Assert.Equal("Asistente Vencimientos", assistant.Name);
         Assert.Equal("assistant@example.test", assistant.Email);
         Assert.False(assistant.IsActive);
+        Assert.Equal(
+            "cancelaciones@example.test",
+            Assert.Single(mapped.CancellationAssistants).Email);
+    }
+
+    [Fact]
+    public void ProfileMapperDefaultsMissingCancellationAssistantsToEmptyWithoutFallback()
+    {
+        var mapper = new ExpirationsBrokerProfileMapper();
+        var fields = mapper.ToFields(Profile(BrokerOne, assistants: [Assistant()]))
+            .ToDictionary(item => item.Key, item => item.Value);
+        Assert.True(fields.Remove("cancellationAssistants"));
+
+        var mapped = mapper.FromFields(fields);
+
+        Assert.Single(mapped.Assistants);
+        Assert.Empty(mapped.CancellationAssistants);
     }
 
     [Fact]
@@ -252,12 +280,13 @@ public sealed class ExpirationsDataFoundationTests
     }
 
     [Fact]
-    public async Task PreviousAndNextMonthSettingsUseIndependentDocuments()
+    public async Task AllExpirationProcessesUseIndependentSettingsDocuments()
     {
         var client = new InMemoryFirestoreRestClient();
         var repository = new ExpirationsProcessSettingsRepository(client);
         var previous = Settings("Mes anterior");
         var next = Settings("Próximo mes");
+        var cancellations = Settings("Cancelaciones");
 
         await repository.CreateAsync(
             ExpirationsProcess.PreviousMonth,
@@ -267,17 +296,26 @@ public sealed class ExpirationsDataFoundationTests
             ExpirationsProcess.NextMonth,
             next,
             TestContext.Current.CancellationToken);
+        await repository.CreateAsync(
+            ExpirationsProcess.Cancellations,
+            cancellations,
+            TestContext.Current.CancellationToken);
         var storedPrevious = await repository.GetAsync(
             ExpirationsProcess.PreviousMonth,
             TestContext.Current.CancellationToken);
         var storedNext = await repository.GetAsync(
             ExpirationsProcess.NextMonth,
             TestContext.Current.CancellationToken);
+        var storedCancellations = await repository.GetAsync(
+            ExpirationsProcess.Cancellations,
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("Mes anterior", storedPrevious!.Value.DefaultSubject);
         Assert.Equal("Próximo mes", storedNext!.Value.DefaultSubject);
+        Assert.Equal("Cancelaciones", storedCancellations!.Value.DefaultSubject);
         Assert.EndsWith("/previousMonth", storedPrevious.DocumentPath, StringComparison.Ordinal);
         Assert.EndsWith("/nextMonth", storedNext.DocumentPath, StringComparison.Ordinal);
+        Assert.EndsWith("/cancellations", storedCancellations.DocumentPath, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -309,6 +347,7 @@ public sealed class ExpirationsDataFoundationTests
         Guid brokerId,
         bool isActive = true,
         List<ExpirationsAssistant>? assistants = null,
+        List<ExpirationsAssistant>? cancellationAssistants = null,
         ExpirationsNextMonthGenerationMode nextMonthGenerationMode =
             ExpirationsNextMonthGenerationMode.Standard) => new()
     {
@@ -316,6 +355,7 @@ public sealed class ExpirationsDataFoundationTests
         IsActive = isActive,
         NextMonthGenerationMode = nextMonthGenerationMode,
         Assistants = assistants ?? [],
+        CancellationAssistants = cancellationAssistants ?? [],
         CreatedAtUtc = Timestamp,
         UpdatedAtUtc = Timestamp
     };

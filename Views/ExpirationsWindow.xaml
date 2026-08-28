@@ -172,15 +172,10 @@
                               SelectionChanged="ProcessComboBox_SelectionChanged" />
                     <StackPanel Orientation="Horizontal" Margin="0,7,0,0"
                                 Visibility="{Binding NextMonthPeriodVisibility}">
-                        <ComboBox Width="150" ItemsSource="{Binding MonthOptions}"
-                                  SelectedItem="{Binding SelectedMonthOption, Mode=TwoWay}"
-                                  DisplayMemberPath="DisplayName" SelectionChanged="NextMonthPeriod_Changed" />
-                        <TextBox Width="78" Text="{Binding NextMonthYearText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 TextChanged="NextMonthPeriod_Changed" ToolTip="Año" />
                         <Button Content="Prima / Moneda" Click="SelectPremiumColumns_Click"
                                 Visibility="{Binding PremiumColumnSelectionVisibility}"
                                 IsEnabled="{Binding CanSelectPremiumColumns}"
-                                Style="{StaticResource CompactButtonStyle}" Margin="8,0,0,0" />
+                                Style="{StaticResource CompactButtonStyle}" Margin="0" />
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="2" VerticalAlignment="Center">
@@ -204,8 +199,6 @@
                             IsEnabled="{Binding CanOpenSourceFile}" />
                     <Button Content="Analizar archivo" Click="Analyze_Click"
                             IsEnabled="{Binding CanAnalyze}" />
-                    <Button Content="Abrir carpeta" Click="OpenSourceFolder_Click"
-                            IsEnabled="{Binding CanOpenSourceFolder}" />
                     <Button Content="Generar archivos" Click="GenerateFiles_Click"
                             IsEnabled="{Binding CanGenerate}" Style="{StaticResource PrimaryButtonStyle}" />
                 </WrapPanel>
@@ -266,7 +259,7 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="Asistentes de Vencimientos" Binding="{Binding AssistantsText}"
+                <DataGridTextColumn Header="Asistentes del proceso" Binding="{Binding AssistantsText}"
                                     Width="2*" MinWidth="200" />
                 <DataGridTextColumn Header="Registros" Binding="{Binding RowCount}" Width="80" />
                 <DataGridTemplateColumn Header="Archivos asociados" Width="135">

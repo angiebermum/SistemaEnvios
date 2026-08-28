@@ -22,7 +22,8 @@ public sealed class ExpirationsWorkbookAnalysisService
         IEnumerable<ExpirationsBrokerCatalogItem> catalog,
         IEnumerable<ExpirationsBrokerAssociation> associations,
         IEnumerable<ExpirationsManualResolutionOverride> manualOverrides,
-        IEnumerable<ExpirationsExclusion> exclusions)
+        IEnumerable<ExpirationsExclusion> exclusions,
+        ExpirationsProcess? process = null)
     {
         ArgumentNullException.ThrowIfNull(readResult);
         ArgumentNullException.ThrowIfNull(catalog);
@@ -51,7 +52,9 @@ public sealed class ExpirationsWorkbookAnalysisService
             resolver);
         var rows = readResult.Workbook!.Rows
             .OrderBy(row => row.RowNumber)
-            .Select(rowService.Resolve)
+            .Select(row => rowService.Resolve(
+                row,
+                process == ExpirationsProcess.NextMonth))
             .ToList();
         rows = ApplyManualOverrides(rows, catalogItems, manualOverrides);
         var blockingRows = rows.Count(row => row.HasBlockingIssues);

@@ -57,12 +57,13 @@ service cloud.firestore {
         ]) &&
         request.resource.data.keys().hasOnly([
           'brokerId', 'isActive', 'assistants', 'createdAtUtc', 'updatedAtUtc',
-          'nextMonthGenerationMode'
+          'nextMonthGenerationMode', 'cancellationAssistants'
         ]) &&
         request.resource.data.brokerId is string &&
         request.resource.data.brokerId == brokerId &&
         request.resource.data.isActive is bool &&
         request.resource.data.assistants is list &&
+        request.resource.data.get('cancellationAssistants', []) is list &&
         request.resource.data.get('nextMonthGenerationMode', 'Standard') in [
           'Standard', 'SpecialDualSorted'
         ] &&
@@ -164,7 +165,7 @@ service cloud.firestore {
         ]) &&
         request.resource.data.operationId is string &&
         request.resource.data.operationId == operationId &&
-        request.resource.data.process in ['PreviousMonth', 'NextMonth'] &&
+        request.resource.data.process in ['PreviousMonth', 'NextMonth', 'Cancellations'] &&
         request.resource.data.startedAtUtc is timestamp &&
         (request.resource.data.completedAtUtc == null ||
           request.resource.data.completedAtUtc is timestamp) &&
@@ -301,9 +302,9 @@ service cloud.firestore {
     }
 
     match /modules/vencimientos/settings/{processId} {
-      allow read: if canUseExpirations() && processId in ['previousMonth', 'nextMonth'];
+      allow read: if canUseExpirations() && processId in ['previousMonth', 'nextMonth', 'cancellations'];
       allow create, update: if canUseExpirations() &&
-        processId in ['previousMonth', 'nextMonth'] &&
+        processId in ['previousMonth', 'nextMonth', 'cancellations'] &&
         validExpirationsSettingsShape();
       allow delete: if false;
     }

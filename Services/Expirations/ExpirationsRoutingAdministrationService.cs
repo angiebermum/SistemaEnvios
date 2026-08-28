@@ -365,8 +365,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 ExpirationsRoutingAdministrationOutcome.Rejected,
                 "El corredor seleccionado no existe o está inactivo en Vencimientos.");
         }
-        if (!ExpirationsDestinationRoutingPolicy.AvailableGroupsForBrokerName(broker.Name)
-            .Contains(destinationGroup))
+        if (!IsAssociationDestinationAllowed(broker.Name, destinationGroup))
         {
             return Result(
                 ExpirationsRoutingAdministrationOutcome.Rejected,
@@ -450,8 +449,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         candidate.NormalizedValue = _normalizer.Normalize(value);
         candidate.DestinationGroup = destinationGroup;
         var broker = await _brokers.GetAsync(candidate.BrokerId, cancellationToken);
-        if (broker is null || !ExpirationsDestinationRoutingPolicy.AvailableGroupsForBrokerName(broker.Name)
-            .Contains(destinationGroup))
+        if (broker is null || !IsAssociationDestinationAllowed(broker.Name, destinationGroup))
         {
             return Result(
                 ExpirationsRoutingAdministrationOutcome.Rejected,
@@ -539,8 +537,7 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
                 return Result(ExpirationsRoutingAdministrationOutcome.Rejected, "La asociación ya usa ese corredor y archivo destino.");
         }
         if (destination is not null &&
-            !ExpirationsDestinationRoutingPolicy.AvailableGroupsForBrokerName(destination.Name)
-                .Contains(destinationGroup))
+            !IsAssociationDestinationAllowed(destination.Name, destinationGroup))
         {
             return Result(
                 ExpirationsRoutingAdministrationOutcome.Rejected,
@@ -817,6 +814,13 @@ public sealed class ExpirationsRoutingAdministrationService : IExpirationsRoutin
         }
         return null;
     }
+
+    private static bool IsAssociationDestinationAllowed(
+        string brokerName,
+        ExpirationsDestinationGroup destinationGroup) =>
+        destinationGroup == ExpirationsDestinationGroup.Principal ||
+        ExpirationsDestinationRoutingPolicy.AvailableGroupsForBrokerName(brokerName)
+            .Contains(destinationGroup);
 
     private async Task<ExpirationsRoutingAdministrationResult> UpdateAssociationAsync(
         ExpirationsBrokerAssociation association,

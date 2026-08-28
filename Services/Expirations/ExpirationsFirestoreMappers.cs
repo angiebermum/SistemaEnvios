@@ -93,6 +93,7 @@ internal sealed class ExpirationsSendOperationMapper : IFirestoreEntityMapper<Ex
     {
         nameof(ExpirationsProcess.PreviousMonth) => ExpirationsProcess.PreviousMonth,
         nameof(ExpirationsProcess.NextMonth) => ExpirationsProcess.NextMonth,
+        nameof(ExpirationsProcess.Cancellations) => ExpirationsProcess.Cancellations,
         _ => throw new InvalidDataException("El proceso del historial de Vencimientos no está permitido.")
     };
 
@@ -199,6 +200,8 @@ internal sealed class ExpirationsBrokerProfileMapper : IFirestoreEntityMapper<Ex
             ["isActive"] = FirestoreRestValue.Boolean(value.IsActive),
             ["nextMonthGenerationMode"] = FirestoreRestValue.String(WriteNextMonthGenerationMode(value.NextMonthGenerationMode)),
             ["assistants"] = FirestoreRestValue.Array(value.Assistants.Select(ExpirationsFirestoreFields.Assistant)),
+            ["cancellationAssistants"] = FirestoreRestValue.Array(
+                value.CancellationAssistants.Select(ExpirationsFirestoreFields.Assistant)),
             ["createdAtUtc"] = FirestoreRestValue.Timestamp(value.CreatedAtUtc),
             ["updatedAtUtc"] = FirestoreRestValue.Timestamp(value.UpdatedAtUtc)
         };
@@ -211,6 +214,13 @@ internal sealed class ExpirationsBrokerProfileMapper : IFirestoreEntityMapper<Ex
         Assistants = fields.Required("assistants").RequireArray("assistants")
             .Select((item, index) => ExpirationsFirestoreFields.ReadAssistant(item, $"assistants[{index}]"))
             .ToList(),
+        CancellationAssistants = fields.TryGetValue("cancellationAssistants", out var cancellationAssistants)
+            ? cancellationAssistants.RequireArray("cancellationAssistants")
+                .Select((item, index) => ExpirationsFirestoreFields.ReadAssistant(
+                    item,
+                    $"cancellationAssistants[{index}]"))
+                .ToList()
+            : [],
         CreatedAtUtc = fields.Required("createdAtUtc").RequireTimestamp("createdAtUtc"),
         UpdatedAtUtc = fields.Required("updatedAtUtc").RequireTimestamp("updatedAtUtc")
     };

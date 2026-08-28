@@ -108,9 +108,13 @@ internal sealed class ExpirationsEmailSettingsState : INotifyPropertyChanged
     public ExpirationsProcess Process { get; }
     public ExpirationsEmailSettingsSnapshot Snapshot { get; private set; }
     public bool IsLoaded { get; private set; }
-    public string ProcessText => Process == ExpirationsProcess.PreviousMonth
-        ? "Pendientes del mes anterior"
-        : "Vencimientos del mes siguiente";
+    public string ProcessText => Process switch
+    {
+        ExpirationsProcess.PreviousMonth => "Pendientes del mes anterior",
+        ExpirationsProcess.NextMonth => "Vencimientos del mes siguiente",
+        ExpirationsProcess.Cancellations => "Cancelaciones",
+        _ => throw new ArgumentOutOfRangeException()
+    };
     public bool CanEdit => !_isBusy;
     public bool CanSave => !_isBusy && IsLoaded;
     public string StatusText => _statusText;

@@ -30,6 +30,7 @@ internal static class ExpirationsBrokerProfileDefaults
             IsActive = true,
             NextMonthGenerationMode = ExpirationsNextMonthGenerationMode.SpecialDualSorted,
             Assistants = [],
+            CancellationAssistants = [],
             CreatedAtUtc = now,
             UpdatedAtUtc = now
         };

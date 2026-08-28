@@ -60,7 +60,8 @@ public sealed class ExpirationsBrokerCatalogService(
         IsActive = profile?.IsActive ?? true,
         NextMonthGenerationMode = profile?.NextMonthGenerationMode ??
             ExpirationsBrokerProfileDefaults.InitialNextMonthMode(broker.BrokerId),
-        Assistants = profile?.Assistants.Select(CopyAssistant).ToList() ?? []
+        Assistants = profile?.Assistants.Select(CopyAssistant).ToList() ?? [],
+        CancellationAssistants = profile?.CancellationAssistants.Select(CopyAssistant).ToList() ?? []
     };
 
     private static ExpirationsAssistant CopyAssistant(ExpirationsAssistant assistant) => new()

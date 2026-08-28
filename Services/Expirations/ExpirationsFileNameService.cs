@@ -17,15 +17,19 @@ public sealed class ExpirationsFileNameService
         IReadOnlyList<ExpirationsBrokerCatalogItem> brokers)
     {
         ArgumentNullException.ThrowIfNull(brokers);
-        if (process != ExpirationsProcess.PreviousMonth)
+        if (process is not (ExpirationsProcess.PreviousMonth or ExpirationsProcess.Cancellations))
             throw new ExpirationsGenerationException("La generación de Vencimientos del mes siguiente todavía no está habilitada.");
+
+        var prefix = process == ExpirationsProcess.Cancellations
+            ? "Cancelaciones"
+            : "Pendientes mes anterior";
 
         var candidates = brokers
             .OrderBy(broker => broker.BrokerId)
             .Select(broker => new
             {
                 broker.BrokerId,
-                BaseName = Limit($"Pendientes mes anterior - {_sanitizer.SanitizePart(broker.Name)}")
+                BaseName = Limit($"{prefix} - {_sanitizer.SanitizePart(broker.Name)}")
             })
             .ToList();
         var collisions = candidates
@@ -42,13 +46,24 @@ public sealed class ExpirationsFileNameService
     }
 
     public IReadOnlyDictionary<ExpirationsDestinationKey, string> CreatePreviousMonthFileNames(
+        IReadOnlyList<ExpirationsGeneratedFileNameRequest> files) =>
+        CreateStandardFileNames(ExpirationsProcess.PreviousMonth, files);
+
+    public IReadOnlyDictionary<ExpirationsDestinationKey, string> CreateStandardFileNames(
+        ExpirationsProcess process,
         IReadOnlyList<ExpirationsGeneratedFileNameRequest> files)
     {
         ArgumentNullException.ThrowIfNull(files);
+        var prefix = process switch
+        {
+            ExpirationsProcess.PreviousMonth => "Pendientes mes anterior",
+            ExpirationsProcess.Cancellations => "Cancelaciones",
+            _ => throw new ArgumentOutOfRangeException(nameof(process))
+        };
         var candidates = files.Select(file => new
         {
             Key = new ExpirationsDestinationKey(file.BrokerId, file.DestinationGroup),
-            BaseName = Limit($"Pendientes mes anterior - {GroupFileIdentity(file.BrokerName, file.DestinationGroup)}")
+            BaseName = Limit($"{prefix} - {GroupFileIdentity(file.BrokerName, file.DestinationGroup)}")
         }).ToList();
         if (candidates.Select(item => item.Key).Distinct().Count() != candidates.Count)
             throw new ExpirationsGenerationException("La generación contiene un grupo de archivo duplicado.");
@@ -112,6 +127,7 @@ public sealed class ExpirationsFileNameService
                 $"Vencimientos mes siguiente - {period.FileToken} - {localTime:yyyyMMdd-HHmmss}",
             ExpirationsProcess.NextMonth => throw new ExpirationsGenerationException(
                 "Seleccione el período de mes siguiente."),
+            ExpirationsProcess.Cancellations => $"Cancelaciones - {localTime:yyyyMMdd-HHmmss}",
             _ => throw new ArgumentOutOfRangeException(nameof(process))
         };
     }

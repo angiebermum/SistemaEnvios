@@ -6,7 +6,8 @@ public sealed class ExpirationsRecipientService
 {
     public ExpirationsRecipientResolution Resolve(
         ExpirationsBrokerCatalogItem broker,
-        IEnumerable<string> commonCcAddresses)
+        IEnumerable<string> commonCcAddresses,
+        ExpirationsProcess process = ExpirationsProcess.PreviousMonth)
     {
         ArgumentNullException.ThrowIfNull(broker);
         ArgumentNullException.ThrowIfNull(commonCcAddresses);
@@ -17,7 +18,10 @@ public sealed class ExpirationsRecipientService
             errors);
         var toSet = new HashSet<string>(primary, StringComparer.OrdinalIgnoreCase);
         var assistants = new List<string>();
-        foreach (var assistant in broker.Assistants.Where(value => value.IsActive))
+        var processAssistants = process == ExpirationsProcess.Cancellations
+            ? broker.CancellationAssistants
+            : broker.Assistants;
+        foreach (var assistant in processAssistants.Where(value => value.IsActive))
         {
             if (!EmailValidationService.TryNormalizeAddress(assistant.Email, out var normalized))
             {
